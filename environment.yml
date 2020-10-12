@@ -1,0 +1,10 @@
+name: deluca
+channels:
+  - defaults
+dependencies:
+  - python==3.8
+  - numpy
+  - scipy
+  - jax
+  - jaxlib
+  - gym

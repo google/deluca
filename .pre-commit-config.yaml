@@ -1,0 +1,38 @@
+repos:
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.6.2
+    hooks:
+    - id: bandit
+      args: ['--skip=B101,B403,B301,B311']
+  - repo: https://github.com/asottile/reorder_python_imports
+    rev: v2.0.0
+    hooks:
+    - id: reorder-python-imports
+  - repo: https://github.com/psf/black
+    rev: 19.10b0
+    hooks:
+      - id: black
+        args: ['--line-length=100', '.']
+  - repo: https://gitlab.com/pycqa/flake8
+    rev: 3.7.9
+    hooks:
+      - id: flake8
+        args: ['--show-source', '--ignore=E203', "--max-complexity=15"]
+        additional_dependencies: ['flake8-bugbear']
+  - repo: https://github.com/humitos/mirrors-autoflake
+    rev: v1.1
+    hooks:
+      - id: autoflake
+        args: ['--in-place', '--remove-all-unused-imports',
+        '--remove-unused-variable', '-r', '.']
+  - repo: https://github.com/danielsuo/pydocstring-coverage
+    rev: v1.0.6
+    hooks:
+      - id: docstring-coverage
+        language: python
+        args: ['--verbose', '0', '--hook-mode', '--generate-badge', '.github/badges/docstring_coverage.svg', '--min-hook-passing-score', '0']
+
+  - repo: https://github.com/danielsuo/check-python-versions
+    rev: master
+    hooks:
+      - id: check-python-versions
