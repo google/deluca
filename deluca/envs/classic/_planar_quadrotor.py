@@ -128,7 +128,7 @@ class PlanarQuadrotor(Env):
     def step(self, u):
         self.last_u, self.h = u, self.h + 1
         self.state = self.f(self.state, u)
-        return self.state, self.c(self.state, u)
+        return self.state, self.c(self.state, u), False, {}
 
     def render(self, mode="human"):
         if self.viewer is None:
