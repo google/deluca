@@ -19,6 +19,7 @@ from gym import spaces
 from jax.numpy import cos
 from jax.numpy import pi
 from jax.numpy import sin
+from jax.numpy import arcsin
 
 from deluca.envs.core import Env
 from deluca.utils import Random
@@ -78,7 +79,7 @@ class Acrobot(Env):
     MAX_VEL_1 = 4 * pi
     MAX_VEL_2 = 9 * pi
 
-    AVAIL_TORQUE = [-1.0, 0.0, +1]
+    AVAIL_TORQUE = jnp.array([-1.0, 0.0, +1])
 
     torque_noise_max = 0.0
 
@@ -88,61 +89,83 @@ class Acrobot(Env):
     domain_fig = None
     actions_num = 3
 
-    def __init__(self, seed=0):
+    def __init__(self, seed=0, horizon=50):
         high = np.array([1.0, 1.0, 1.0, 1.0, self.MAX_VEL_1, self.MAX_VEL_2], dtype=np.float32)
         low = -high
         self.random = Random(seed)
         self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
         self.action_space = spaces.Discrete(3)
+        self.action_dim = 1
+        self.H = horizon
+        self.nsamples = 0
 
+        # @jax.jit
+        def _dynamics(state, action):
+            self.nsamples += 1
+            # Augment the state with our force action so it can be passed to _dsdt
+            augmented_state = jnp.append(state, action)
+
+            new_state = rk4(self._dsdt, augmented_state, [0, self.dt])
+            # only care about final timestep of integration returned by integrator
+            new_state = new_state[-1]
+            new_state = new_state[:4]  # omit action
+            # ODEINT IS TOO SLOW!
+            # ns_continuous = integrate.odeint(self._dsdt, self.s_continuous, [0, self.dt])
+            # self.s_continuous = ns_continuous[-1] # We only care about the state
+            # at the ''final timestep'', self.dt
+                        
+            new_state = jax.ops.index_update(new_state, 0, wrap(new_state[0], -pi, pi))
+            new_state = jax.ops.index_update(new_state, 1, wrap(new_state[1], -pi, pi))
+            new_state = jax.ops.index_update(
+                new_state, 2, bound(new_state[2], -self.MAX_VEL_1, self.MAX_VEL_1)
+            )
+            new_state = jax.ops.index_update(
+                new_state, 3, bound(new_state[3], -self.MAX_VEL_2, self.MAX_VEL_2)
+            )
+            
+            return new_state
+        
+        # @jax.jit
+        def c(x, u):
+            return u[0]**2 + 1 - jnp.exp(0.5*cos(x[0]) + 0.5*cos(x[1]) - 1)
+        self.dynamics = _dynamics
+        self.reward_fn = c
+        
+        self.f, self.f_x, self.f_u = (
+                _dynamics,
+                jax.jacfwd(_dynamics, argnums=0),
+                jax.jacfwd(_dynamics, argnums=1),
+            )
+        self.c, self.c_x, self.c_u, self.c_xx, self.c_uu = (
+                c,
+                jax.grad(c, argnums=0),
+                jax.grad(c, argnums=1),
+                jax.hessian(c, argnums=0),
+                jax.hessian(c, argnums=1),
+            )
         self.reset()
 
     def reset(self):
         self.state = jax.random.uniform(
             self.random.generate_key(), shape=(4,), minval=-0.1, maxval=0.1
+            # self.random.generate_key(), shape=(6,), minval=-0.1, maxval=0.1
         )
         return self.state
 
-    @jax.jit
-    def dynamics(self, state, action):
-
-        # Augment the state with our force action so it can be passed to _dsdt
-        augmented_state = jnp.append(state, action)
-
-        new_state = rk4(self._dsdt, augmented_state, [0, self.dt])
-        # only care about final timestep of integration returned by integrator
-        new_state = new_state[-1]
-        new_state = new_state[:4]  # omit action
-        # ODEINT IS TOO SLOW!
-        # ns_continuous = integrate.odeint(self._dsdt, self.s_continuous, [0, self.dt])
-        # self.s_continuous = ns_continuous[-1] # We only care about the state
-        # at the ''final timestep'', self.dt
-
-        new_state = jax.ops.index_update(new_state, 0, wrap(new_state[0], -pi, pi))
-        new_state = jax.ops.index_update(new_state, 1, wrap(new_state[1], -pi, pi))
-        new_state = jax.ops.index_update(
-            new_state, 2, bound(new_state[2], -self.MAX_VEL_1, self.MAX_VEL_1)
-        )
-        new_state = jax.ops.index_update(
-            new_state, 3, bound(new_state[3], -self.MAX_VEL_2, self.MAX_VEL_2)
-        )
-
-        return new_state
-
     def step(self, action):
-
-        torque = self.AVAIL_TORQUE[action]
+        # torque = self.AVAIL_TORQUE[action] # discrete action space
+        torque = bound(action, -1.0, 1.0) # continuous action space
 
         # Add noise to the force action
         if self.torque_noise_max > 0:
             torque += self.np_random.uniform(-self.torque_noise_max, self.torque_noise_max)
-
         self.state = self.dynamics(self.state, torque)
-
         terminal = self._terminal()
-        reward = -1.0 + terminal
+        # reward = -1.0 + terminal # openAI cost function
+        reward = self.reward_fn(self.state, action)
 
-        return self.observation, reward, terminal, {}
+        # TODO: should this return self.state (dim 4) or self.observation (dim 6)?
+        return self.state, reward, terminal, {}
 
     @property
     def observation(self):
@@ -159,6 +182,7 @@ class Acrobot(Env):
 
     def _terminal(self):
         return -cos(self.state[0]) - cos(self.state[1] + self.state[0]) > 1.0
+    
 
     def _dsdt(self, augmented_state, t):
         m1 = self.LINK_MASS_1
@@ -171,10 +195,12 @@ class Acrobot(Env):
         g = 9.8
         a = augmented_state[-1]
         s = augmented_state[:-1]
+        
         theta1 = s[0]
         theta2 = s[1]
         dtheta1 = s[2]
         dtheta2 = s[3]
+        
         d1 = m1 * lc1 ** 2 + m2 * (l1 ** 2 + lc2 ** 2 + 2 * l1 * lc2 * cos(theta2)) + I1 + I2
         d2 = m2 * (lc2 ** 2 + l1 * lc2 * cos(theta2)) + I2
         phi2 = m2 * lc2 * g * cos(theta1 + theta2 - pi / 2.0)
@@ -195,7 +221,7 @@ class Acrobot(Env):
                 m2 * lc2 ** 2 + I2 - d2 ** 2 / d1
             )
         ddtheta1 = -(d2 * ddtheta2 + phi1) / d1
-        return (dtheta1, dtheta2, ddtheta1, ddtheta2, 0.0)
+        return (dtheta1, dtheta2, ddtheta1, ddtheta2, 0.0) # 4-state version    
 
 
 def wrap(x, m, M):
@@ -290,6 +316,7 @@ def rk4(derivs, y0, t, *args, **kwargs):
         y0 = yout[i]
 
         k1 = jnp.asarray(derivs(y0, thist, *args, **kwargs))
+        # print('dt2.shape = ' + str(dt2.shape))
         k2 = jnp.asarray(derivs(y0 + dt2 * k1, thist + dt2, *args, **kwargs))
         k3 = jnp.asarray(derivs(y0 + dt2 * k2, thist + dt2, *args, **kwargs))
         k4 = jnp.asarray(derivs(y0 + dt * k3, thist + dt, *args, **kwargs))
