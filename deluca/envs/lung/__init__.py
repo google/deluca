@@ -16,6 +16,7 @@
 import jax.numpy as jnp
 
 from deluca.core import JaxObject
+from deluca.envs.lung.core import Lung
 
 DEFAULT_PRESSURE_RANGE = (5.0, 35.0)
 DEFAULT_KEYPOINTS = [1e-8, 1.0, 1.5, 3.0]
@@ -39,3 +40,4 @@ class BreathWaveform(JaxObject):
 
 
 __all__ = ["BreathWaveform"]
+

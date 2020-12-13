@@ -30,7 +30,11 @@ release = '0.0.4'
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
+import os
+import sys
+sys.path.insert(0, os.path.abspath('./../..'))
 extensions = [
+	'autoclasstoc',
     'sphinx.ext.autodoc',
     'sphinx.ext.autosummary',
     'sphinx.ext.viewcode',
@@ -54,6 +58,12 @@ exclude_patterns = []
 
 autosummary_generate = True
 napolean_use_rtype = False
+
+autodoc_default_options = {
+    'members': True,
+    'special-members': True,
+    'exclude-members': '__weakref__',
+}
 
 
 # -- Options for HTML output -------------------------------------------------

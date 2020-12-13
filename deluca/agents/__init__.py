@@ -20,5 +20,6 @@ from deluca.agents._zero import Zero
 from deluca.agents._drc import DRC
 from deluca.agents._adaptive import Adaptive
 from deluca.agents._deep import Deep
+from deluca.agents.core import Agent
 
 __all__ = ["LQR", "PID", "GPC", "ILQR", "Hinf", "Zero", "DRC", "Adaptive", "Deep"]

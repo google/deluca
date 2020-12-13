@@ -11,4 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+from deluca.envs.classic._acrobot import Acrobot
+from deluca.envs.classic._cartpole import CartPole
+from deluca.envs.classic._mountain_car import MountainCar
+from deluca.envs.classic._pendulum import Pendulum
+from deluca.envs.classic._planar_quadrotor import PlanarQuadrotor
