@@ -6,5 +6,5 @@ dependencies:
   - numpy
   - scipy
   - jax
-  - jaxlib
+  - jaxlib=0.1.55
   - gym
