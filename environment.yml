@@ -8,5 +8,3 @@ dependencies:
   - jax
   - jaxlib
   - gym
-  - pip:
-    - autoclasstoc
