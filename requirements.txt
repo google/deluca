@@ -1,2 +1,3 @@
-autoclasstoc
 setuptools
+jaxlib
+autoclasstoc
