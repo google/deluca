@@ -24,25 +24,30 @@ import jax.numpy as jnp
 from deluca.agents.core import Agent
 
 
-def iLQR_loop(env, U_initial, T, log=None):
-    U, X, k, K, alpha, t = U_initial, None, None, None, 1.0, 1
-    X, U, c = rollout(env, U)
-    while t <= T:
+def iLQR_loop(env, U_initial, T, alpha=1.0, log=None):
+    U, X, k, K = U_initial, None, None, None
+    X, U, c = rollout(env, U, alpha=alpha)
+    print('initial cost:' + str(c))
+    r = 1
+    # while t <= T:
+    for t in range(T):
         F, C = f_at_x(env, X, U)
         k, K = LQR(F, C)
         for alphaC in alpha * 1.1 * 1.1 ** (-jnp.arange(10) ** 2):
-            t += 1
+            # t += 1
+            r += 1
             XC, UC, cC = rollout(env, U, k, K, X, alphaC)
-
-            if log is not None:
-                log.append((t, float(min(c, cC)), env.nsamples))
-            print("iLQR : t = %d, c = %f" % (t, min(c, cC)))
 
             if cC <= c:
                 X, U, c, alpha = XC, UC, cC, alphaC
+                # print("iLQR : t = %d, c = %f" % (t, min(c, cC)))
+                print(f"(iLQR): t = {t}, r = {r}, c = {c}, alpha = {alpha}")
+                if log is not None:
+                    # log.append((t, float(min(c, cC)), env.nsamples))
+                    log.append(f"(iLQR): t = {t}, r = {r}, c = {c}, alpha = {alpha}")
                 break
-            if t == T:
-                return X, U, k, K, c
+            # if t == T:
+            #     return X, U, k, K, c
     return X, U, k, K, c
 
 
@@ -62,7 +67,6 @@ def LQR(F, C):
             f_u.T @ V_xx @ f_x,
             c_uu + f_u.T @ V_xx @ f_u,
         )
-
         # line may be numerically unstable if Q_uu is the 0 matrix
         K[h], k[h] = -jnp.linalg.inv(Q_uu) @ Q_ux, -jnp.linalg.inv(Q_uu) @ Q_u 
         V_x = Q_x - K[h].T @ Q_uu @ k[h]
@@ -104,22 +108,27 @@ class ILQRInner:
     def __init__(self, env):
         self.env = env
 
-    def train(self, T):
+    def train(self, T, U_init=None, alpha=1.0):
         self.log = []
-
-        U = [jnp.zeros(self.env.action_dim) for _ in range(self.env.H)]
-        _, U, _, _, _ = iLQR_loop(self.env, U, T, self.log)
-        return U
+        if U_init is None:
+            U_init = [jnp.zeros(self.env.action_dim) for _ in range(self.env.H)]
+        X, U, k, K, c = iLQR_loop(self.env, U_init, T, alpha, self.log)
+        return X, U, k, K, c, self.log
 
 
 class ILQR(Agent):
     def __init__(self):
         self.reset()
 
-    def train(self, sim, train_steps):
+    def train(self, sim, train_steps, U_init=None, alpha=1.0):
         self.sim = sim
         ilqr_agent = ILQRInner(self.sim)
-        self.U = jnp.array(ilqr_agent.train(train_steps))
+        X, U, k, K, c, log = ilqr_agent.train(train_steps, U_init, alpha)
+        self.U = jnp.array(U)
+        self.X = jnp.array(X)
+        self.k = jnp.array(k)
+        self.K = jnp.array(K)
+        return c, log
 
     def reset(self):
         self.t = 0
