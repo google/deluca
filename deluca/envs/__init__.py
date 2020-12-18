@@ -17,6 +17,7 @@ from deluca.envs.classic._cartpole import CartPole
 from deluca.envs.classic._mountain_car import MountainCar
 from deluca.envs.classic._pendulum import Pendulum
 from deluca.envs.classic._planar_quadrotor import PlanarQuadrotor
+from deluca.envs.classic._planar_quadrotor_wind import PlanarQuadrotorLambdaWind, PlanarQuadrotorSimWind
 from deluca.envs.classic._reacher import Reacher
 from deluca.envs.lung._balloon_lung import BalloonLung
 from deluca.envs.lung._delay_lung import DelayLung
@@ -28,6 +29,8 @@ __all__ = [
     "MountainCar",
     "Pendulum",
     "PlanarQuadrotor",
+    "PlanarQuadrotorLambdaWind",
+    "PlanarQuadrotorSimWind",
     "Reacher",
     "LDS",
     "BalloonLung",
