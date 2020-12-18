@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import jax
-import jax.numpy as np
+import jax.numpy as jnp
 from os import path
 from deluca.envs.core import Env
 
 dissipative = lambda x, y, wind : [wind * x, wind * y]
-constant = lambda x, y, wind : [wind * np.cos(np.pi / 4.0), wind * np.sin(np.pi / 4.0)]
+constant = lambda x, y, wind : [wind * jnp.cos(jnp.pi / 4.0), wind * jnp.sin(jnp.pi / 4.0)]
 def tornadoes(x, y):
     pos1 = [1.0, 0.0]
     pos2 = [0.5, 0.5]
@@ -41,9 +41,9 @@ class PlanarQuadrotor(Env):
             wind_func,
         )
         self.initial_state, self.goal_state, self.goal_action = (
-            np.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            np.array([self.m * self.g / 2.0, self.m * self.g / 2.0]),
+            jnp.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            jnp.array([self.m * self.g / 2.0, self.m * self.g / 2.0]),
         )
 
         self.viewer = None
@@ -60,10 +60,10 @@ class PlanarQuadrotor(Env):
             u1, u2 = u
             m, g, l, dt = self.m, self.g, self.l, self.dt
             wind = wind_field(x, y)
-            xddot = -(u1 + u2) * np.sin(th) / m + wind[0] / m
-            yddot = (u1 + u2) * np.cos(th) / m - g + wind[1] / m
+            xddot = -(u1 + u2) * jnp.sin(th) / m + wind[0] / m
+            yddot = (u1 + u2) * jnp.cos(th) / m - g + wind[1] / m
             thddot = l * (u2 - u1) / (m * l ** 2)
-            state_dot = np.array([xdot, ydot, thdot, xddot, yddot, thddot])
+            state_dot = jnp.array([xdot, ydot, thdot, xddot, yddot, thddot])
             new_state = state + state_dot * dt
             return new_state
 
