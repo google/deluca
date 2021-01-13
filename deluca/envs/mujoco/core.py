@@ -130,6 +130,9 @@ class MujocoEnv(Env):
         self.sim.set_state(new_state)
         self.sim.forward()
 
+    def get_state(self):
+        return self.mjDynamics.get_state()
+
     @property
     def dt(self):
         return self.model.opt.timestep * self.frame_skip

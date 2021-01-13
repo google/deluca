@@ -21,6 +21,7 @@ from deluca.envs.classic._reacher import Reacher
 from deluca.envs.lung._balloon_lung import BalloonLung
 from deluca.envs.lung._delay_lung import DelayLung
 from deluca.envs.lung._learned_lung import LearnedLung
+from deluca.envs.mujoco._pusher import Pusher
 
 __all__ = [
     "Acrobot",
@@ -33,4 +34,5 @@ __all__ = [
     "BalloonLung",
     "DelayLung",
     "LearnedLung",
+    "Pusher",
 ]
