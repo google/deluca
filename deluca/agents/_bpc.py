@@ -11,35 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""deluca.agents._gpc"""
+"""deluca.agents._bpc"""
 from numbers import Real
 from typing import Callable
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.random as random
 from jax import grad
 from jax import jit
 
 from deluca.agents._lqr import LQR
 from deluca.agents.core import Agent
 
+def generate_uniform(shape, norm=1.00):
+            v = random.normal(size=shape)
+            v = norm * v / np.linalg.norm(v)
+            v = np.array(v)
+            return v
 
-def quad_loss(x: jnp.ndarray, u: jnp.ndarray) -> Real:
-    """
-    Quadratic loss.
-
-    Args:
-        x (jnp.ndarray):
-        u (jnp.ndarray):
-
-    Returns:
-        Real
-    """
-    return jnp.sum(x.T @ x + u.T @ u)
-
-
-class GPC(Agent):
+class BPC(Agent):
     def __init__(
         self,
         A: jnp.ndarray,
@@ -48,11 +40,10 @@ class GPC(Agent):
         R: jnp.ndarray = None,
         K: jnp.ndarray = None,
         start_time: int = 0,
-        cost_fn: Callable[[jnp.ndarray, jnp.ndarray], Real] = None,
-        H: int = 3,
-        HH: int = 2,
+        H: int = 5,
         lr_scale: Real = 0.005,
-        decay: bool = True,
+        decay: bool = False,
+        delta: Real = 0.01
     ) -> None:
         """
         Description: Initialize the dynamics of the model.
@@ -64,65 +55,48 @@ class GPC(Agent):
             R (jnp.ndarray): cost matrices (i.e. cost = x^TQx + u^TRu)
             K (jnp.ndarray): Starting policy (optional). Defaults to LQR gain.
             start_time (int):
-            cost_fn (Callable[[jnp.ndarray, jnp.ndarray], Real]):
             H (postive int): history of the controller
-            HH (positive int): history of the system
             lr_scale (Real):
-            lr_scale_decay (Real):
-            decay (Real):
+            decay (boolean):
         """
 
-        cost_fn = cost_fn or quad_loss
-
-        d_state, d_action = B.shape  # State & Action Dimensions
+        self.d_state, self.d_action = B.shape  # State & Action Dimensions
 
         self.A, self.B = A, B  # System Dynamics
 
         self.t = 0  # Time Counter (for decaying learning rate)
 
-        self.H, self.HH = H, HH
+        self.H = H
 
         self.lr_scale, self.decay = lr_scale, decay
+
+        self.delta = delta
 
         # Model Parameters
         # initial linear policy / perturbation contributions / bias
         # TODO: need to address problem of LQR with jax.lax.scan
         self.K = K if K is not None else LQR(self.A, self.B, Q, R).K
 
-        self.M = jnp.zeros((H, d_action, d_state))
+        self.M = self.delta * generate_uniform((H, self.d_action, self.d_state))
 
-        # Past H + HH noises ordered increasing in time
-        self.noise_history = jnp.zeros((H + HH, d_state, 1))
+        # Past H noises ordered increasing in time
+        self.noise_history = jnp.zeros((H, self.d_state, 1))
 
         # past state and past action
-        self.state, self.action = jnp.zeros((d_state, 1)), jnp.zeros((d_action, 1))
+        self.state, self.action = jnp.zeros((self.d_state, 1)), jnp.zeros((self.d_action, 1))
 
-        def last_h_noises():
-            """Get noise history"""
-            return jax.lax.dynamic_slice_in_dim(self.noise_history, -H, H)
+        self.eps = generate_uniform((H, H, self.d_action, self.d_state))
+        self.eps_bias = generate_uniform((H, self.d_action, 1))
 
-        self.last_h_noises = last_h_noises
+        def grad(M, noise_history, cost):
+            return cost * jnp.sum(self.eps, axis = 0)
 
-        def policy_loss(M, w):
-            """Surrogate cost function"""
+        self.grad = grad
 
-            def action(state, h):
-                """Action function"""
-                return -self.K @ state + jnp.tensordot(
-                    M, jax.lax.dynamic_slice_in_dim(w, h, H), axes=([0, 2], [0, 1])
-                )
-
-            def evolve(state, h):
-                """Evolve function"""
-                return self.A @ state + self.B @ action(state, h) + w[h + H], None
-
-            final_state, _ = jax.lax.scan(evolve, np.zeros((d_state, 1)), np.arange(H - 1))
-            return cost_fn(final_state, action(final_state, HH - 1))
-
-        self.policy_loss = policy_loss
-        self.grad = jit(grad(policy_loss, (0, 1)))
-
-    def __call__(self, state: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self,
+                state: jnp.ndarray,
+                cost: Real
+                ) -> jnp.ndarray:
         """
         Description: Return the action based on current state and internal parameters.
 
@@ -134,29 +108,40 @@ class GPC(Agent):
         """
 
         action = self.get_action(state)
-        self.update(state, action)
+        self.update(state, action, cost)
         return action
 
-    def update(self, state: jnp.ndarray, u:jnp.ndarray) -> None:
+    def update(self,
+            state: jnp.ndarray,
+            action:jnp.ndarray,
+            cost: Real
+            ) -> None:
         """
         Description: update agent internal state.
 
         Args:
-            state (jnp.ndarray):
+            state (jnp.ndarray): current state
+            action (jnp.ndarray): action taken
+            cost (Real): scalar cost received
 
         Returns:
             None
         """
-        noise = state - self.A @ self.state - self.B @ u
+        noise = state - self.A @ self.state - self.B @ action
         self.noise_history = jax.ops.index_update(self.noise_history, 0, noise)
         self.noise_history = jnp.roll(self.noise_history, -1, axis=0)
 
-        delta_M, delta_bias = self.grad(self.M, self.noise_history)
-
         lr = self.lr_scale
-        lr *= (1/ (self.t+1)) if self.decay else 1
+        lr *= (1/ (self.t**(3/4)+1)) if self.decay else 1
+
+        delta_M = self.grad(self.M, self.noise_history, cost)
         self.M -= lr * delta_M
-        self.bias -= lr * delta_bias
+
+        self.eps = jax.ops.index_update(self.eps, 0, \
+                        generate_uniform((self.H, self.d_action, self.d_state)))
+        self.eps = np.roll(self.eps, -1, axis = 0)
+
+        self.M += self.delta * self.eps[-1]
 
         # update state
         self.state = state
@@ -173,4 +158,4 @@ class GPC(Agent):
         Returns:
             jnp.ndarray
         """
-        return -self.K @ state + jnp.tensordot(self.M, self.last_h_noises(), axes=([0, 2], [0, 1]))
+        return -self.K @ state + jnp.tensordot(self.M, self.noise_history, axes=([0, 2], [0, 1]))
