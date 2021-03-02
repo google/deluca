@@ -92,6 +92,7 @@ class Acrobot(Env):
     def __init__(self, seed=0, horizon=50):
         high = np.array([1.0, 1.0, 1.0, 1.0, self.MAX_VEL_1, self.MAX_VEL_2], dtype=np.float32)
         low = -high
+        self.viewer = None
         self.random = Random(seed)
         self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
         self.action_space = spaces.Discrete(3)
@@ -221,7 +222,44 @@ class Acrobot(Env):
                 m2 * lc2 ** 2 + I2 - d2 ** 2 / d1
             )
         ddtheta1 = -(d2 * ddtheta2 + phi1) / d1
-        return (dtheta1, dtheta2, ddtheta1, ddtheta2, 0.0) # 4-state version    
+        return (dtheta1, dtheta2, ddtheta1, ddtheta2, 0.0) # 4-state version  
+
+    def render(self, mode="human"):
+        from gym.envs.classic_control import rendering
+
+        s = self.state
+
+        if self.viewer is None:
+            self.viewer = rendering.Viewer(500, 500)
+            bound = self.LINK_LENGTH_1 + self.LINK_LENGTH_2 + 0.2  # 2.2 for default
+            self.viewer.set_bounds(-bound, bound, -bound, bound)
+
+        if s is None:
+            return None
+
+        p1 = [-self.LINK_LENGTH_1 * cos(s[0]), self.LINK_LENGTH_1 * sin(s[0])]
+
+        p2 = [
+            p1[0] - self.LINK_LENGTH_2 * cos(s[0] + s[1]),
+            p1[1] + self.LINK_LENGTH_2 * sin(s[0] + s[1]),
+        ]
+
+        xys = np.array([[0, 0], p1, p2])[:, ::-1]
+        thetas = [s[0] - pi / 2, s[0] + s[1] - pi / 2]
+        link_lengths = [self.LINK_LENGTH_1, self.LINK_LENGTH_2]
+
+        self.viewer.draw_line((-2.2, 1), (2.2, 1))
+        for ((x, y), th, llen) in zip(xys, thetas, link_lengths):
+            l, r, t, b = 0, llen, 0.1, -0.1
+            jtransform = rendering.Transform(rotation=th, translation=(x, y))
+            link = self.viewer.draw_polygon([(l, b), (l, t), (r, t), (r, b)])
+            link.add_attr(jtransform)
+            link.set_color(0, 0.8, 0.8)
+            circ = self.viewer.draw_circle(0.1)
+            circ.set_color(0.8, 0.8, 0)
+            circ.add_attr(jtransform)
+
+        return self.viewer.render(return_rgb_array=mode == "rgb_array") 
 
 
 def wrap(x, m, M):
@@ -324,39 +362,4 @@ def rk4(derivs, y0, t, *args, **kwargs):
 
     return yout
 
-    def render(self, mode="human"):
-        from gym.envs.classic_control import rendering
-
-        s = self.state
-
-        if self.viewer is None:
-            self.viewer = rendering.Viewer(500, 500)
-            bound = self.LINK_LENGTH_1 + self.LINK_LENGTH_2 + 0.2  # 2.2 for default
-            self.viewer.set_bounds(-bound, bound, -bound, bound)
-
-        if s is None:
-            return None
-
-        p1 = [-self.LINK_LENGTH_1 * cos(s[0]), self.LINK_LENGTH_1 * sin(s[0])]
-
-        p2 = [
-            p1[0] - self.LINK_LENGTH_2 * cos(s[0] + s[1]),
-            p1[1] + self.LINK_LENGTH_2 * sin(s[0] + s[1]),
-        ]
-
-        xys = np.array([[0, 0], p1, p2])[:, ::-1]
-        thetas = [s[0] - pi / 2, s[0] + s[1] - pi / 2]
-        link_lengths = [self.LINK_LENGTH_1, self.LINK_LENGTH_2]
-
-        self.viewer.draw_line((-2.2, 1), (2.2, 1))
-        for ((x, y), th, llen) in zip(xys, thetas, link_lengths):
-            l, r, t, b = 0, llen, 0.1, -0.1
-            jtransform = rendering.Transform(rotation=th, translation=(x, y))
-            link = self.viewer.draw_polygon([(l, b), (l, t), (r, t), (r, b)])
-            link.add_attr(jtransform)
-            link.set_color(0, 0.8, 0.8)
-            circ = self.viewer.draw_circle(0.1)
-            circ.set_color(0.8, 0.8, 0)
-            circ.add_attr(jtransform)
-
-        return self.viewer.render(return_rgb_array=mode == "rgb_array")
+    
