@@ -35,6 +35,7 @@ from deluca.utils import Random
 
 class MountainCar(Env):
     def __init__(self, goal_velocity=0, seed=0, horizon=50):
+        self.viewer = None
         self.min_action = -1.0
         self.max_action = 1.0
         self.min_position = -1.2
@@ -76,7 +77,7 @@ class MountainCar(Env):
             # print('position.shape = ' + str(position.shape))
             # print('velocity.shape = ' + str(velocity.shape))
             # print('reset_velocity.shape = ' + str(reset_velocity.shape))
-            velocity = jax.lax.cond(reset_velocity[0], lambda x: jnp.zeros((1,)), lambda x: x, velocity)
+            velocity = jax.lax.cond(reset_velocity[0], velocity, lambda x: jnp.zeros((1,)), velocity, lambda x: x)
             # print('velocity.shape AFTER = ' + str(velocity.shape))
             return jnp.reshape(jnp.array([position, velocity]), (2,))
         

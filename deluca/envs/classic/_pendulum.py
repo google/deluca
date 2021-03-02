@@ -17,7 +17,7 @@ import gym
 import jax
 import jax.numpy as jnp
 import numpy as np
-
+from gym import spaces
 from deluca.envs.core import Env
 from deluca.utils import Random
 
@@ -36,8 +36,8 @@ class Pendulum(Env):
     max_torque = 2.0  # gym 2.
     high = np.array([1.0, 1.0, max_speed])
 
-    action_space = gym.spaces.Box(low=-max_torque, high=max_torque, shape=(1,), dtype=np.float32)
-    observation_space = gym.spaces.Box(low=-high, high=high, dtype=np.float32)
+    action_space = spaces.Box(low=-max_torque, high=max_torque, shape=(1,), dtype=np.float32)
+    observation_space = spaces.Box(low=-high, high=high, dtype=np.float32)
 
     def __init__(self, reward_fn=None, seed=0, horizon=50):
         # self.reward_fn = reward_fn or default_reward_fn

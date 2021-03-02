@@ -71,7 +71,7 @@ class CartPole(Env):
     """
 
     def __init__(self, reward_fn=None, seed=0):
-
+        self.viewer = None
         self.gravity = 9.8
         self.masscart = 1.0
         self.masspole = 0.1
@@ -111,12 +111,12 @@ class CartPole(Env):
 
         self.reset()
 
-    @jax.jit
+    # @jax.jit
     def dynamics(self, state, action):
 
         x, x_dot, theta, theta_dot = state
 
-        force = jax.lax.cond(action == 1, lambda x: x, lambda x: -x, self.force_mag)
+        force = jax.lax.cond(action == 1, self.force_mag, lambda x: x, self.force_mag, lambda x: -x)
 
         costheta = jnp.cos(theta)
         sintheta = jnp.sin(theta)
@@ -147,16 +147,20 @@ class CartPole(Env):
         return self.state
 
     def step(self, action):
-
+        print('self.state:' + str(self.state))
+        print('action:' + str(action))
+        print('type(self.state):' + str(type(self.state)))
+        print('type(action):' + str(type(action)))
         self.state = self.dynamics(self.state, action)
         x, x_dot, theta, theta_dot = self.state
 
         done = jax.lax.cond(
             (jnp.abs(x) > jnp.abs(self.x_threshold))
             + (jnp.abs(theta) > jnp.abs(self.theta_threshold_radians)),
-            lambda done: True,
-            lambda done: False,
             None,
+            lambda done: True,
+            None,
+            lambda done: False,
         )
 
         reward = 1 - done

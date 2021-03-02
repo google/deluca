@@ -93,7 +93,7 @@ class Env(JaxObject, gym.Env):
     def step(self, action):
         reward = self.reward_fn(self.state, action)
         self.state = self.dynamics(self.state, action)
-
+        self.last_u = action
         return self.observation, reward, False, {}
 
     def jacobian(self, func, state, action):
