@@ -81,7 +81,9 @@ class Env(JaxObject, gym.Env):
     def check_action(self, action):
         # TODO: Check performance penalty of this check
         if not self.action_space.contains(action):
-            raise ValueError(f"Env `{self.name}` does not contain {action} in its action space.")
+            raise ValueError(
+                f"Env `{self.name}` does not contain {action} in its action space."
+            )
 
     def check_observation(self, observation):
         # TODO: Check performance penalty of this check
@@ -93,7 +95,7 @@ class Env(JaxObject, gym.Env):
     def step(self, action):
         reward = self.reward_fn(self.state, action)
         self.state = self.dynamics(self.state, action)
-        self.last_u = action
+
         return self.observation, reward, False, {}
 
     def jacobian(self, func, state, action):
@@ -106,3 +108,10 @@ class Env(JaxObject, gym.Env):
         if self.viewer:
             self.viewer.close()
             self.viewer = None
+
+class JaxEnv(JaxObject, Env):
+    def jacobian(self, func, state, action):
+        return jax.jacrev(func, argnums=(0, 1))(state, action)
+
+    def hessian(self, func, state, action):
+        return jax.hessian(func, argnums=(0, 1))(state, action)
