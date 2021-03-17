@@ -84,6 +84,8 @@ class GPC(Agent):
 
         self.lr_scale, self.decay = lr_scale, decay
 
+        self.bias = 0
+
         # Model Parameters
         # initial linear policy / perturbation contributions / bias
         # TODO: need to address problem of LQR with jax.lax.scan
