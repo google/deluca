@@ -54,6 +54,7 @@ class BalloonLung(Lung):
         waveform=None,
         reward_fn=None,
     ):
+        self.viewer = None
         # dynamics hyperparameters
         self.min_volume = 1.5
         self.C = C
