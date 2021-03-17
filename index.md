@@ -28,10 +28,10 @@ for _ in range(1000):
 If you find our work helpful, please consider citing the associated paper:
 
 ```
-Gradu P, Hallman J, Suo D, Yu A, Agarwal N, Ghai U,
-Singh K, Zhang C, Majumdar A, Hazan E. Deluca--A 
-Differentiable Control Library: Environments, Methods, 
-and Benchmarking. Differentiable Computer Vision, 
-Graphics, and Physics in Machine Learning (Neurips 
-2020 Workshop). 2020 December 11.
+@article{gradu2020deluca,
+  title={Deluca--A Differentiable Control Library: Environments, Methods, and Benchmarking},
+  author={Gradu, Paula and Hallman, John and Suo, Daniel and Yu, Alex and Agarwal, Naman and Ghai, Udaya and Singh, Karan and Zhang, Cyril and Majumdar, Anirudha and Hazan, Elad},
+  journal={Differentiable Computer Vision, Graphics, and Physics in Machine Learning (Neurips 2020 Workshop)},
+  year={2020}
+}
 ```
