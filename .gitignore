@@ -5,6 +5,8 @@ tmp
 __pycache__/
 *.py[cod]
 *$py.class
+*jekyll*
+_site
 
 # C extensions
 *.so
