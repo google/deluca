@@ -1,37 +1,37 @@
-## Welcome to GitHub Pages
+---
+layout: default
+title: Home
+---
+## Reinforcement learning with derivatives
 
-You can use the [editor on GitHub](https://github.com/google/deluca/edit/gh-pages/index.md) to maintain and preview the content for your website in Markdown files.
+[deluca](https://github.com/google/deluca) is a library modeled after [OpenAI Gym](https://github.com/openai/gym) that provides differentiable environments, control algorithms that take advantage of such environments, and benchmarking tools.
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
+This software is currently in alpha and is changing rapidly. We have a paper describing the library available [here](https://arxiv.org/abs/2102.09968).
 
-### Markdown
+### Example without derivatives
+```python
+from deluca.envs import DelayLung
+from deluca.agents import PID
 
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
+env = DelayLung()
+agent = PID([3.0, 4.0, 0.0])
 
-```markdown
-Syntax highlighted code block
-
-# Header 1
-## Header 2
-### Header 3
-
-- Bulleted
-- List
-
-1. Numbered
-2. List
-
-**Bold** and _Italic_ and `Code` text
-
-[Link](url) and ![Image](src)
+for _ in range(1000):
+  error = env.observation["error"]
+  control = agent(error)
+  obs, reward, done, info = env.step(control)
+  if done:
+    break
 ```
 
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
+### Citation
+If you find our work helpful, please consider citing the associated paper:
 
-### Jekyll Themes
-
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/google/deluca/settings). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
-
-### Support or Contact
-
-Having trouble with Pages? Check out our [documentation](https://docs.github.com/categories/github-pages-basics/) or [contact support](https://support.github.com/contact) and we’ll help you sort it out.
+```
+Gradu P, Hallman J, Suo D, Yu A, Agarwal N, Ghai U,
+Singh K, Zhang C, Majumdar A, Hazan E. Deluca--A 
+Differentiable Control Library: Environments, Methods, 
+and Benchmarking. Differentiable Computer Vision, 
+Graphics, and Physics in Machine Learning (Neurips 
+2020 Workshop). 2020 December 11.
+```
