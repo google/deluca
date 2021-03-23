@@ -53,7 +53,7 @@ lung = BalloonLung(leak=False,
                    dt=0.03,
                    waveform=None,
                    reward_fn=None)
-lung = Monitor(lung, './video', force=True)
+lung = Monitor(lung, './video', force=True) # for saving video
 
 T = 100
 xs = jnp.array(jnp.arange(T))
