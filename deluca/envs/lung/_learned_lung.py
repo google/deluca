@@ -33,6 +33,7 @@ class LearnedLung(Lung):
         waveform=None,
         reward_fn=None,
     ):
+        self.viewer = None
         self.weights = weights
         self.pressure_mean = pressure_mean
         self.pressure_std = pressure_std
