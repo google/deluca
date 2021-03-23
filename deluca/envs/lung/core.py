@@ -32,7 +32,8 @@ class Lung(Env):
 
         return rgb_data
 
-    def render(self, mode="human"):
+    # scale parameter controls the relative size of the radius compared to base
+    def render(self, mode="human", scale=1.0):
         screen_width = 600
         screen_height = 400
 
@@ -93,7 +94,7 @@ class Lung(Env):
         print('real_possible_radii:' + str(real_possible_radii))
         # assert(len(real_possible_radii) == 1)
         # radius = real_possible_radii[0]
-        radius = max(real_possible_radii)
+        radius = max(real_possible_radii) * scale
         print('radius:' + str(radius))
         self.balloon_trans.set_translation(0.6 * bottom_width / 2.0, 0.1*20*radius)
         self.balloon_trans.set_scale(0.1*radius, 0.1*radius)
