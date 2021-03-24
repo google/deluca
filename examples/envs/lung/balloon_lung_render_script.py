@@ -4,9 +4,11 @@ import gym
 import jax.numpy as jnp
 from deluca.envs import BalloonLung
 from deluca.agents import PID
-# from pyvirtualdisplay import Display
 import matplotlib.pyplot as plt
 from IPython import display
+import gym
+from gym.wrappers import Monitor
+
 
 def show_state(env, step=0, info=""):
     plt.figure(3)
@@ -41,7 +43,7 @@ def loop(context, i):
     return (env, (agent_in, agent_out)), reward
 
 
-# BalloonLung env
+# DelayLung env
 lung = BalloonLung(leak=False,
                    peep_valve=5.0,
                    PC=40.0,
@@ -51,6 +53,8 @@ lung = BalloonLung(leak=False,
                    dt=0.03,
                    waveform=None,
                    reward_fn=None)
+lung = Monitor(lung, './video', force=True) # for saving video
+
 T = 100
 xs = jnp.array(jnp.arange(T))
 agent_in = PID([3.0, 4.0, 0.0])
@@ -61,3 +65,4 @@ for i in range(T):
     (lung, (agent_in, agent_out)), r = loop((lung, (agent_in, agent_out)), i)
     reward += r
 reward_forloop = reward
+lung.close()

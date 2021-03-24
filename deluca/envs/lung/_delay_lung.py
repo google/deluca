@@ -31,6 +31,7 @@ class DelayLung(Lung):
         waveform=None,
         reward_fn=None,
     ):
+        self.viewer = None
         self.delay = delay
         self.control_gain = control_gain
         self.inertia = inertia

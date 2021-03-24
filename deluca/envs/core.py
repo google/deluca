@@ -109,7 +109,7 @@ class Env(JaxObject, gym.Env):
             self.viewer.close()
             self.viewer = None
 
-class JaxEnv(JaxObject, Env):
+class JaxEnv(Env, JaxObject):
     def jacobian(self, func, state, action):
         return jax.jacrev(func, argnums=(0, 1))(state, action)
 

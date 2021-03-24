@@ -24,7 +24,7 @@ class Lung(Env):
         - Save fig as fig.self
         - Modify close to delete fig and accumulated data
     """
-
+    metadata = {'render.modes': ['human', 'rgb_array']}
     def render(self):
         fig, ax = plt.subplots()
         buf, (nrow, ncol) = fig.canvas.print_to_buffer()
@@ -32,7 +32,8 @@ class Lung(Env):
 
         return rgb_data
 
-    def render(self, mode="human"):
+    # scale parameter controls the relative size of the radius compared to base
+    def render(self, mode="human", scale=1.0):
         screen_width = 600
         screen_height = 400
 
@@ -81,7 +82,10 @@ class Lung(Env):
         self.bottom_trans.set_translation(screen_width / 2.0, bottom_rect_y)
 
         # Edit the balloon and top
-        vol, pres = self.state['volume'], self.state['pressure']
+        if 'pressure' in self.state.keys():
+            pres = self.state['pressure']
+        elif 'normalized_pressures' in self.state.keys():
+            pres = self.pressure
         print('pres:' + str(pres))
         radius_polynomial = np.array([0.01*pres, -1, 0, 0, 0, 0, 0, 1]) # https://en.wikipedia.org/wiki/Two-balloon_experiment
         possible_radii = np.roots(radius_polynomial)
@@ -90,7 +94,7 @@ class Lung(Env):
         print('real_possible_radii:' + str(real_possible_radii))
         # assert(len(real_possible_radii) == 1)
         # radius = real_possible_radii[0]
-        radius = max(real_possible_radii)
+        radius = max(real_possible_radii) * scale
         print('radius:' + str(radius))
         self.balloon_trans.set_translation(0.6 * bottom_width / 2.0, 0.1*20*radius)
         self.balloon_trans.set_scale(0.1*radius, 0.1*radius)
