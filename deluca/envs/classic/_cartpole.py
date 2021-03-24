@@ -69,7 +69,7 @@ class CartPole(Env):
         Considered solved when the average reward is greater than or equal to
         195.0 over 100 consecutive trials.
     """
-
+    metadata = {'render.modes': ['human', 'rgb_array']}
     def __init__(self, reward_fn=None, seed=0):
         self.viewer = None
         self.gravity = 9.8
