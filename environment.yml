@@ -8,3 +8,6 @@ dependencies:
   - jax
   - jaxlib>=0.1.55
   - gym
+  - box2D
+  - termcolor
+  - pyglet==1.5.11
