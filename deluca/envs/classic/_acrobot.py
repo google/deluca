@@ -88,7 +88,7 @@ class Acrobot(Env):
     action_arrow = None
     domain_fig = None
     actions_num = 3
-
+    metadata = {'render.modes': ['human', 'rgb_array']}
     def __init__(self, seed=0, horizon=50):
         high = np.array([1.0, 1.0, 1.0, 1.0, self.MAX_VEL_1, self.MAX_VEL_2], dtype=np.float32)
         low = -high
