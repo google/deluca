@@ -10,6 +10,16 @@ import gym
 from gym.wrappers import Monitor
 from tqdm import tqdm
 
+def disable_view_window():
+    from gym.envs.classic_control import rendering
+    org_constructor = rendering.Viewer.__init__
+
+    def constructor(self, *args, **kwargs):
+        org_constructor(self, *args, **kwargs)
+        self.window.set_visible(visible=False)
+
+    rendering.Viewer.__init__ = constructor
+
 def show_state(env, step=0, info=""):
     plt.figure(3)
     plt.clf()
@@ -55,12 +65,15 @@ def loop(context, i):
 def get_errs(T, controller, A, B):
     env = LDS(state_size=3, action_size=1, A=A, B=B)
     errs = [0.0]
+    disable_view_window()
     
     for i in tqdm(range(1, T)):
         (env, controller), error = loop((env, controller), i)
         errs.append(float(error))
     
     return errs
+
+
 
 # for loop version
 T = 20
