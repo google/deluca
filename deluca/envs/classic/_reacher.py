@@ -3,6 +3,7 @@ import jax
 from deluca.envs.core import Env
 
 class Reacher(Env):
+    metadata = {'render.modes': ['human', 'rgb_array']}
     def __init__(self, parameter=0.0):
         self.H, self.dt, self.state_dim, self.action_dim = 200, 0.01, 6, 2
         self.m1, self.m2, self.l1, self.l2, self.g = 1.0, 1.0, 1.0, 1.0, parameter
