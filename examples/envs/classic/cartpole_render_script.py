@@ -4,7 +4,6 @@ import gym
 import jax.numpy as jnp
 from deluca.envs import CartPole
 from deluca.agents import Zero
-from pyvirtualdisplay import Display
 import matplotlib.pyplot as plt
 from IPython import display
 import gym
@@ -33,8 +32,6 @@ def loop(context, i):
 env = CartPole()
 env = Monitor(env, './video', video_callable=lambda episode_id: True, force=True)
 agent = Zero(())
-# display_dummy = Display(visible=False, size=(1400, 900))
-# display_dummy.start()
 T = 75
 print(env.reset())
 reward = 0
