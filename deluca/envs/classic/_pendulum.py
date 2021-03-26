@@ -38,7 +38,7 @@ class Pendulum(Env):
 
     action_space = spaces.Box(low=-max_torque, high=max_torque, shape=(1,), dtype=np.float32)
     observation_space = spaces.Box(low=-high, high=high, dtype=np.float32)
-
+    metadata = {'render.modes': ['human', 'rgb_array']}
     def __init__(self, reward_fn=None, seed=0, horizon=50):
         # self.reward_fn = reward_fn or default_reward_fn
         self.dt = 0.05
@@ -53,7 +53,7 @@ class Pendulum(Env):
         self.n, self.m = 2, 1
         self.angle_normalize = angle_normalize
         self.nsamples = 0
-
+        self.last_u = None
         self.random = Random(seed)
 
         self.reset()
@@ -61,6 +61,7 @@ class Pendulum(Env):
         # @jax.jit
         def _dynamics(state, action):
             self.nsamples += 1
+            self.last_u = action
             th, thdot = state
             g = 10.0
             m = 1.0

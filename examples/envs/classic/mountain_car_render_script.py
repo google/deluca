@@ -1,9 +1,9 @@
+
 import deluca
 import gym
-# import gnwrapper
-import jax.numpy as jnp
-from deluca.envs import CartPole
-from deluca.agents import Zero
+import jax
+from deluca.envs import MountainCar
+from deluca.agents import ILQR
 import matplotlib.pyplot as plt
 from IPython import display
 import gym
@@ -20,28 +20,28 @@ def show_state(env, step=0, info=""):
     display.clear_output(wait=True)
     display.display(plt.gcf())
 
+
 def loop(context, i):
     env, agent = context
     control = agent(env.state)
-    print('control:' + str(control))
-    print('env.state:' + str(env.state))
-    _, reward, done, _ = env.step(control)
+    _, reward, _, _ = env.step(control)
     show_state(env, step=i)
-    return (env, agent), reward, done
+    return (env, agent), reward
 
-env = CartPole()
-env = Monitor(env, './video', video_callable=lambda episode_id: True, force=True)
-agent = Zero(())
+# ILQR
+agent = ILQR()
+agent.train(MountainCar(), 10)
+
+
+# for loop version
 T = 75
+env = MountainCar()
+env = Monitor(env, './video', video_callable=lambda episode_id: True, force=True)
 print(env.reset())
 reward = 0
 for i in range(T):
-    (env, agent), r, done = loop((env, agent), i)
+    (env, agent), r = loop((env, agent), i)
     reward += r
-    if done:
-        break
-# env.reset()
-# env.display()
 reward_forloop = reward
 print('reward_forloop = ' + str(reward_forloop))
 env.close()

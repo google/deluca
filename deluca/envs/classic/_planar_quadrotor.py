@@ -29,7 +29,6 @@ def tornadoes(x, y):
 
 class PlanarQuadrotor(Env):
     metadata = {"render.modes": ["human", "rgb_array"], "video.frames_per_second": 30}
-
     def __init__(self, wind=0.0, wind_func=dissipative):
         self.m, self.l, self.g, self.dt, self.H, self.wind, self.wind_func = (
             0.1,
@@ -101,12 +100,12 @@ class PlanarQuadrotor(Env):
 
             self.viewer = rendering.Viewer(1000, 1000)
             self.viewer.set_bounds(-1.2, 1.2, -1.2, 1.2)
-            fname = path.dirname(__file__) + "/drone.png"
+            fname = path.dirname(__file__) + "/assets/drone.png"
             self.img = rendering.Image(fname, 0.4, 0.17)
             self.img.set_color(1.0, 1.0, 1.0)
             self.imgtrans = rendering.Transform()
             self.img.add_attr(self.imgtrans)
-            fnamewind = path.dirname(__file__) + "/wind.png"
+            fnamewind = path.dirname(__file__) + "/assets/wind.png"
             self.imgwind = rendering.Image(fnamewind, 2.4, 2.4)
             self.imgwind.set_color(0.5, 0.5, 0.5)
             self.imgtranswind = rendering.Transform()
