@@ -34,7 +34,6 @@ from deluca.utils import Random
 
 
 class MountainCar(Env):
-    metadata = {'render.modes': ['human', 'rgb_array']}
     def __init__(self, goal_velocity=0, seed=0, horizon=50):
         self.viewer = None
         self.min_action = -1.0
