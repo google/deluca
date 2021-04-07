@@ -8,6 +8,12 @@ title: Home
 
 This software is currently in alpha and is changing rapidly. We have a paper describing the library available [here](https://arxiv.org/abs/2102.09968).
 
+### Getting started
+`deluca` is a Python library that you can install from source ([link](https://github.com/google/deluca)). It will also be available via `pip install`.
+
+### Example notebooks
+We maintain a number of Jupyter notebooks to help users get started ([link](https://github.com/google/deluca/tree/main/examples)).
+
 ### Example without derivatives
 ```python
 from deluca.envs import DelayLung
