@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """tests.test_deluca"""
-from deluca import __version__
+from deluca._version import __version__
 
 
 def test_version():
