@@ -14,8 +14,8 @@ parser.add_argument(
     "-d",
     "--dst",
     type=pathlib.Path,
-    help="Parent directory to place new plugin (default: '.')",
-    default=pathlib.Path("."),
+    help="Parent directory to place new plugin (default: 'PATH/deluca/..')",
+    default=pathlib.Path(__file__).absolute().parent.parent.parent,
 )
 
 args = parser.parse_args()

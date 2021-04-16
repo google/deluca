@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2021 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,18 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from deluca.agents._bpc import BPC
-from deluca.agents._gpc import GPC
-from deluca.agents._hinf import Hinf
-from deluca.agents._ilqr import ILQR
-from deluca.agents._lqr import LQR
-from deluca.agents._pid import PID
-from deluca.agents._zero import Zero
-from deluca.agents._drc import DRC
-from deluca.agents._adaptive import Adaptive
-from deluca.agents._deep import Deep
-from deluca.agents.core import Agent
-from deluca.agents._ilc import ILC
-from deluca.agents._igpc import IGPC
-
-__all__ = ["LQR", "PID", "BPC", "GPC", "ILQR", "Hinf", "Zero", "DRC", "Adaptive", "Deep", "Agent", "ILC", "IGPC"]
