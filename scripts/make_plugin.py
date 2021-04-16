@@ -43,10 +43,16 @@ for file_path in path.glob("**/*"):
     if file_path.is_file():
         with fileinput.FileInput(file_path.absolute(), inplace=True) as file:
             for line in file:
-                print(line.replace("deluca-plugin", f"deluca-{args.name}"), end="")
+                line = line.replace("deluca.plugin", f"deluca.{args.name}")
+                line = line.replace("deluca-plugin", f"deluca-{args.name}")
+                line = line.replace("deluca/plugin", f"deluca/{args.name}")
+                print(line, end="")
 
 lib_path = path / "deluca" / args.name
 lib_path.mkdir()
 
 with open(lib_path / "__init__.py", "w") as init_file:
     pass
+
+with open(lib_path / "_version.py", "w") as version_file:
+    version_file.write("__version__ = 0.0.1")
