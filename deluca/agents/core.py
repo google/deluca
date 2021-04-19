@@ -14,15 +14,11 @@
 import inspect
 import logging
 
-from deluca.core import JaxObject
+from deluca.core import Entity
 
 AgentRegistry = {}
 
 logger = logging.getLogger(__name__)
-
-# TODO
-# - Support hierarchical agents
-
 
 def make_agent(cls, *args, **kwargs):
     if cls not in AgentRegistry:
@@ -30,7 +26,7 @@ def make_agent(cls, *args, **kwargs):
     return AgentRegistry[cls](*args, **kwargs)
 
 
-class Agent(JaxObject):
+class Agent(Entity):
     @classmethod
     def __init_subclass__(cls, *args, **kwargs):
         """For avoiding a decorator for each subclass"""

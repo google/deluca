@@ -14,11 +14,7 @@
 import inspect
 import logging
 
-import gym
-import jax
-import jax.numpy as jnp
-
-from deluca.core import JaxObject
+from deluca.core import Entity
 
 EnvRegistry = {}
 
@@ -35,8 +31,13 @@ def make_env(cls, *args, **kwargs):
     return EnvRegistry[cls](*args, **kwargs)
 
 
-class Env(JaxObject, gym.Env):
+class Env(Entity):
+    # Set this in SOME subclasses
+    metadata = {'render.modes': []}
     reward_range = (-float("inf"), float("inf"))
+    spec = None
+
+    # Set these in ALL subclasses
     action_space = None
     observation_space = None
 
@@ -98,20 +99,20 @@ class Env(JaxObject, gym.Env):
 
         return self.observation, reward, False, {}
 
-    def jacobian(self, func, state, action):
-        return jax.jacrev(func, argnums=(0, 1))(state, action)
-
-    def hessian(self, func, state, action):
-        return jax.hessian(func, argnums=(0, 1))(state, action)
-
     def close(self):
         if self.viewer:
             self.viewer.close()
             self.viewer = None
 
-class JaxEnv(Env, JaxObject):
-    def jacobian(self, func, state, action):
-        return jax.jacrev(func, argnums=(0, 1))(state, action)
+    def seed(self):
+        return
 
-    def hessian(self, func, state, action):
-        return jax.hessian(func, argnums=(0, 1))(state, action)
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, *args):
+        self.close()
+        return False
+
+    def render(self):
+        raise NotImplementedError()
