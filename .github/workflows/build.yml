@@ -24,7 +24,7 @@ jobs:
       #- name: Check formatting
         #run: |
           #black --check --line-length=100 .
-      - name: Test with pytest
+      # - name: Test with pytest
         # run: |
           # pytest --cov=./ --cov-report=xml --cov-config=setup.cfg
-        run: pytest
+        # run: pytest
