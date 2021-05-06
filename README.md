@@ -11,7 +11,7 @@ Performant, differentiable reinforcement learning
    namespace packages)
    - [`deluca-jax`](https://github.com/MinRegret/deluca-jax): differentiable environments and relevant agents implemented
      using `jax`
-   - [`deluca-lung`](https://github.com/MinRegret/deluca-lung): differentiable lung simulators and relevant agents
+   - [`deluca-lung`](https://pypi.org/project/deluca-lung/): differentiable lung simulators and relevant agents
      implemented in `PyTorch`
 4. Documentation forthcoming!
 

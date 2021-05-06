@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from deluca.utils.random import Random
 
-__all__ = ["Random"]
+from deluca.utils.experiment import experiment
+
+__all__ = ["experiment"]
