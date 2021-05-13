@@ -17,8 +17,6 @@ import os
 import pickle
 import logging
 
-import gym
-
 
 class Entity:
     @property
@@ -55,7 +53,7 @@ def make_env(cls, *args, **kwargs):
     return EnvRegistry[cls](*args, **kwargs)
 
 
-class Env(Entity, gym.core.Env):
+class Env(Entity):
     # Set this in SOME subclasses
     metadata = {"render.modes": []}
     reward_range = (-float("inf"), float("inf"))
@@ -68,6 +66,7 @@ class Env(Entity, gym.core.Env):
     def __new__(cls, *args, **kwargs):
         """For avoiding super().__init__()"""
         obj = super().__new__(cls, *args, **kwargs)
+        obj.__setattr__("state", {})
 
         for kw, arg in kwargs.items():
             obj.__setattr__(kw, arg)
@@ -87,10 +86,6 @@ class Env(Entity, gym.core.Env):
         super().__init_subclass__(*args, **kwargs)
         if cls.__name__ not in EnvRegistry and not inspect.isabstract(cls):
             EnvRegistry[cls.__name__] = cls
-
-    @property
-    def state(self):
-        raise NotImplementedError()
 
     @property
     def observation(self):
