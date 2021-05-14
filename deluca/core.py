@@ -56,7 +56,6 @@ def make_env(cls, *args, **kwargs):
 class Env(Entity):
     # Set this in SOME subclasses
     metadata = {"render.modes": []}
-    reward_range = (-float("inf"), float("inf"))
     spec = None
 
     # Set these in ALL subclasses
@@ -65,7 +64,7 @@ class Env(Entity):
 
     def __new__(cls, *args, **kwargs):
         """For avoiding super().__init__()"""
-        obj = super().__new__(cls, *args, **kwargs)
+        obj = super().__new__(cls)
         obj.__setattr__("state", {})
 
         for kw, arg in kwargs.items():
@@ -94,9 +93,6 @@ class Env(Entity):
         """
         return self.state
 
-    def reward_fn(self, state, action):
-        return 0
-
     def reset(self):
         logger.warn(f"`reset` for agent `{self.name}` not implemented")
 
@@ -116,10 +112,9 @@ class Env(Entity):
             )
 
     def step(self, action):
-        reward = self.reward_fn(self.state, action)
         self.state = self.dynamics(self.state, action)
 
-        return self.observation, reward, False, {}
+        return self.observation
 
     def close(self):
         if self.viewer:
@@ -159,7 +154,7 @@ class Agent(Entity):
         if cls.__name__ not in AgentRegistry and not inspect.isabstract(cls):
             AgentRegistry[cls.__name__] = cls
 
-    def __call__(self, observation):
+    def action(self, observation):
         raise NotImplementedError()
 
     def reset(self):
