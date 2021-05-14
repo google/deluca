@@ -64,7 +64,7 @@ class Env(Entity):
 
     def __new__(cls, *args, **kwargs):
         """For avoiding super().__init__()"""
-        obj = super().__new__(cls)
+        obj = object.__new__(cls)
         obj.__setattr__("state", {})
 
         for kw, arg in kwargs.items():
