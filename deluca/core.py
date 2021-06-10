@@ -13,21 +13,27 @@
 # limitations under the License.
 """
 TODO:
-- attrs and init_subclass don't play well together
-    - We do all this mumbo jumbo with interfaces and setting methods in a bizarre way instead of just using inheritance
-- Don't be lazy with globals()
-- jax.core.valid_jaxtype checks values, but not types, so we don't have a check that state is a jax type
+- jax.core.valid_jaxtype checks values, but not types, so we don't have a check
+  that state is a jax type
+- Explain why dynamics etc are not static methods (why pass self explicitly as
+arg?)
+- jax convenience functions are a bit of a kludge
+- extracting state from the env object is a little messy
 """
 
 import os
 import pickle
-import inspect
+import typing
 import jax
 import attr
 
 import deluca
 import zope.interface
 from zope.interface.verify import verifyClass
+
+
+class IObj(zope.interface.Interface):
+    """Interface describing deluca objects"""
 
 
 class IEnv(zope.interface.Interface):
@@ -56,31 +62,37 @@ class IAgent(zope.interface.Interface):
         """Updates the agent with the reward"""
 
 
-def evolve(self, **changes):
-    return attr.evolve(self, **changes)
+def evolve(obj, **changes):
+    return attr.evolve(obj, **changes)
 
 
-@property
-def name(self):
-    return self.__class__.__name__
+def attrib(default=None, pytree=False, **kwargs):
+    if default is not None:
+        kwargs["default"] = default
+
+    if pytree:
+        if "metadata" not in kwargs:
+            kwargs["metadata"] = {}
+        kwargs["metadata"]["pytree"] = True
+
+    return attr.ib(**kwargs)
 
 
-def save(self, path):
+def pytree(default=None, **kwargs):
+    return attrib(default=default, pytree=True, **kwargs)
+
+
+def save(obj, path):
     dirname = os.path.abspath(os.path.dirname(path))
     if not os.path.exists(dirname):
         os.makedirs(dirname)
 
     with open(path, "wb") as file:
-        pickle.dump(self, file)
+        pickle.dump(obj, file)
 
 
-@classmethod
-def load(cls, path):
+def load(path):
     return pickle.load(open(path, "rb"))
-
-
-def throw(self, err, msg):
-    raise err(f"Class {self.name}: {msg}")
 
 
 def flatten(self):
@@ -88,48 +100,52 @@ def flatten(self):
     meta_fields = []
 
     for field in attr.fields(self.__class__):
-        if "state" in field.metadata and field.metadata["state"]:
+        if "pytree" in field.metadata and field.metadata["pytree"]:
             data_fields.append(field.name)
         else:
             meta_fields.append(field.name)
 
-    return tuple(getattr(self, name) for name in data_fields), {
-        "class": self.__class__,
-        "meta": tuple(getattr(self, name) for name in meta_fields),
-    }
+    children = tuple(getattr(self, name) for name in data_fields)
+    meta = dict(zip(meta_fields, tuple(getattr(self, name) for name in meta_fields)))
+
+    return children, {"class": self.__class__, "meta": meta, "data_fields": data_fields}
 
 
 def unflatten(aux, children):
-    return aux["class"](*(children + aux["meta"]))
+    data_fields = aux["data_fields"]
+    data = dict(zip(data_fields, children))
+    data.update(aux["meta"])
+    return aux["class"](**data)
 
 
-def reset(self):
-    return self.__class__()
+def _make_and_check_class(iface, cls, statics=None):
+    statics = statics or []
 
+    for member in set(dir(cls)) - set(statics):
+        if member.startswith("_") or (
+            member in cls.__annotations__
+            and hasattr(cls.__annotations__[member], "__origin__")
+            and cls.__annotations__[member].__origin__ is typing.ClassVar
+        ):
+            continue
 
-required_fns = [
-    "evolve",
-    "name",
-    "save",
-    "load",
-    "throw",
-    "flatten",
-    "unflatten",
-]
-overrideable_fns = ["reset"]
+        value = getattr(cls, member)
+        if not isinstance(getattr(cls, member), attr._make._CountingAttr):
+            setattr(cls, member, attr.ib(default=value))
+        cls.__annotations__[member] = type(value)
 
+    # NOTE: We avoid setting functions without inheritance, but make an
+    # exception here
+    for member in statics:
+        if not isinstance(cls.__dict__[member], staticmethod):
+            raise TypeError(
+                f"All public methods must be static. Method "
+                f"`{member}` in `{cls.__name__}` is not. Either make it "
+                f"static or prefix with `_` to indicate it is "
+                f"private."
+            )
 
-def _make_and_check_class(iface, cls):
-    for name in required_fns:
-        # WARNING: This is bad. We should just not be lazy.
-        setattr(cls, name, globals()[name])
-
-    for name in overrideable_fns:
-        if not hasattr(cls, name):
-            # WARNING: This is bad. We should just not be lazy.
-            setattr(cls, name, globals()[name])
-
-    cls = attr.s(frozen=True, kw_only=True)(cls)
+    cls = attr.s(auto_attribs=True, kw_only=True)(cls)
 
     cls = zope.interface.implementer(iface)(cls)
     verifyClass(iface, cls)
@@ -139,15 +155,52 @@ def _make_and_check_class(iface, cls):
     return cls
 
 
+def obj(cls: type):
+    return _make_and_check_class(IObj, cls, [])
+
+
 def env(cls: type):
-    return _make_and_check_class(IEnv, cls)
+    # NOTE: And adding a bunch of functions here...
+    def f_x(env, action):
+        return jax.jacfwd(cls.dynamics, argnums=0)(env, action)
+
+    def f_u(env, action):
+        return jax.jacfwd(cls.dynamics, argnums=1)(env, action)
+
+    def c_x(env, action):
+        return jax.grad(cls.cost, argnums=0)(env, action)
+
+    def c_u(env, action):
+        return jax.grad(cls.cost, argnums=1)(env, action)
+
+    def c_xx(env, action):
+        return jax.hessian(cls.cost, argnums=0)(env, action)
+
+    def c_uu(env, action):
+        return jax.hessian(cls.cost, argnums=1)(env, action)
+
+    for func in [f_x, f_u, c_x, c_u, c_xx, c_uu]:
+        if not hasattr(cls, func.__name__):
+            setattr(cls, func.__name__, staticmethod(func))
+
+    cls = _make_and_check_class(
+        IEnv, cls, ["reset", "dynamics", "cost", "f_x", "f_u", "c_x", "c_u", "c_xx", "c_uu"]
+    )
+
+    return cls
 
 
 def agent(cls: type):
-    return _make_and_check_class(IAgent, cls)
+    return _make_and_check_class(IAgent, cls, ["reset", "action", "update"])
 
 
+deluca.obj = obj
 deluca.env = env
 deluca.agent = agent
+deluca.evolve = evolve
+deluca.attrib = attrib
+deluca.pytree = pytree
+deluca.save = save
+deluca.load = load
 deluca.IEnv = IEnv
 deluca.IAgent = IAgent

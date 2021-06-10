@@ -14,56 +14,63 @@
 
 from typing import Callable
 
-import attr
-import deluca.core
 import jax.numpy as jnp
 
-dissipative = lambda x, y, wind: [wind * x, wind * y]
-constant = lambda x, y, wind: [wind * jnp.cos(jnp.pi / 4.0), wind * jnp.sin(jnp.pi / 4.0)]
+from deluca.core import env
+from deluca.core import evolve
+from deluca.core import state
 
 
-@deluca.env
+def dissipative(x, y, wind):
+    return [wind * x, wind * y]
+
+
+def constant(x, y, wind):
+    return [wind * jnp.cos(jnp.pi / 4.0), wind * jnp.sin(jnp.pi / 4.0)]
+
+
+state_init = jnp.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+m_init, g_init = 0.1, 9.81
+
+
+@env
 class PlanarQuadrotor:
-    m: float = attr.ib(default=0.1)
-    l: float = attr.ib(default=0.2)
-    g: float = attr.ib(default=9.81)
-    dt: float = attr.ib(default=0.05)
-    H: float = attr.ib(default=100.0)
-    wind: float = attr.ib(default=0.0)
-    action_dim: int = attr.ib(default=2)
-    state_dim: int = attr.ib(default=6)
-    wind_func: Callable = attr.ib(default=dissipative)
-    initial_state: jnp.ndarray = attr.ib(default=jnp.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]))
-    goal_state: jnp.ndarray = attr.ib(default=jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
-    goal_action: jnp.ndarray = attr.ib()
-    last_action: jnp.ndarray = attr.ib(default=jnp.array([0.0, 0.0]))
-    h: int = attr.ib(default=0)
-    state: jnp.ndarray = attr.ib(metadata={"state": True})
+    m = m_init
+    l = 0.2
+    g = g_init
+    dt = 0.05
+    H = 100
+    wind = 0.0
+    wind_func = dissipative
+    initial_state = state_init
+    goal_state = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    goal_action = jnp.array([m_init * g_init / 2.0, m_init * g_init / 2.0])
+    last_action = jnp.array([0.0, 0.0])
+    h = 0
+    state = state(state_init)
 
-    @goal_action.default
-    def __goal_action_default(self):
-        return jnp.array([self.m * self.g / 2.0, self.m * self.g / 2.0])
-
-    @state.default
-    def __state_default(self):
-        return self.initial_state
-
-    def wind_field(self, x, y):
+    def _wind_field(self, x, y):
         return self.wind_func(x, y, self.wind)
 
-    def dynamics(self, action):
-        x, y, th, xdot, ydot, thdot = self.state
+    @staticmethod
+    def reset(env):
+        return evolve(env, state=env.initial_state)
+
+    @staticmethod
+    def dynamics(env, action):
+        x, y, th, xdot, ydot, thdot = env.state
         u1, u2 = action
-        m, g, l, dt = self.m, self.g, self.l, self.dt
-        wind = self.wind_field(x, y)
+        m, g, l, dt = env.m, env.g, env.l, env.dt
+        wind = env.wind_field(x, y)
         xddot = -(u1 + u2) * jnp.sin(th) / m + wind[0] / m
         yddot = (u1 + u2) * jnp.cos(th) / m - g + wind[1] / m
         thddot = l * (u2 - u1) / (m * l ** 2)
         state_dot = jnp.array([xdot, ydot, thdot, xddot, yddot, thddot])
-        new_state = self.state + state_dot * dt
-        return self.evolve(state=new_state, last_action=action, h=self.h + 1)
+        new_state = env.state + state_dot * dt
+        return evolve(env, state=new_state, last_action=action, h=env.h + 1)
 
-    def cost(self, action):
-        return 0.1 * (action - self.goal_action) @ (action - self.goal_action) + (
-            self.state - self.goal_state
-        ) @ (self.state - self.goal_state)
+    @staticmethod
+    def cost(env, action):
+        return 0.1 * (action - env.goal_action) @ (action - env.goal_action) + (
+            env.state - env.goal_state
+        ) @ (env.state - env.goal_state)
