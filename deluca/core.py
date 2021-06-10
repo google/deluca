@@ -16,7 +16,7 @@ TODO:
 - attrs and init_subclass don't play well together
     - We do all this mumbo jumbo with interfaces and setting methods in a bizarre way instead of just using inheritance
 - Don't be lazy with globals()
--
+- jax.core.valid_jaxtype checks values, but not types, so we don't have a check that state is a jax type
 """
 
 import os
@@ -87,13 +87,11 @@ def flatten(self):
     data_fields = []
     meta_fields = []
 
-    for attribute in attr.fields(self.__class__):
-        if not jax.core.valid_jaxtype(attribute.default) or (
-            "state" in attribute.metadata and not attribute.metadata["state"]
-        ):
-            meta_fields.append(attribute.name)
+    for field in attr.fields(self.__class__):
+        if "state" in field.metadata and field.metadata["state"]:
+            data_fields.append(field.name)
         else:
-            data_fields.append(attribute.name)
+            meta_fields.append(field.name)
 
     return tuple(getattr(self, name) for name in data_fields), {
         "class": self.__class__,
@@ -131,7 +129,7 @@ def _make_and_check_class(iface, cls):
             # WARNING: This is bad. We should just not be lazy.
             setattr(cls, name, globals()[name])
 
-    cls = attr.s(frozen=True)(cls)
+    cls = attr.s(frozen=True, kw_only=True)(cls)
 
     cls = zope.interface.implementer(iface)(cls)
     verifyClass(iface, cls)
