@@ -58,6 +58,25 @@ def unflatten(aux, children):
 
 
 class Obj(abc.ABC):
+    def __getattribute__(self, name):
+        attribute = object.__getattribute__(self, name)
+        if name == "__attrs_post_init__":
+
+            def __attrs_post_init__(*args, **kwargs):
+                attribute(*args, **kwargs)
+                self.__frozen__ = True
+
+            return __attrs_post_init__
+        return attribute
+
+    def __setattr__(self, name, value):
+        if hasattr(self, "__frozen__") and self.__frozen__:
+            raise attr.exceptions.FrozenInstanceError()
+        object.__setattr__(self, name, value)
+
+    def __attrs_post_init__(self):
+        self.setup()
+
     def __init_subclass__(cls, *args, **kwargs):
         parent_cls = cls.__mro__[1]
         for member in dir(parent_cls):
@@ -112,8 +131,11 @@ class Obj(abc.ABC):
             if member not in cls.__annotations__:
                 cls.__annotations__[member] = type(value)
 
-        attr.s(cls, frozen=True, kw_only=True)
+        attr.s(cls, kw_only=True)
         jax.tree_util.register_pytree_node(cls, flatten, unflatten)
+
+    def setup(self):
+        pass
 
     @staticmethod
     def evolve(obj, **changes):
