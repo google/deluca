@@ -17,7 +17,6 @@ TODO:
   that state is a jax type
 - Explain why dynamics etc are not static methods (why pass self explicitly as
 arg?)
-- jax convenience functions are a bit of a kludge
 - extracting state from the env object is a little messy
 """
 
@@ -64,6 +63,14 @@ class Obj(abc.ABC):
 
             def __attrs_post_init__(*args, **kwargs):
                 attribute(*args, **kwargs)
+
+                for field in attr.fields(self.__class__):
+                    if isinstance(getattr(self, field.name), EmptyAttrib):
+                        raise TypeError(
+                            f"Class `{self.__class__.__name__}` requires "
+                            f"attribute `{field.name}` to be initialized in `setup`."
+                        )
+
                 self.__frozen__ = True
 
             return __attrs_post_init__
@@ -105,13 +112,20 @@ class Obj(abc.ABC):
                 )
             ):
                 raise TypeError(
-                    f"Method `{member}` should have the same signature in class `{cls.__name__}` as in its parent class `{parent_cls.__name__}`"
+                    f"Method `{member}` should have the same signature in class "
+                    f"`{cls.__name__}` as in its parent class "
+                    f"`{parent_cls.__name__}`."
                 )
 
         if not hasattr(cls, "__annotations__"):
             setattr(cls, "__annotations__", {})
 
-        for member in set(dir(cls)) - set(dir(parent_cls)):
+        # All annotations should have attrs
+        # for member in getattr(cls, "__annotations__"):
+        # if not hasattr(cls, member):
+        # setattr(cls, member, attr.ib())
+
+        for member in set(cls.__dict__.keys()) - set(parent_cls.__dict__.keys()):
             if (
                 member.startswith("_")
                 or callable(getattr(cls, member))
@@ -128,30 +142,15 @@ class Obj(abc.ABC):
             if not isinstance(getattr(cls, member), attr._make._CountingAttr):
                 setattr(cls, member, attr.ib(default=value))
 
+            # All attrs should have annotations
             if member not in cls.__annotations__:
                 cls.__annotations__[member] = type(value)
 
-        attr.s(cls, kw_only=True)
+        attr.s(cls)
         jax.tree_util.register_pytree_node(cls, flatten, unflatten)
 
     def setup(self):
         pass
-
-    @staticmethod
-    def evolve(obj, **changes):
-        return attr.evolve(obj, **changes)
-
-    def save(self, path):
-        dirname = os.path.abspath(os.path.dirname(path))
-        if not os.path.exists(dirname):
-            os.makedirs(dirname)
-
-        with open(path, "wb") as file:
-            pickle.dump(self, file)
-
-    @classmethod
-    def load(cls, path):
-        return pickle.load(open(path, "rb"))
 
 
 class Env(Obj):
@@ -212,9 +211,14 @@ class Agent(Obj):
         raise NotImplementedError()
 
 
+class EmptyAttrib:
+    pass
+
+
 def attrib(default=None, pytree=False, **kwargs):
-    if default is not None:
-        kwargs["default"] = default
+    if default is None:
+        default = EmptyAttrib()
+    kwargs["default"] = default
 
     if pytree:
         if "metadata" not in kwargs:
@@ -228,8 +232,28 @@ def pytree(default=None, **kwargs):
     return attrib(default=default, pytree=True, **kwargs)
 
 
+def evolve(obj, **changes):
+    return attr.evolve(obj, **changes)
+
+
+def save(obj, path):
+    dirname = os.path.abspath(os.path.dirname(path))
+    if not os.path.exists(dirname):
+        os.makedirs(dirname)
+
+    with open(path, "wb") as file:
+        pickle.dump(obj, file)
+
+
+def load(path):
+    return pickle.load(open(path, "rb"))
+
+
 deluca.Obj = Obj
 deluca.Env = Env
 deluca.Agent = Agent
 deluca.attrib = attrib
 deluca.pytree = pytree
+deluca.evolve = evolve
+deluca.save = save
+deluca.load = load
