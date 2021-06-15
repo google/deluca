@@ -29,8 +29,9 @@ import attr
 
 import deluca
 
-import abc
 from abc import abstractmethod
+from collections import OrderedDict
+from functools import wraps
 
 
 def flatten(obj):
@@ -56,100 +57,125 @@ def unflatten(aux, children):
     return aux["class"](**data)
 
 
-class Obj(abc.ABC):
-    def __getattribute__(self, name):
-        attribute = object.__getattribute__(self, name)
-        if name == "__attrs_post_init__":
+def attrib(default=None, takes_self=False, pytree=False, **kwargs):
+    if takes_self:
+        default = attr.Factory(default, takes_self=True)
 
-            def __attrs_post_init__(*args, **kwargs):
-                attribute(*args, **kwargs)
+    kwargs["default"] = default
 
-                for field in attr.fields(self.__class__):
-                    if isinstance(getattr(self, field.name), EmptyAttrib):
-                        raise TypeError(
-                            f"Class `{self.__class__.__name__}` requires "
-                            f"attribute `{field.name}` to be initialized in `setup`."
-                        )
+    if pytree:
+        if "metadata" not in kwargs:
+            kwargs["metadata"] = {}
+        kwargs["metadata"]["pytree"] = True
 
-                self.__frozen__ = True
+    return attr.ib(**kwargs)
 
-            return __attrs_post_init__
-        return attribute
 
-    def __setattr__(self, name, value):
-        if hasattr(self, "__frozen__") and self.__frozen__:
-            raise attr.exceptions.FrozenInstanceError()
-        object.__setattr__(self, name, value)
+def default(pytree=False):
+    def decorator(method):
+        setattr(method, "__default_method__", True)
+        if pytree:
+            setattr(method, "__pytree__", True)
+        return method
 
-    def __attrs_post_init__(self):
-        self.setup()
+    if callable(pytree):
+        return decorator(pytree)
+    else:
+        return decorator
 
-    def __init_subclass__(cls, *args, **kwargs):
-        parent_cls = cls.__mro__[1]
-        for member in dir(parent_cls):
-            if isinstance(
-                inspect.getattr_static(parent_cls, member), staticmethod
-            ) and not isinstance(inspect.getattr_static(cls, member), staticmethod):
-                raise TypeError(
-                    f"Class {cls.__name__} should have staticmethod "
-                    "{member}, but {member} is not static."
-                )
 
-            if hasattr(parent_cls, "__abstractmethods__") and member in getattr(
-                parent_cls, "__abstractmethods__"
-            ):
-                if member not in cls.__dict__:
-                    raise TypeError(
-                        f"Abstract method {member} not defined in class {cls.__name__}."
-                    )
+def pytree(default=None, **kwargs):
+    return attrib(default=default, pytree=True, **kwargs)
 
-            if (
-                member in cls.__dict__
-                and callable(getattr(cls, member))
-                and not (
-                    inspect.signature(getattr(cls, member))
-                    == inspect.signature(getattr(parent_cls, member))
-                )
-            ):
-                raise TypeError(
-                    f"Method `{member}` should have the same signature in class "
-                    f"`{cls.__name__}` as in its parent class "
-                    f"`{parent_cls.__name__}`."
-                )
 
-        if not hasattr(cls, "__annotations__"):
-            setattr(cls, "__annotations__", {})
+def evolve(obj, **changes):
+    return attr.evolve(obj, **changes)
 
-        # All annotations should have attrs
-        # for member in getattr(cls, "__annotations__"):
-        # if not hasattr(cls, member):
-        # setattr(cls, member, attr.ib())
 
-        for member in set(cls.__dict__.keys()) - set(parent_cls.__dict__.keys()):
+def save(obj, path):
+    dirname = os.path.abspath(os.path.dirname(path))
+    if not os.path.exists(dirname):
+        os.makedirs(dirname)
+
+    with open(path, "wb") as file:
+        pickle.dump(obj, file)
+
+
+def load(path):
+    return pickle.load(open(path, "rb"))
+
+
+def isclassmethod(cls, name):
+    method = getattr(cls, name)
+    bound_to = getattr(method, "__self__", None)
+    if not isinstance(bound_to, type):
+        # must be bound to a class
+        return False
+    name = method.__name__
+    for cls in bound_to.__mro__:
+        descriptor = vars(cls).get(name)
+        if descriptor is not None:
+            return isinstance(descriptor, classmethod)
+    return False
+
+
+def isstaticmethod(cls, name):
+    return isinstance(inspect.getattr_static(cls, name), staticmethod)
+
+
+def isnotdefaultmethod(cls, name):
+    method = getattr(cls, name)
+    return callable(method) and not hasattr(getattr(cls, name), "__default_method__")
+
+
+class OrderedMeta(type):
+    @classmethod
+    def __prepare__(cls, name, bases):
+        return OrderedDict()
+
+    def __new__(cls, name, bases, clsdict):
+        c = type.__new__(cls, name, bases, clsdict)
+        c.__ordered_keys__ = clsdict.keys()
+        for member in c.__ordered_keys__:
+            value = getattr(c, member)
+
+            if not hasattr(c, "__annotations__"):
+                setattr(cls, "__annotations__", {})
+
             if (
                 member.startswith("_")
-                or callable(getattr(cls, member))
+                or isstaticmethod(c, member)
+                or isclassmethod(c, member)
+                or isnotdefaultmethod(c, member)
                 or (
-                    member in cls.__annotations__
-                    and hasattr(cls.__annotations__[member], "__origin__")
-                    and cls.__annotations__[member].__origin__ is typing.ClassVar
+                    member in c.__annotations__
+                    and hasattr(c.__annotations__[member], "__origin__")
+                    and c.__annotations__[member].__origin__ is typing.ClassVar
                 )
             ):
                 continue
 
-            value = getattr(cls, member)
-
-            if not isinstance(getattr(cls, member), attr._make._CountingAttr):
-                setattr(cls, member, attr.ib(default=value))
+            if not isinstance(value, attr._make._CountingAttr):
+                setattr(
+                    c,
+                    member,
+                    attrib(
+                        default=value,
+                        takes_self=callable(value),
+                        pytree=hasattr(value, "__pytree__"),
+                    ),
+                )
 
             # All attrs should have annotations
-            if member not in cls.__annotations__:
-                cls.__annotations__[member] = type(value)
+            if member not in c.__annotations__:
+                c.__annotations__[member] = type(value)
+        c = attr.s(c)
+        jax.tree_util.register_pytree_node(c, flatten, unflatten)
+        return c
 
-        attr.s(cls)
-        jax.tree_util.register_pytree_node(cls, flatten, unflatten)
 
-    def setup(self):
+class Obj(metaclass=OrderedMeta):
+    def __attrs_post_init__(self):
         pass
 
 
@@ -211,48 +237,11 @@ class Agent(Obj):
         raise NotImplementedError()
 
 
-class EmptyAttrib:
-    pass
-
-
-def attrib(default=None, pytree=False, **kwargs):
-    if default is None:
-        default = EmptyAttrib()
-    kwargs["default"] = default
-
-    if pytree:
-        if "metadata" not in kwargs:
-            kwargs["metadata"] = {}
-        kwargs["metadata"]["pytree"] = True
-
-    return attr.ib(**kwargs)
-
-
-def pytree(default=None, **kwargs):
-    return attrib(default=default, pytree=True, **kwargs)
-
-
-def evolve(obj, **changes):
-    return attr.evolve(obj, **changes)
-
-
-def save(obj, path):
-    dirname = os.path.abspath(os.path.dirname(path))
-    if not os.path.exists(dirname):
-        os.makedirs(dirname)
-
-    with open(path, "wb") as file:
-        pickle.dump(obj, file)
-
-
-def load(path):
-    return pickle.load(open(path, "rb"))
-
-
 deluca.Obj = Obj
 deluca.Env = Env
 deluca.Agent = Agent
 deluca.attrib = attrib
+deluca.default = default
 deluca.pytree = pytree
 deluca.evolve = evolve
 deluca.save = save
