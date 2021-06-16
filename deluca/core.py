@@ -18,74 +18,76 @@ TODO:
 - Explain why dynamics etc are not static methods (why pass self explicitly as
 arg?)
 - extracting state from the env object is a little messy
+
+QUESTIONS:
+- should env/agent be frozen?
+
 """
 
 import os
 import pickle
-import typing
 import inspect
 import jax
-import attr
+from flax.struct import dataclass
 
 import deluca
 
 from abc import abstractmethod
-from collections import OrderedDict
-from functools import wraps
+
+
+def attr_list_to_dict(obj, attrs):
+    return {name: getattr(obj, name) for name in attrs}
 
 
 def flatten(obj):
-    data_fields = []
-    meta_fields = []
+    meta = [name for name in dir(obj) if not name.startswith("__")]
+    if hasattr(obj, "jax_attrs"):
+        data = obj.jax_attrs()
+    else:
+        data = [name for name in meta if not callable(getattr(obj, name))]
 
-    for field in attr.fields(obj.__class__):
-        if "pytree" in field.metadata and field.metadata["pytree"]:
-            data_fields.append(field.name)
-        else:
-            meta_fields.append(field.name)
+    meta = list(set(meta) - set(data))
 
-    children = tuple(getattr(obj, name) for name in data_fields)
-    meta = dict(zip(meta_fields, tuple(getattr(obj, name) for name in meta_fields)))
+    children, treedef = jax.tree_util.tree_flatten(attr_list_to_dict(obj, data))
 
-    return children, {"class": obj.__class__, "meta": meta, "data_fields": data_fields}
+    aux = {
+        "class": obj.__class__,
+        "treedef": treedef,
+        "args": obj.__args__,
+        "meta": attr_list_to_dict(obj, meta),
+    }
+
+    return children, aux
 
 
 def unflatten(aux, children):
-    data_fields = aux["data_fields"]
-    data = dict(zip(data_fields, children))
-    data.update(aux["meta"])
-    return aux["class"](**data)
+    obj = aux["class"](*aux["args"].args, **aux["args"].kwargs)
+    data = jax.tree_util.tree_unflatten(aux["treedef"], children)
+    for key, val in data.items():
+        object.__setattr__(obj, key, val)
+    for key, val in aux["meta"]:
+        object.__setattr__(obj, key, val)
+    return obj
 
 
-def attrib(default=None, takes_self=False, pytree=False, **kwargs):
-    if takes_self:
-        default = attr.Factory(default, takes_self=True)
+def register_pytree_node(cls):
+    jax.tree_util.register_pytree_node(cls, flatten, unflatten)
 
-    kwargs["default"] = default
+    def __new__(cls, *args, **kwargs):
+        obj = object.__new__(cls)
+        object.__setattr__(obj, "__args__", inspect.signature(obj.__init__).bind(*args, **kwargs))
+        object.__getattribute__(obj, "__args__").apply_defaults()
+        return obj
 
-    if pytree:
-        if "metadata" not in kwargs:
-            kwargs["metadata"] = {}
-        kwargs["metadata"]["pytree"] = True
+    cls.__new__ = __new__
 
-    return attr.ib(**kwargs)
-
-
-def default(pytree=False):
-    def decorator(method):
-        setattr(method, "__default_method__", True)
-        if pytree:
-            setattr(method, "__pytree__", True)
-        return method
-
-    if callable(pytree):
-        return decorator(pytree)
-    else:
-        return decorator
+    return cls
 
 
-def pytree(default=None, **kwargs):
-    return attrib(default=default, pytree=True, **kwargs)
+def dataclass(cls):
+    cls = register_pytree_node(cls)
+    cls = dataclasses.dataclass(frozen=True)(cls)
+    return cls
 
 
 def evolve(obj, **changes):
@@ -105,119 +107,32 @@ def load(path):
     return pickle.load(open(path, "rb"))
 
 
-def isclassmethod(cls, name):
-    method = getattr(cls, name)
-    bound_to = getattr(method, "__self__", None)
-    if not isinstance(bound_to, type):
-        # must be bound to a class
-        return False
-    name = method.__name__
-    for cls in bound_to.__mro__:
-        descriptor = vars(cls).get(name)
-        if descriptor is not None:
-            return isinstance(descriptor, classmethod)
-    return False
-
-
-def isstaticmethod(cls, name):
-    return isinstance(inspect.getattr_static(cls, name), staticmethod)
-
-
-def isnotdefaultmethod(cls, name):
-    method = getattr(cls, name)
-    return callable(method) and not hasattr(getattr(cls, name), "__default_method__")
-
-
-class OrderedMeta(type):
-    @classmethod
-    def __prepare__(cls, name, bases):
-        return OrderedDict()
-
-    def __new__(cls, name, bases, clsdict):
-        c = type.__new__(cls, name, bases, clsdict)
-        c.__ordered_keys__ = clsdict.keys()
-        for member in c.__ordered_keys__:
-            value = getattr(c, member)
-
-            if not hasattr(c, "__annotations__"):
-                setattr(cls, "__annotations__", {})
-
-            if (
-                member.startswith("_")
-                or isstaticmethod(c, member)
-                or isclassmethod(c, member)
-                or isnotdefaultmethod(c, member)
-                or (
-                    member in c.__annotations__
-                    and hasattr(c.__annotations__[member], "__origin__")
-                    and c.__annotations__[member].__origin__ is typing.ClassVar
-                )
-            ):
-                continue
-
-            if not isinstance(value, attr._make._CountingAttr):
-                setattr(
-                    c,
-                    member,
-                    attrib(
-                        default=value,
-                        takes_self=callable(value),
-                        pytree=hasattr(value, "__pytree__"),
-                    ),
-                )
-
-            # All attrs should have annotations
-            if member not in c.__annotations__:
-                c.__annotations__[member] = type(value)
-        c = attr.s(c)
-        jax.tree_util.register_pytree_node(c, flatten, unflatten)
-        return c
-
-
-class Obj(metaclass=OrderedMeta):
+class Obj():
     def __attrs_post_init__(self):
         pass
 
 
 class Env(Obj):
-    @staticmethod
-    @abstractmethod
-    def reset(env):
+    def __call__(self, state, action):
         raise NotImplementedError()
 
-    @staticmethod
-    @abstractmethod
-    def dynamics(env, action):
-        raise NotImplementedError()
+    def f_x(self, state, action):
+        return jax.jacfwd(state.dynamics, argnums=0)(state, action)
 
-    @staticmethod
-    @abstractmethod
-    def cost(env, action):
-        return NotImplementedError()
+    def f_u(self, state, action):
+        return jax.jacfwd(state.dynamics, argnums=1)(state, action)
 
-    @staticmethod
-    def f_x(env, action):
-        return jax.jacfwd(env.dynamics, argnums=0)(env, action)
+    def c_x(self, state, action):
+        return jax.grad(state.cost, argnums=0)(state, action)
 
-    @staticmethod
-    def f_u(env, action):
-        return jax.jacfwd(env.dynamics, argnums=1)(env, action)
+    def c_u(self, state, action):
+        return jax.grad(state.cost, argnums=1)(state, action)
 
-    @staticmethod
-    def c_x(env, action):
-        return jax.grad(env.cost, argnums=0)(env, action)
+    def c_xx(self, state, action):
+        return jax.hessian(state.cost, argnums=0)(state, action)
 
-    @staticmethod
-    def c_u(env, action):
-        return jax.grad(env.cost, argnums=1)(env, action)
-
-    @staticmethod
-    def c_xx(env, action):
-        return jax.hessian(env.cost, argnums=0)(env, action)
-
-    @staticmethod
-    def c_uu(env, action):
-        return jax.hessian(env.cost, argnums=1)(env, action)
+    def c_uu(self, state, action):
+        return jax.hessian(state.cost, argnums=1)(state, action)
 
 
 class Agent(Obj):
@@ -240,9 +155,6 @@ class Agent(Obj):
 deluca.Obj = Obj
 deluca.Env = Env
 deluca.Agent = Agent
-deluca.attrib = attrib
-deluca.default = default
-deluca.pytree = pytree
 deluca.evolve = evolve
 deluca.save = save
 deluca.load = load
