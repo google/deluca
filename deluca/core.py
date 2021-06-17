@@ -26,13 +26,10 @@ QUESTIONS:
 
 import os
 import pickle
-import inspect
-import jax
 
 from abc import abstractmethod
 
-import flax
-from flax.struct import dataclass
+from deluca.utils.dataclass import dataclass
 
 import deluca
 
@@ -51,22 +48,37 @@ def load(path):
 
 
 def field(default=None, **kwargs):
-    return flax.struct.field(default=default, **kwargs)
+    return deluca.utils.dataclass.field(default=default, **kwargs)
 
 
 class Obj:
     def __new__(cls, *args, **kwargs):
         """A true bastardization of __new__..."""
-        old_setattr = cls.__setattr__
-        cls.__setattr__ = lambda self, name, value: object.__setattr__(self, name, value)
+
+        def __setattr__(self, name, value):
+            if self.__frozen__:
+                raise FrozenInstanceError
+            object.__setattr__(self, name, value)
+
+        cls.__setattr__ = __setattr__
         obj = object.__new__(cls)
-        obj.setup()
-        cls.__setattr__ = old_setattr
+        object.__setattr__(obj, "__frozen__", False)
+
         return obj
 
     @classmethod
     def __init_subclass__(cls, *args, **kwargs):
-        dataclass(cls)
+        dataclass(pytree=False)(cls)
+
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError()
+
+    def __post_init__(self, *args, **kwargs):
+        self.setup()
+        self.__frozen__ = True
+
+    def replace(self, **overrides):
+        raise NotImplementedError()
 
     @abstractmethod
     def __call__(self):
@@ -87,9 +99,8 @@ class Agent(Obj):
     pass
 
 
-deluca.dataclass = dataclass
+deluca.pytree = dataclass(pytree=True)
 deluca.field = field
-deluca.Obj = Obj
 deluca.Env = Env
 deluca.Agent = Agent
 deluca.save = save
