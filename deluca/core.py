@@ -30,6 +30,7 @@ import pickle
 from abc import abstractmethod
 
 from deluca.utils.dataclass import dataclass
+from deluca.utils.dataclass import PyTreeNode
 
 import deluca
 
@@ -49,6 +50,10 @@ def load(path):
 
 def field(default=None, **kwargs):
     return deluca.utils.dataclass.field(default=default, **kwargs)
+
+
+def trainable(default=None, **kwargs):
+    return field(default=default, pytree_node=True)
 
 
 class Obj:
@@ -99,9 +104,10 @@ class Agent(Obj):
     pass
 
 
-deluca.pytree = dataclass(pytree=True)
 deluca.field = field
+deluca.trainable = trainable
 deluca.Env = Env
 deluca.Agent = Agent
+deluca.PyTreeNode = PyTreeNode
 deluca.save = save
 deluca.load = load

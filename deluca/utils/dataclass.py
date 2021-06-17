@@ -40,7 +40,7 @@ import dataclasses
 import jax
 
 
-def dataclass(pytree=False):
+def dataclass(pytree=True):
     def decorator(clz):
         """Create a class which can be passed to functional transformations.
         NOTE: Inherit from ``PyTreeNode`` instead to avoid type checking issues when
