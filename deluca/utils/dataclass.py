@@ -100,7 +100,9 @@ def dataclass(pytree=True):
         jax.tree_util.register_pytree_node(data_clz, iterate_clz, clz_from_iterable)
 
         def to_state_dict(x):
-            state_dict = {name: serialization.to_state_dict(getattr(x, name)) for name in data_fields}
+            state_dict = {
+                name: serialization.to_state_dict(getattr(x, name)) for name in data_fields
+            }
             return state_dict
 
         def from_state_dict(x, state):

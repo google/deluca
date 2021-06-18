@@ -49,7 +49,9 @@ def load(path):
 
 
 def field(default=None, **kwargs):
-    return deluca.utils.dataclass.field(default=default, **kwargs)
+    if "default_factory" not in kwargs:
+        kwargs["default"] = default
+    return deluca.utils.dataclass.field(**kwargs)
 
 
 def trainable(default=None, **kwargs):
@@ -75,15 +77,17 @@ class Obj:
     def __init_subclass__(cls, *args, **kwargs):
         dataclass(pytree=False)(cls)
 
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError()
+    @classmethod
+    def create(cls, *args, **kwargs):
+        # God this is so janky
+        dummy = cls(*args, **kwargs)
+        dummy.setup()
+        kwargs = {key: getattr(dummy, key) for key in dummy.__dataclass_fields__.keys()}
 
-    def __post_init__(self, *args, **kwargs):
-        self.setup()
-        self.__frozen__ = True
+        obj = cls(**kwargs)
+        obj.__frozen__ = True
 
-    def replace(self, **overrides):
-        raise NotImplementedError()
+        return obj
 
     @abstractmethod
     def __call__(self):
