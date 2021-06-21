@@ -48,14 +48,15 @@ def load(path):
     return pickle.load(open(path, "rb"))
 
 
-def field(default=None, **kwargs):
-    if "default_factory" not in kwargs:
-        kwargs["default"] = default
+def field(**kwargs):
+    if "default_factory" not in kwargs and "default" not in kwargs:
+        kwargs["default"] = None
     return deluca.utils.dataclass.field(**kwargs)
 
 
-def trainable(default=None, **kwargs):
-    return field(default=default, pytree_node=True)
+def attr(**kwargs):
+    kwargs["pytree_node"] = False
+    return field(**kwargs)
 
 
 class Obj:
@@ -79,6 +80,7 @@ class Obj:
 
     @classmethod
     def create(cls, *args, **kwargs):
+        # TODO: docstrings
         # God this is so janky
         dummy = cls(*args, **kwargs)
         dummy.setup()
@@ -108,8 +110,8 @@ class Agent(Obj):
     pass
 
 
+deluca.attr = attr
 deluca.field = field
-deluca.trainable = trainable
 deluca.Env = Env
 deluca.Agent = Agent
 deluca.PyTreeNode = PyTreeNode
