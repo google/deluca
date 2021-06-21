@@ -29,9 +29,7 @@ import pickle
 
 from abc import abstractmethod
 
-from deluca.utils.dataclass import dataclass
-from deluca.utils.dataclass import PyTreeNode
-
+import flax
 import deluca
 
 
@@ -48,15 +46,11 @@ def load(path):
     return pickle.load(open(path, "rb"))
 
 
-def field(**kwargs):
-    if "default_factory" not in kwargs and "default" not in kwargs:
-        kwargs["default"] = None
-    return deluca.utils.dataclass.field(**kwargs)
-
-
-def attr(**kwargs):
-    kwargs["pytree_node"] = False
-    return field(**kwargs)
+def field(default=None, trainable=True, **kwargs):
+    if "default_factory" not in kwargs:
+        kwargs["default"] = default
+    kwargs["pytree_node"] = trainable
+    return flax.struct.field(**kwargs)
 
 
 class Obj:
@@ -76,7 +70,7 @@ class Obj:
 
     @classmethod
     def __init_subclass__(cls, *args, **kwargs):
-        dataclass(pytree=False)(cls)
+        flax.struct.dataclass(cls)
 
     @classmethod
     def create(cls, *args, **kwargs):
@@ -110,10 +104,9 @@ class Agent(Obj):
     pass
 
 
-deluca.attr = attr
 deluca.field = field
+deluca.Obj = Obj
 deluca.Env = Env
 deluca.Agent = Agent
-deluca.PyTreeNode = PyTreeNode
 deluca.save = save
 deluca.load = load
