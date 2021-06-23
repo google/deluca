@@ -24,12 +24,13 @@ QUESTIONS:
 
 """
 
+from abc import abstractmethod
+import inspect
 import os
 import pickle
 
-from abc import abstractmethod
-
 import flax
+
 import deluca
 
 
@@ -63,6 +64,14 @@ class Obj:
             object.__setattr__(self, name, value)
 
         cls.__setattr__ = __setattr__
+        if hasattr(cls.__init__, "__doc__") and cls.__init__.__doc__ is not None:
+            cls.create.__doc__ = cls.__init__.__doc__
+
+        def wrapper(*args, **kwargs):
+            return cls.create(*args, **kwargs)
+
+        wrapper.__signature__ = inspect.signature(cls.__init__)
+        cls.create = wrapper
         obj = object.__new__(cls)
         object.__setattr__(obj, "__frozen__", False)
 
@@ -74,8 +83,7 @@ class Obj:
 
     @classmethod
     def create(cls, *args, **kwargs):
-        # TODO: docstrings
-        # God this is so janky
+        # NOTE: Oh boy, this is so janky
         dummy = cls(*args, **kwargs)
         dummy.setup()
         kwargs = {key: getattr(dummy, key) for key in dummy.__dataclass_fields__.keys()}
