@@ -4,16 +4,7 @@ Performant, differentiable reinforcement learning
 
 ## Notes
 1. This is pre-alpha software and is undergoing a number of core changes. Updates to follow.
-2. `deluca` is currently implemented as a minimal Python namespace package. It
-   will contain environments and agents that *only* depend on NumPy, along with
-   utilities for benchmarking, visualization, etc.
-3. The remainder of environments are developed in separate plugins (also Python
-   namespace packages)
-   - [`deluca-jax`](https://github.com/MinRegret/deluca-jax): differentiable environments and relevant agents implemented
-     using `jax`
-   - [`deluca-lung`](https://pypi.org/project/deluca-lung/): differentiable lung simulators and relevant agents
-     implemented in `PyTorch`
-4. Documentation forthcoming!
+2. Documentation forthcoming!
 
 [![pypi](https://badgen.net/pypi/v/deluca)](https://pypi.org/project/deluca/)
 [![pyversions](https://raw.githubusercontent.com/MinRegret/deluca/dev/.github/badges/python_versions.svg)](https://pypi.org/project/deluca)
