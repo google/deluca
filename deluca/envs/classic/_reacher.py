@@ -38,7 +38,7 @@ class Reacher(Env):
     def init(self):
         initial_th = (jnp.pi / 4, jnp.pi / 2)
         return ReacherState(
-            arr=np.array(
+            arr=jnp.array(
                 [
                     *initial_th,
                     0.0,
@@ -54,7 +54,6 @@ class Reacher(Env):
         )
 
     def __call__(self, state, action):
-
         m1, m2, l1, l2, g = self.m1, self.m2, self.l1, self.l2, self.g
         th1, th2, dth1, dth2, Dx, Dy = state.arr
         t1, t2 = action
