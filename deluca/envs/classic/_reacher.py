@@ -21,28 +21,63 @@ from deluca.core import Obj
 
 class ReacherState(Obj):
     arr: jnp.ndarray = field(trainable=True)
+    h: int = field(0, trainable=False)
 
 
 class Reacher(Env):
-    m: float = field(1.0, trainable=False)
-    l: float = field(1.0, trainable=False)
+    m1: float = field(1.0, trainable=False)
+    m2: float = field(1.0, trainable=False)
+    l1: float = field(1.0, trainable=False)
+    l2: float = field(1.0, trainable=False)
     g: float = field(9.81, trainable=False)
     max_torque: float = field(1.0, trainable=False)
-    dt: float = field(0.02, trainable=False)
-    H: int = field(300, trainable=False)
-    goal_state: jnp.ndarray = field(jnp.array([0.0, -1.0, 0.0]))
+    dt: float = field(0.01, trainable=False)
+    H: int = field(200, trainable=False)
+    goal_coord: jnp.ndarray = field(jnp.array([0.0, 1.8]), trainable=False)
 
     def init(self):
-        return ReacherState(arr=jnp.array([0.0, 1.0, 0.0]))
+        initial_th = (jnp.pi / 4, jnp.pi / 2)
+        return ReacherState(
+            arr=np.array(
+                [
+                    *initial_th,
+                    0.0,
+                    0.0,
+                    self.l1 * jnp.cos(initial_th[0])
+                    + self.l2 * jnp.cos(initial_th[0] + initial_th[1])
+                    - self.goal_coord[0],
+                    self.l1 * jnp.sin(initial_th[0])
+                    + self.l2 * jnp.sin(initial_th[0] + initial_th[1])
+                    - self.goal_coord[1],
+                ]
+            )
+        )
 
     def __call__(self, state, action):
-        sin, cos, thdot = state.arr
-        action = self.max_torque * jnp.tanh(action[0])
-        th = jnp.arctan2(sin, cos)
-        newthdot = th + (
-            -3.0 * self.g / (2.0 * self.l) * jnp.sin(th + jnp.pi)
-            + 3.0 / (self.m * self.l ** 2) * action
+
+        m1, m2, l1, l2, g = self.m1, self.m2, self.l1, self.l2, self.g
+        th1, th2, dth1, dth2, Dx, Dy = state.arr
+        t1, t2 = action
+
+        a11 = (m1 + m2) * l1 ** 2 + m2 * l2 ** 2 + 2 * m2 * l1 * l2 * jnp.cos(th2)
+        a12 = m2 * l2 ** 2 + m2 * l1 * l2 * jnp.cos(th2)
+        a22 = m2 * l2 ** 2
+        b1 = (
+            t1
+            + m2 * l1 * l2 * (2 * dth1 + dth2) * dth2 * jnp.sin(th2)
+            - m2 * l2 * g * jnp.sin(th1 + th2)
+            - (m1 + m2) * l1 * g * jnp.sin(th1)
         )
-        newth = th + newthdot * self.dt
-        newsin, newcos = jnp.sin(newth), jnp.cos(newth)
-        return ReacherState(arr=jnp.array([newsin, newcos, newthdot]))
+        b2 = t2 - m2 * l1 * l2 * dth1 ** 2 * jnp.sin(th2) - m2 * l2 * g * jnp.sin(th1 + th2)
+        A, b = jnp.array([[a11, a12], [a12, a22]]), jnp.array([b1, b2])
+        ddth1, ddth2 = jnp.linalg.inv(A) @ b
+
+        th1, th2 = th1 + dth1 * self.dt, th2 + dth2 * self.dt
+        dth1, dth2 = dth1 + ddth1 * self.dt, dth2 + ddth2 * self.dt
+        Dx, Dy = (
+            l1 * jnp.cos(th1) + l2 * jnp.cos(th1 + th2) - self.goal_coord[0],
+            l1 * jnp.sin(th1) + l2 * jnp.sin(th1 + th2) - self.goal_coord[1],
+        )
+
+        return jnp.array([th1, th2, dth1, dth2, Dx, Dy])
+
