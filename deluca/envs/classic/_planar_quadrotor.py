@@ -30,7 +30,7 @@ def constant(x, y, wind):
 
 
 class PlanarQuadrotorState(Obj):
-    arr: jnp.ndarray
+    arr: jnp.ndarray = field(trainable=True)
     h: int = field(0, trainable=False)
 
 
@@ -44,7 +44,7 @@ class PlanarQuadrotor(Env):
     wind_func: Callable = field(dissipative, trainable=False)
     goal_state: jnp.ndarray = field(jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]), trainable=False)
     goal_action: jnp.ndarray = field(trainable=False)
-    last_action: jnp.ndarray = field(jnp.array([0.0, 0.0]))
+    last_action: jnp.ndarray = field(jnp.array([0.0, 0.0]), trainable=False)
 
     def setup(self):
         self.goal_action = jnp.array([self.m * self.g / 2.0, self.m * self.g / 2.0])
