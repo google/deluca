@@ -33,7 +33,7 @@ class Reacher(Env):
     max_torque: float = field(1.0, trainable=False)
     dt: float = field(0.01, trainable=False)
     H: int = field(200, trainable=False)
-    goal_coord: jnp.ndarray = field(jnp.array([0.0, 1.8]), trainable=False)
+    goal_coord: jnp.ndarray = field(jnp.array([0., 1.8]), trainable=False)
 
     def init(self):
         initial_th = (jnp.pi / 4, jnp.pi / 2)
@@ -79,4 +79,3 @@ class Reacher(Env):
         )
 
         return jnp.array([th1, th2, dth1, dth2, Dx, Dy])
-
