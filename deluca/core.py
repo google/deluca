@@ -93,6 +93,10 @@ class Obj:
         kwargs = {key: getattr(dummy, key) for key in dummy.__dataclass_fields__.keys()}
 
         obj = cls(**kwargs)
+
+        for key in dummy.__dict__.keys():
+            if not hasattr(obj, key):
+                setattr(obj, key, dummy.__dict__[key])
         obj.__frozen__ = True
 
         return obj
