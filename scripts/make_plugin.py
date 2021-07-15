@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-
-import sys
 import argparse
+import fileinput
 import pathlib
 import shutil
-import fileinput
+import sys
 
 parser = argparse.ArgumentParser(
     description="A script that generates the template for a new plugin"
@@ -29,7 +28,7 @@ def err_and_die(message):
 
 if not args.dst.exists() or not args.dst.is_dir():
     err_and_die(f"ERROR: '{args.dst}' either does not exist or is not a directory!")
-    
+
 path = args.dst.absolute() / f"deluca-{args.name}"
 
 if path.exists():

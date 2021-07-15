@@ -11,27 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import brax
-from brax.io import html
-from IPython.display import HTML
+import jax.numpy as jnp
 
-from deluca.core import Env
+from deluca.core import Agent
 from deluca.core import field
 
 
-class BraxEnv(Env):
-    sys: brax.System = field(trainable=False)
+class Zero(Agent):
+    action_dim: int = field(1, trainable=False)
 
-    def setup(self):
-        if isinstance(self.sys, brax.physics.config_pb2.Config):
-            self.sys = brax.System(self.sys)
-
-    def init(self):
-        return self.sys.default_qp()
-
-    def __call__(self, state, action):
-        state, _ = self.sys.step(state, action)
-        return state
-
-    def render(self, states):
-        return HTML(html.render(self.sys, states))
+    def __call__(self, obs):
+        return jnp.zeros(self.action_dim)

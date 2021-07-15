@@ -23,13 +23,14 @@ QUESTIONS:
 - should env/agent be frozen?
 
 """
-
-from abc import abstractmethod
+import dataclasses
 import inspect
 import os
 import pickle
+from abc import abstractmethod
 
 import flax
+import jax
 
 import deluca
 
@@ -71,7 +72,7 @@ class Obj:
 
         def __setattr__(self, name, value):
             if self.__frozen__:
-                raise FrozenInstanceError
+                raise dataclasses.FrozenInstanceError
             object.__setattr__(self, name, value)
 
         cls.__setattr__ = __setattr__
@@ -101,13 +102,21 @@ class Obj:
 
         return obj
 
+    @classmethod
+    def unflatten(cls, treedef, leaves):
+        """Expost a default unflatten method"""
+        return jax.tree_util.tree_unflatten(treedef, leaves)
+
     @abstractmethod
     def __call__(self):
         """Return an updated state"""
 
     def setup(self):
         """Used in place of __init__"""
-        pass
+
+    def flatten(self):
+        """Expose a default flatten method"""
+        return jax.tree_util.tree_flatten(self)[0]
 
 
 class Env(Obj):

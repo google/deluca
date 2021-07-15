@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import jax.numpy as jnp
 
 from deluca.core import Env
@@ -33,7 +32,7 @@ class Reacher(Env):
     max_torque: float = field(1.0, trainable=False)
     dt: float = field(0.01, trainable=False)
     H: int = field(200, trainable=False)
-    goal_coord: jnp.ndarray = field(jnp.array([0., 1.8]), trainable=False)
+    goal_coord: jnp.ndarray = field(jnp.array([0.0, 1.8]), trainable=False)
 
     def init(self):
         initial_th = (jnp.pi / 4, jnp.pi / 2)
