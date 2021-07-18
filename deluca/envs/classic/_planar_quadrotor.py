@@ -31,7 +31,7 @@ def constant(x, y, wind):
 
 class PlanarQuadrotorState(Obj):
     arr: jnp.ndarray = field(trainable=True)
-    h: int = field(0, trainable=False)
+    h: int = field(0, trainable=True)
 
 
 class PlanarQuadrotor(Env):
@@ -65,4 +65,4 @@ class PlanarQuadrotor(Env):
         thddot = l * (u2 - u1) / (m * l ** 2)
         state_dot = jnp.array([xdot, ydot, thdot, xddot, yddot, thddot])
         arr = state.arr + state_dot * dt
-        return state.replace(arr=arr, last_action=action, h=state.h + 1)
+        return state.replace(arr=arr, last_action=action, h=state.h + 1), arr

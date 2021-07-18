@@ -25,7 +25,7 @@ def AB(m, M, l, g, dt):
 
 class CartpoleState(Obj):
     arr: jnp.ndarray = field(trainable=True)
-    h: int = field(0, trainable=False)
+    h: int = field(0, trainable=True)
     offset: float = field(0.0, trainable=False)
 
 
@@ -52,4 +52,5 @@ class Cartpole(Env):
             ]
         )
         B = (jnp.array([[0.0], [0.0], [self.dt / self.M], [self.dt / (self.M * self.l)]]),)
-        return state.replace(arr=A @ state.arr + B @ (action + state.offset))
+        arr = (A @ state.arr + B @ (action + state.offset),)
+        return state.replace(arr=arr, h=state.h + 1), arr

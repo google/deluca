@@ -21,7 +21,7 @@ from deluca.core import Obj
 
 class PendulumState(Obj):
     arr: jnp.ndarray = field(trainable=True)
-    h: int = field(0, trainable=False)
+    h: int = field(0, trainable=True)
 
 
 class Pendulum(Env):
@@ -46,4 +46,5 @@ class Pendulum(Env):
         )
         newth = th + newthdot * self.dt
         newsin, newcos = jnp.sin(newth), jnp.cos(newth)
-        return PendulumState(arr=jnp.array([newsin, newcos, newthdot]), h=state.h + 1)
+        arr = jnp.array([newsin, newcos, newthdot])
+        return PendulumState(arr=arr, h=state.h + 1), arr

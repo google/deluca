@@ -20,5 +20,8 @@ from deluca.core import field
 class Zero(Agent):
     action_dim: int = field(1, trainable=False)
 
-    def __call__(self, obs):
-        return jnp.zeros(self.action_dim)
+    def init(self):
+        return None
+
+    def __call__(self, state, obs):
+        return state, jnp.zeros(self.action_dim)

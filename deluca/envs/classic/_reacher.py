@@ -20,7 +20,7 @@ from deluca.core import Obj
 
 class ReacherState(Obj):
     arr: jnp.ndarray = field(trainable=True)
-    h: int = field(0, trainable=False)
+    h: int = field(0, trainable=True)
 
 
 class Reacher(Env):
@@ -77,4 +77,7 @@ class Reacher(Env):
             l1 * jnp.sin(th1) + l2 * jnp.sin(th1 + th2) - self.goal_coord[1],
         )
 
-        return jnp.array([th1, th2, dth1, dth2, Dx, Dy])
+        arr = jnp.array([th1, th2, dth1, dth2, Dx, Dy])
+        new_state = state.replace(arr=arr, h=state.h + 1)
+
+        return new_state, arr

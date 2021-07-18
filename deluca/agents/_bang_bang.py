@@ -11,27 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import brax
-from brax.io import html
-from IPython.display import HTML
+from typing import Callable
 
-from deluca.core import Env
+import jax.numpy as jnp
+
+from deluca.core import Agent
 from deluca.core import field
 
 
-class BraxEnv(Env):
-    sys: brax.System = field(trainable=False)
-
-    def setup(self):
-        if isinstance(self.sys, brax.physics.config_pb2.Config):
-            self.sys = brax.System(self.sys)
+class BangBang(Agent):
+    target: float = field(0.0, trainable=False)
+    min_action: float = field(0.0, trainable=False)
+    max_action: float = field(100.0, trainable=False)
 
     def init(self):
-        return self.sys.default_qp()
+        return None
 
-    def __call__(self, state, action):
-        state, _ = self.sys.step(state, action)
-        return state, state
-
-    def render(self, states):
-        return HTML(html.render(self.sys, states))
+    def __call__(self, state, obs):
+        """Assume observation is env state"""
+        return state, self.min_action if obs > self.target else self.max_action
