@@ -12,8 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from deluca.envs._brax import BraxEnv
+from deluca.envs.classic._acrobot import Acrobot
 from deluca.envs.classic._cartpole import Cartpole
+from deluca.envs.classic._mountain_car import MountainCar
+from deluca.envs.classic._pendulum import Pendulum
 from deluca.envs.classic._planar_quadrotor import PlanarQuadrotor
 from deluca.envs.classic._reacher import Reacher
 
-__all__ = ["BraxEnv", "Reacher", "Cartpole", "PlanarQuadrotor"]
+__all__ = [
+    "BraxEnv",
+    "Acrobot",
+    "Cartpole",
+    "MountainCar",
+    "Pendulum",
+    "PlanarQuadrotor",
+    "Reacher",
+]
