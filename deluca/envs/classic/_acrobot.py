@@ -51,8 +51,8 @@ class Acrobot(Env):
 
     torque_noise_max: float = field(0.0, jaxed=False)
 
-    high: jnp.array(jaxed=False)
-    low: jnp.array(jaxed=False)
+    high: field(jaxed=False)
+    low: field(jaxed=False)
 
     def setup(self):
         self.high = jnp.array([1.0, 1.0, 1.0, 1.0, self.MAX_VEL_1, self.MAX_VEL_2])
