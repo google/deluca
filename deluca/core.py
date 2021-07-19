@@ -26,9 +26,9 @@ QUESTIONS:
 import dataclasses
 import inspect
 import os
-import pickle
 from abc import abstractmethod
 
+import dill as pickle
 import flax
 import jax
 
