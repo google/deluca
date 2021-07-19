@@ -4,30 +4,35 @@ title: Home
 ---
 ## Reinforcement learning with derivatives
 
-[deluca](https://github.com/google/deluca) is a library modeled after [OpenAI Gym](https://github.com/openai/gym) that provides differentiable environments, control algorithms that take advantage of such environments, and benchmarking tools.
+[deluca](https://github.com/google/deluca) is a [`jax`](https://github.com/google/jax)-based library that provides differentiable environments, control algorithms that take advantage of such environments, and benchmarking tools.
 
 This software is currently in alpha and is changing rapidly. We have a paper describing the library available [here](https://arxiv.org/abs/2102.09968).
 
 ### Getting started
-`deluca` is a Python library that you can install from source ([link](https://github.com/google/deluca)). It will also be available via `pip install`.
+`deluca` is a Python library that can be installed via `pip install deluca`.
 
 ### Example notebooks
-We maintain a number of Jupyter notebooks to help users get started ([link](https://github.com/google/deluca/tree/main/examples)).
+We maintain a number of Jupyter notebooks and will continue to add more:
+- A Regret Minimization Approach to Iterative Learning Control ([paper](https://arxiv.org/abs/2102.13478), [code](https://github.com/google/deluca-igpc))
+- Machine Learning for Mechanical Ventilation Control ([paper](https://arxiv.org/abs/2102.06779), [code](https://github.com/google/deluca-lung))
 
 ### Example without derivatives
 ```python
-from deluca.envs import DelayLung
-from deluca.agents import PID
+import jax
 
-env = DelayLung()
-agent = PID([3.0, 4.0, 0.0])
+from deluca.envs import Reacher
+from deluca.agents import Random
 
-for _ in range(1000):
-  error = env.observation["error"]
-  control = agent(error)
-  obs, reward, done, info = env.step(control)
-  if done:
-    break
+env = Reacher.create()
+env_state = env.init()
+
+agent = Random.create(func=lambda key: jax.random.uniform(key, (env.action_dim,)))
+agent_state = agent.init()
+
+action = jnp.array([0.0, 0.0])
+for i in range(100):
+    env_state, obs = env(env_state, action)
+    agent_state, action = agent(agent_state, obs)
 ```
 
 ### Citation
