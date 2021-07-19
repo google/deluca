@@ -39,6 +39,8 @@ class Reacher(Env):
     dt: float = field(0.01, jaxed=False)
     H: int = field(200, jaxed=False)
     goal_coord: jnp.ndarray = field(jnp.array([0.0, 1.8]), jaxed=False)
+    state_dim: float = field(6, jaxed=False)
+    action_dim: float = field(2, jaxed=False)
 
     def init(self):
         initial_th = (jnp.pi / 4, jnp.pi / 2)
