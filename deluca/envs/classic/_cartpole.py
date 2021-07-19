@@ -18,10 +18,6 @@ from deluca.core import field
 from deluca.core import Obj
 
 
-def AB(m, M, l, g, dt):
-    return ()
-
-
 class CartpoleState(Obj):
     arr: jnp.ndarray = field(jaxed=True)
     h: int = field(0, jaxed=True)

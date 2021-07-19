@@ -34,7 +34,6 @@ __author__ = "Christoph Dann <cdann@cdann.de>"
 
 class Acrobot(Env):
     key: jnp.ndarray = field(jax.random.PRNGKey(0), jaxed=False)
-    horizon: int = field(50, jaxed=False)
     dt: float = field(0.2, jaxed=False)
 
     LINK_LENGTH_1: float = field(1.0, jaxed=False)
