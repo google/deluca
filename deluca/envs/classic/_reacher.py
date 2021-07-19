@@ -34,7 +34,7 @@ class Reacher(Env):
     m2: float = field(1.0, jaxed=False)
     l1: float = field(1.0, jaxed=False)
     l2: float = field(1.0, jaxed=False)
-    g: float = field(9.81, jaxed=False)
+    g: float = field(0.0, jaxed=False)
     max_torque: float = field(1.0, jaxed=False)
     dt: float = field(0.01, jaxed=False)
     H: int = field(200, jaxed=False)
