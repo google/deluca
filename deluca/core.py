@@ -48,10 +48,10 @@ def load(path):
     return pickle.load(open(path, "rb"))
 
 
-def field(default=None, trainable=True, **kwargs):
+def field(default=None, jaxed=True, **kwargs):
     if "default_factory" not in kwargs:
         kwargs["default"] = default
-    kwargs["pytree_node"] = trainable
+    kwargs["pytree_node"] = jaxed
     return flax.struct.field(**kwargs)
 
 

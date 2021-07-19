@@ -19,20 +19,20 @@ from deluca.core import Obj
 
 
 class ReacherState(Obj):
-    arr: jnp.ndarray = field(trainable=True)
-    h: int = field(0, trainable=True)
+    arr: jnp.ndarray = field(jaxed=True)
+    h: int = field(0, jaxed=True)
 
 
 class Reacher(Env):
-    m1: float = field(1.0, trainable=False)
-    m2: float = field(1.0, trainable=False)
-    l1: float = field(1.0, trainable=False)
-    l2: float = field(1.0, trainable=False)
-    g: float = field(9.81, trainable=False)
-    max_torque: float = field(1.0, trainable=False)
-    dt: float = field(0.01, trainable=False)
-    H: int = field(200, trainable=False)
-    goal_coord: jnp.ndarray = field(jnp.array([0.0, 1.8]), trainable=False)
+    m1: float = field(1.0, jaxed=False)
+    m2: float = field(1.0, jaxed=False)
+    l1: float = field(1.0, jaxed=False)
+    l2: float = field(1.0, jaxed=False)
+    g: float = field(9.81, jaxed=False)
+    max_torque: float = field(1.0, jaxed=False)
+    dt: float = field(0.01, jaxed=False)
+    H: int = field(200, jaxed=False)
+    goal_coord: jnp.ndarray = field(jnp.array([0.0, 1.8]), jaxed=False)
 
     def init(self):
         initial_th = (jnp.pi / 4, jnp.pi / 2)

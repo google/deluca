@@ -17,18 +17,18 @@ from deluca.core import Obj
 
 
 class PIDState(Obj):
-    P: float = field(0.0, trainable=True)
-    I: float = field(0.0, trainable=True)
-    D: float = field(0.0, trainable=True)
+    P: float = field(0.0, jaxed=True)
+    I: float = field(0.0, jaxed=True)
+    D: float = field(0.0, jaxed=True)
 
 
 class PID(Agent):
-    K_P: float = field(0.0, trainable=True)
-    K_I: float = field(0.0, trainable=True)
-    K_D: float = field(0.0, trainable=True)
-    RC: float = field(0.5, trainable=False)
-    dt: float = field(0.03, trainable=False)
-    decay: float = field(trainable=False)
+    K_P: float = field(0.0, jaxed=True)
+    K_I: float = field(0.0, jaxed=True)
+    K_D: float = field(0.0, jaxed=True)
+    RC: float = field(0.5, jaxed=False)
+    dt: float = field(0.03, jaxed=False)
+    decay: float = field(jaxed=False)
 
     def init(self):
         return PIDState()

@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import jax.numpy as jnp
 
 from deluca.core import Env
@@ -24,20 +23,20 @@ def AB(m, M, l, g, dt):
 
 
 class CartpoleState(Obj):
-    arr: jnp.ndarray = field(trainable=True)
-    h: int = field(0, trainable=True)
-    offset: float = field(0.0, trainable=False)
+    arr: jnp.ndarray = field(jaxed=True)
+    h: int = field(0, jaxed=True)
+    offset: float = field(0.0, jaxed=False)
 
 
 class Cartpole(Env):
-    m: float = field(0.1, trainable=False)
-    M: float = field(1.0, trainable=False)
-    l: float = field(1.0, trainable=False)
-    g: float = field(9.81, trainable=False)
-    dt: float = field(0.02, trainable=False)
-    H: int = field(10, trainable=False)
-    goal_state: jnp.ndarray = field(jnp.array([0.0, 0.0, 0.0, 0.0]), trainable=False)
-    dynamics: bool = field(False, trainable=False)
+    m: float = field(0.1, jaxed=False)
+    M: float = field(1.0, jaxed=False)
+    l: float = field(1.0, jaxed=False)
+    g: float = field(9.81, jaxed=False)
+    dt: float = field(0.02, jaxed=False)
+    H: int = field(10, jaxed=False)
+    goal_state: jnp.ndarray = field(jnp.array([0.0, 0.0, 0.0, 0.0]), jaxed=False)
+    dynamics: bool = field(False, jaxed=False)
 
     def init(self):
         return CartpoleState(arr=jnp.array([0.0, 0.0, 0.0, 0.0]))

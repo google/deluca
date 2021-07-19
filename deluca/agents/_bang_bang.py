@@ -16,9 +16,9 @@ from deluca.core import field
 
 
 class BangBang(Agent):
-    target: float = field(0.0, trainable=False)
-    min_action: float = field(0.0, trainable=False)
-    max_action: float = field(100.0, trainable=False)
+    target: float = field(0.0, jaxed=False)
+    min_action: float = field(0.0, jaxed=False)
+    max_action: float = field(100.0, jaxed=False)
 
     def init(self):
         return None

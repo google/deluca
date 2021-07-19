@@ -11,10 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from deluca.envs.brax import BraxEnv
-from deluca.envs.classic._reacher import Reacher
+from deluca.envs._brax import BraxEnv
 from deluca.envs.classic._cartpole import Cartpole
 from deluca.envs.classic._planar_quadrotor import PlanarQuadrotor
+from deluca.envs.classic._reacher import Reacher
 
 __all__ = ["BraxEnv", "Reacher", "Cartpole", "PlanarQuadrotor"]

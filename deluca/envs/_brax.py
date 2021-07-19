@@ -20,7 +20,7 @@ from deluca.core import field
 
 
 class BraxEnv(Env):
-    sys: brax.System = field(trainable=False)
+    sys: brax.System = field(jaxed=False)
 
     def setup(self):
         if isinstance(self.sys, brax.physics.config_pb2.Config):
