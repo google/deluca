@@ -20,7 +20,7 @@ from deluca.core import Obj
 
 class ReacherState(Obj):
     arr: jnp.ndarray = field(jaxed=True)
-    h: float = field(0, jaxed=True)
+    h: float = field(0.0, jaxed=True)
 
     def flatten(self):
         return self.arr
