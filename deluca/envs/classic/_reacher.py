@@ -22,6 +22,12 @@ class ReacherState(Obj):
     arr: jnp.ndarray = field(jaxed=True)
     h: float = field(0, jaxed=True)
 
+    def flatten(self):
+        return self.arr
+
+    def unflatten(self, arr):
+        return ReacherState(arr=arr, h=self.h)
+
 
 class Reacher(Env):
     m1: float = field(1.0, jaxed=False)
