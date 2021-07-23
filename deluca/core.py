@@ -29,7 +29,7 @@ import inspect
 import os
 from abc import abstractmethod
 
-import dill as pickle
+import pickle
 import flax
 import jax
 
@@ -56,17 +56,6 @@ def field(default=None, jaxed=True, **kwargs):
     return flax.struct.field(**kwargs)
 
 
-def update_signature(src, dst):
-    if hasattr(src, "__doc__") and src.__doc__ is not None:
-        dst.__doc__ = src.__doc__
-
-    def wrapper(*args, **kwargs):
-        return src(*args, **kwargs)
-
-    wrapper.__signature__ = inspect.signature(src.__init__)
-    return wrapper
-
-
 class Obj:
     def __new__(cls, *args, **kwargs):
         """A true bastardization of __new__..."""
@@ -79,7 +68,6 @@ class Obj:
         cls.__setattr__ = __setattr__
         obj = object.__new__(cls)
         object.__setattr__(obj, "__frozen__", False)
-        obj.create = update_signature(cls.__init__, obj.create)
 
         return obj
 
