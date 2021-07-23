@@ -96,10 +96,6 @@ class Obj:
         """Expost a default unflatten method"""
         return jax.tree_util.tree_unflatten(treedef, leaves)
 
-    @abstractmethod
-    def __call__(self):
-        """Return an updated state"""
-
     def setup(self):
         """Used in place of __init__"""
 
@@ -113,9 +109,15 @@ class Env(Obj):
     def init(self):
         """Return an initialized state"""
 
+    @abstractmethod
+    def __call__(self, state, action, *args, **kwargs):
+        """Return an updated state"""
+
 
 class Agent(Obj):
-    pass
+    @abstractmethod
+    def __call__(self, state, obs, *args, **kwargs):
+        """Return an updated state"""
 
 
 deluca.field = field
