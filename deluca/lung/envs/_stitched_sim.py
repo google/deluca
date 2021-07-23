@@ -200,13 +200,13 @@ def get_X_y_for_next_epoch_tf(loader, batch_size):
   return X, y
 
 
-def rollout(model, data, num_boundary_models):
+def rollout(model, data):
   # data.shape == (2, N)
   start_idx = 0
   end_idx = len(data[0])
   state, _ = model.reset()
-  new_u_history = jnp.zeros((num_boundary_models,))
-  new_p_history = jnp.zeros((num_boundary_models,))
+  new_u_history = jnp.zeros((model.u_history_len,))
+  new_p_history = jnp.zeros((model.p_history_len,))
   state = state.replace(u_history=new_u_history, p_history=new_p_history)
   state_loss_init = (state, 0.0)
 
@@ -290,9 +290,8 @@ def stitched_sim_train(
   optim = optimizer(**optimizer_params)
   optim_state = optim.init(model)
 
-  rollout_partial = partial(rollout, num_boundary_models=num_boundary_models)
   loop_over_loader_partial = partial(
-      loop_over_loader, optim=optim, rollout=rollout_partial)
+      loop_over_loader, optim=optim, rollout=rollout)
   for epoch in range(epochs + 1):
     if epoch % 25 == 0:
       print("epoch:" + str(epoch))
@@ -306,12 +305,12 @@ def stitched_sim_train(
       print("X_train.shape:" + str(X_train.shape))
       print("y_train.shape:" + str(y_train.shape))
       train_loss = map_rollout_over_batch(model, (X_train, y_train),
-                                          rollout_partial)
+                                          rollout)
       # cross-validation
       print("X_test.shape:" + str(X_test.shape))
       print("y_test.shape:" + str(y_test.shape))
       test_loss = map_rollout_over_batch(model, (X_test, y_test),
-                                         rollout_partial)
+                                         rollout)
       print(
           f"Epoch {epoch:2d}: train={train_loss.item():.5f}, test={test_loss.item():.5f}"
       )

@@ -57,10 +57,10 @@ class Munger:
 
   def __init__(
       self,
-      paths,
-      kaggle_path,
-      R=20,
-      C=10,
+      paths=None,
+      kagglePath_or_df=None,
+      R=None,
+      C=None,
       to_round=False,
       dt_resample=False,
       clip=(2, -1),
@@ -77,14 +77,9 @@ class Munger:
     self.to_round = to_round
 
     # Use Kaggle Dataset
-    if kaggle_path != []:
-      self.add_data(kaggle_path, dt_resample, R=R, C=C, **kwargs)
-      # Shuffle and split data
-      self.split_data(splits=splits)
-      # Compute mean, std for u_in and pressure
-      self.u_scaler, self.p_scaler = self.fit_scalers(key=fit_scaler_key)
-    # Load dataset using legacy paths
-    else:
+    if kagglePath_or_df is not None:
+      self.add_data_jax(kagglePath_or_df, dt_resample, R=R, C=C, **kwargs)
+    elif paths is not None
       self.add_data(
           paths,
           dt_resample,
@@ -93,16 +88,21 @@ class Munger:
           truncate=truncate,
           **kwargs,
       )
-      # Shuffle and split data
-      self.split_data(splits=splits)
-      # Compute mean, std for u_in and pressure
-      self.u_scaler, self.p_scaler = self.fit_scalers(key=fit_scaler_key)  # new_training
+    # Shuffle and split data
+    self.split_data(splits=splits)
+    # Compute mean, std for u_in and pressure
+    self.u_scaler, self.p_scaler = self.fit_scalers(key=fit_scaler_key)  # new_training
 
   # TODO: do we need to skip first 2 and last breath? Right now just reading from kaggle dataset
-  def add_data(self, kaggle_path, dt_resample=True, R=20, C=10, **kwargs):
+  def add_data_jax(self, kagglePath_or_df, dt_resample=True, R=20, C=10, **kwargs):
     failed = 0
-    df = pd.read_csv(kaggle_path)
-    df = df[(df["R"] == R) & (df["C"] == C)]
+    if isinstance(kagglePath_or_df, str):
+            df = pd.read_csv(kagglePath_or_df)
+            if not (R is None and C is None):
+                df = df[(df["R"] == R) & (df["C"] == C)]
+        else:
+            df = kagglePath_or_df
+          
     breath_ids = df["breath_id"].unique()
     num_breaths = len(breath_ids)
     # print('num_breaths:' + str(num_breaths))

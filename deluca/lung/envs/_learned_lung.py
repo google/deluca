@@ -14,7 +14,7 @@
 
 import inspect
 
-import dill as pickle
+import pickle
 import jax.numpy as jnp
 
 from deluca.envs.lung import BreathWaveform
