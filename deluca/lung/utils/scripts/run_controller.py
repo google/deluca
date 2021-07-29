@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from deluca.lung.controllers._expiratory import Expiratory
-from deluca.lung.environments._balloon_lung import BalloonLung
+from deluca.lung.envs._balloon_lung import BalloonLung
 from deluca.lung.core import BreathWaveform
-
+from functools import partial
 import os
 import pickle
 import jax
@@ -98,6 +98,26 @@ def run_controller(
 
   return result
 
+def loop_over_tt(envState_obs_ctrlState_ExpState_i, dummy_data, controller, expiratory, env, dt):
+  state, obs, controller_state, expiratory_state, i = envState_obs_ctrlState_ExpState_i
+  pressure = obs.predicted_pressure
+  # if env.should_abort(): # TODO: how to handle break in scan
+  #     break
+
+  controller_state, u_in = controller.__call__(controller_state, obs)
+  expiratory_state, u_out = expiratory.__call__(expiratory_state, obs)
+
+  state, obs = env(state, (u_in, u_out))
+
+  timestamps_i = env.time(state) - dt
+  u_ins_i = u_in
+  u_outs_i = u_out
+  pressures_i = pressure
+  flows_i = env.flow
+
+  env.wait(max(dt - env.dt, 0))
+  return (state, obs, controller_state, expiratory_state,
+          i + 1), (timestamps_i, u_ins_i, u_outs_i, pressures_i, flows_i)
 
 def run_controller_scan(
     controller,
@@ -136,31 +156,10 @@ def run_controller_scan(
   period = waveform.period
   dtype = waveform.dtype
 
+  jit_loop_over_tt = jax.jit(partial(loop_over_tt, controller=controller, expiratory=expiratory, env=env, dt=dt))
   try:
-
-    def loop_over_tt(envState_obs_ctrlState_ExpState_i, dummy_data):
-      state, obs, controller_state, expiratory_state, i = envState_obs_ctrlState_ExpState_i
-      pressure = obs.predicted_pressure
-      # if env.should_abort(): # TODO: how to handle break in scan
-      #     break
-
-      controller_state, u_in = controller.__call__(controller_state, obs)
-      expiratory_state, u_out = expiratory.__call__(expiratory_state, obs)
-
-      state, obs = env(state, (u_in, u_out))
-
-      timestamps_i = env.time(state) - dt
-      u_ins_i = u_in
-      u_outs_i = u_out
-      pressures_i = pressure
-      flows_i = env.flow
-
-      env.wait(max(dt - env.dt, 0))
-      return (state, obs, controller_state, expiratory_state,
-              i + 1), (timestamps_i, u_ins_i, u_outs_i, pressures_i, flows_i)
-
     _, (timestamps, u_ins, u_outs, pressures, flows) = jax.lax.scan(
-        loop_over_tt, (state, obs, controller_state, expiratory_state, 0),
+        jit_loop_over_tt, (state, obs, controller_state, expiratory_state, 0),
         jnp.arange(T))
 
   finally:

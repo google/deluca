@@ -22,55 +22,63 @@ from deluca.core import Obj
 
 
 def dissipative(x, y, wind):
-    return [wind * x, wind * y]
+  return [wind * x, wind * y]
 
 
 def constant(x, y, wind):
-    return [wind * jnp.cos(jnp.pi / 4.0), wind * jnp.sin(jnp.pi / 4.0)]
+  return [wind * jnp.cos(jnp.pi / 4.0), wind * jnp.sin(jnp.pi / 4.0)]
 
 
 class PlanarQuadrotorState(Obj):
-    arr: jnp.ndarray = field(jnp.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]), jaxed=True)
-    h: float = field(0.0, jaxed=True)
-    last_action: jnp.ndarray = field(jnp.array([0.0, 0.0]), jaxed=True)
+  arr: jnp.ndarray = field(jnp.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]), jaxed=True)
+  h: float = field(0.0, jaxed=True)
+  last_action: jnp.ndarray = field(jnp.array([0.0, 0.0]), jaxed=True)
 
-    def flatten(self):
-        return self.arr
+  # def setup(self):
+    # if self.arr is None:
+    #   self.arr = jnp.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+    # if self.last_action is None:
+    #   self.last_action = jnp.array([0.0, 0.0])
 
-    def unflatten(self, arr):
-        return PlanarQuadrotorState(arr=arr, h=self.h, last_action=self.last_action)
+  def flatten(self):
+    return self.arr
+
+  def unflatten(self, arr):
+    return PlanarQuadrotorState(arr=arr, h=self.h, last_action=self.last_action)
 
 
 class PlanarQuadrotor(Env):
-    m: float = field(0.1, jaxed=False)
-    l: float = field(0.2, jaxed=False)
-    g: float = field(9.81, jaxed=False)
-    dt: float = field(0.05, jaxed=False)
-    H: int = field(100, jaxed=False)
-    wind: float = field(0.0, jaxed=False)
-    wind_func: Callable = field(dissipative, jaxed=False)
-    goal_state: jnp.ndarray = field(jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]), jaxed=False)
-    goal_action: jnp.ndarray = field(jaxed=False)
-    state_dim: float = field(6, jaxed=False)
-    action_dim: float = field(2, jaxed=False)
+  m: float = field(0.1, jaxed=False)
+  l: float = field(0.2, jaxed=False)
+  g: float = field(9.81, jaxed=False)
+  dt: float = field(0.05, jaxed=False)
+  H: int = field(100, jaxed=False)
+  wind: float = field(0.0, jaxed=False)
+  wind_func: Callable = field(dissipative, jaxed=False)
+  goal_state: jnp.ndarray = field(jaxed=False)
+  goal_action: jnp.ndarray = field(jaxed=False)
+  state_dim: float = field(6, jaxed=False)
+  action_dim: float = field(2, jaxed=False)
 
-    def setup(self):
-        self.goal_action = jnp.array([self.m * self.g / 2.0, self.m * self.g / 2.0])
+  def setup(self):
+    self.goal_action = jnp.array([self.m * self.g / 2.0, self.m * self.g / 2.0])
+    if self.goal_state is None:
+      self.goal_state = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
-    def _wind_field(self, x, y):
-        return self.wind_func(x, y, self.wind)
+  def _wind_field(self, x, y):
+    return self.wind_func(x, y, self.wind)
 
-    def init(self):
-        return PlanarQuadrotorState()
+  def init(self):
+    return PlanarQuadrotorState()
 
-    def __call__(self, state, action):
-        x, y, th, xdot, ydot, thdot = state.arr
-        u1, u2 = action
-        m, g, l, dt = self.m, self.g, self.l, self.dt
-        wind = self._wind_field(x, y)
-        xddot = -(u1 + u2) * jnp.sin(th) / m + wind[0] / m
-        yddot = (u1 + u2) * jnp.cos(th) / m - g + wind[1] / m
-        thddot = l * (u2 - u1) / (m * l ** 2)
-        state_dot = jnp.array([xdot, ydot, thdot, xddot, yddot, thddot])
-        arr = state.arr + state_dot * dt
-        return state.replace(arr=arr, last_action=action, h=state.h + 1), arr
+  def __call__(self, state, action):
+    x, y, th, xdot, ydot, thdot = state.arr
+    u1, u2 = action
+    m, g, l, dt = self.m, self.g, self.l, self.dt
+    wind = self._wind_field(x, y)
+    xddot = -(u1 + u2) * jnp.sin(th) / m + wind[0] / m
+    yddot = (u1 + u2) * jnp.cos(th) / m - g + wind[1] / m
+    thddot = l * (u2 - u1) / (m * l**2)
+    state_dot = jnp.array([xdot, ydot, thdot, xddot, yddot, thddot])
+    arr = state.arr + state_dot * dt
+    return state.replace(arr=arr, last_action=action, h=state.h + 1), arr

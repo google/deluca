@@ -17,8 +17,8 @@ import inspect
 import pickle
 import jax.numpy as jnp
 
-from deluca.envs.lung import BreathWaveform
-from deluca.envs.lung.core import Lung
+from deluca.lung.core import BreathWaveform
+from deluca.lung.core import LungEnv
 
 
 class LearnedLung(Lung):

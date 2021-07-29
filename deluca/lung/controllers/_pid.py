@@ -41,11 +41,11 @@ class PID_network(nn.Module):
 
 # generic PID controller
 class PID(Controller):
-  model: nn.module = deluca.field(PID_network, trainable=False)
-  params: jnp.array = deluca.field(trainable=True)  # jnp.array([3.0, 4.0, 0.0]
-  waveform: deluca.Obj = deluca.field(BreathWaveform.create(), trainable=False)
-  RC: float = deluca.field(0.5, trainable=False)
-  dt: float = deluca.field(0.03, trainable=False)
+  model: nn.module = deluca.field(PID_network, jaxed=False)
+  params: jnp.array = deluca.field(jaxed=True)  # jnp.array([3.0, 4.0, 0.0]
+  waveform: deluca.Obj = deluca.field(jaxed=False)
+  RC: float = deluca.field(0.5, jaxed=False)
+  dt: float = deluca.field(0.03, jaxed=False)
 
   def setup(self):
     self.model = PID_network()
@@ -53,6 +53,9 @@ class PID(Controller):
       self.params = self.model.init(jax.random.PRNGKey(0), jnp.ones([
           3,
       ]))["params"]
+    # TODO: Handle dataclass initialization of jax objects
+    if self.waveform is None:
+      self.waveform = BreathWaveform.create()
 
   def init(self):
     state = PIDControllerState()

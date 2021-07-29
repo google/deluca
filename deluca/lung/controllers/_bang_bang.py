@@ -22,9 +22,9 @@ from deluca.lung.core import BreathWaveform
 
 
 class BangBang(Controller):
-  waveform: deluca.Obj = deluca.field(BreathWaveform.create(), trainable=False)
-  min_action: float = deluca.field(0.0, trainable=False)
-  max_action: float = deluca.field(100.0, trainable=False)
+  waveform: deluca.Obj = deluca.field(jaxed=False)
+  min_action: float = deluca.field(0.0, jaxed=False)
+  max_action: float = deluca.field(100.0, jaxed=False)
 
   def __call__(self, controller_state, obs):
     pressure, t = obs.predicted_pressure, obs.time

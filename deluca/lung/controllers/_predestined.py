@@ -23,21 +23,13 @@ from deluca.lung.core import proper_time
 
 
 class Predestined(Controller):
-  time: float = deluca.field(trainable=False)
-  steps: int = deluca.field(trainable=False)
-  dt: float = deluca.field(trainable=False)
-  u_ins: jnp.array = deluca.field(trainable=False)
-  switch_funcs: List[Callable] = deluca.field(trainable=False)
-
-  def setup(self):
-    self.switch_funcs = [
-        partial(lambda x, y: self.u_ins[y], y=i)
-        for i in range(len(self.u_ins))
-    ]
+  time: float = deluca.field(jaxed=False)
+  steps: int = deluca.field(jaxed=False)
+  dt: float = deluca.field(jaxed=False)
+  u_ins: jnp.array = deluca.field(jaxed=False)
 
   def __call__(self, state, obs, *args, **kwargs):
-    # TODO: We should probably use jax.lax.dynamic_slice
-    action = jax.lax.switch(state.steps, self.switch_funcs, None)
+    action = jax.lax.dynamic_slice(self.u_ins, (state.steps.astype(int),), (1,))
     time = obs.time
     new_dt = jnp.max(jnp.array([DEFAULT_DT, time - proper_time(state.time)]))
     new_time = time

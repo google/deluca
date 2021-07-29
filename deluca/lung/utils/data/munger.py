@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import jax.numpy as jnp
-import numpy as np
-import sklearn.preprocessing
-import matplotlib.pyplot as plt
-import pandas as pd
-
 from deluca.lung.utils.data.analyzer import Analyzer
 from deluca.lung.utils.data.transform import ShiftScaleTransform
+import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import tensorflow as tf
 
 # NOTES
@@ -79,7 +77,7 @@ class Munger:
     # Use Kaggle Dataset
     if kagglePath_or_df is not None:
       self.add_data_jax(kagglePath_or_df, dt_resample, R=R, C=C, **kwargs)
-    elif paths is not None
+    elif paths is not None:
       self.add_data(
           paths,
           dt_resample,
@@ -91,18 +89,23 @@ class Munger:
     # Shuffle and split data
     self.split_data(splits=splits)
     # Compute mean, std for u_in and pressure
-    self.u_scaler, self.p_scaler = self.fit_scalers(key=fit_scaler_key)  # new_training
+    self.u_scaler, self.p_scaler = self.fit_scalers(key=fit_scaler_key)
 
   # TODO: do we need to skip first 2 and last breath? Right now just reading from kaggle dataset
-  def add_data_jax(self, kagglePath_or_df, dt_resample=True, R=20, C=10, **kwargs):
+  def add_data_jax(self,
+                   kagglePath_or_df,
+                   dt_resample=True,
+                   R=20,
+                   C=10,
+                   **kwargs):
     failed = 0
     if isinstance(kagglePath_or_df, str):
-            df = pd.read_csv(kagglePath_or_df)
-            if not (R is None and C is None):
-                df = df[(df["R"] == R) & (df["C"] == C)]
-        else:
-            df = kagglePath_or_df
-          
+      df = pd.read_csv(kagglePath_or_df)
+    else:
+      df = kagglePath_or_df
+    if not (R is None and C is None):
+      df = df[(df["R"] == R) & (df["C"] == C)]
+
     breath_ids = df["breath_id"].unique()
     num_breaths = len(breath_ids)
     # print('num_breaths:' + str(num_breaths))
@@ -211,7 +214,7 @@ class Munger:
     # return Dataloader(dataset, batch_size=batch_size, shuffle=shuffle)
     dataset = tf.data.Dataset.from_tensor_slices((X, y))
     if shuffle:
-      dataset = dataset.shuffle(buffer_size=X.shape[0])
+      dataset = dataset.shuffle(buffer_size=X.shape[0], seed=0)
     return dataset
 
   def unscale_pressures(self, p):  # TODO: make the jax version of this

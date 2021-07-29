@@ -38,18 +38,18 @@ class Phase(Enum):
 class BreathWaveform(deluca.Obj):
   """Waveform generator with shape |‾\_"""
 
-  custom_range: tuple = deluca.field(trainable=False)
-  lo: float = deluca.field(trainable=False)
-  hi: float = deluca.field(trainable=False)
-  fp: jnp.array = deluca.field(trainable=False)
-  xp: jnp.array = deluca.field(trainable=False)
+  custom_range: tuple = deluca.field(jaxed=False)
+  lo: float = deluca.field(jaxed=False)
+  hi: float = deluca.field(jaxed=False)
+  fp: jnp.array = deluca.field(jaxed=False)
+  xp: jnp.array = deluca.field(jaxed=False)
   dtype: jax._src.numpy.lax_numpy._ScalarMeta = deluca.field(
-      jnp.float64, trainable=False)
-  keypoints: jnp.array = deluca.field(trainable=False)
-  bpm: int = deluca.field(DEFAULT_BPM, trainable=False)
-  kernel: list = deluca.field(trainable=False)
-  dt: float = deluca.field(0.01, trainable=False)
-  period: float = deluca.field(trainable=False)
+      jnp.float64, jaxed=False)
+  keypoints: jnp.array = deluca.field(jaxed=False)
+  bpm: int = deluca.field(DEFAULT_BPM, jaxed=False)
+  kernel: list = deluca.field(jaxed=False)
+  dt: float = deluca.field(0.01, jaxed=False)
+  period: float = deluca.field(jaxed=False)
 
   def setup(self):
     self.lo, self.hi = self.custom_range or DEFAULT_PRESSURE_RANGE

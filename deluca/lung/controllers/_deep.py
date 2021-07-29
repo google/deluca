@@ -17,14 +17,13 @@ import jax.numpy as jnp
 import optax
 import numpy as np
 import itertools
-import torch
 import flax.linen as nn
 
 import deluca.core
 from deluca.lung.core import Controller
 from deluca.lung.core import ControllerState
 from deluca.lung.core import BreathWaveform
-from deluca.lung.controllers import Expiratory
+from deluca.lung.controllers._expiratory import Expiratory
 from deluca.lung.envs._stitched_sim import StitchedSimObservation
 from deluca.lung.utils.data.transform import ShiftScaleTransform
 from deluca.lung.core import DEFAULT_DT
@@ -56,19 +55,19 @@ class DeepControllerState(deluca.Obj):
 
 
 class Deep(Controller):
-  params: list = deluca.field(trainable=True)
-  model: nn.module = deluca.field(DeepNetwork, trainable=False)
-  featurizer: jnp.array = deluca.field(trainable=False)
-  H: int = deluca.field(100, trainable=False)
-  input_dim: int = deluca.field(1, trainable=False)
-  history_len: int = deluca.field(10, trainable=False)
-  kernel_size: int = deluca.field(5, trainable=False)
-  clip: float = deluca.field(40.0, trainable=False)
-  normalize: bool = deluca.field(False, trainable=False)
-  u_scaler: ShiftScaleTransform = deluca.field(trainable=False)
-  p_scaler: ShiftScaleTransform = deluca.field(trainable=False)
+  params: list = deluca.field(jaxed=True)
+  model: nn.module = deluca.field(DeepNetwork, jaxed=False)
+  featurizer: jnp.array = deluca.field(jaxed=False)
+  H: int = deluca.field(100, jaxed=False)
+  input_dim: int = deluca.field(1, jaxed=False)
+  history_len: int = deluca.field(10, jaxed=False)
+  kernel_size: int = deluca.field(5, jaxed=False)
+  clip: float = deluca.field(40.0, jaxed=False)
+  normalize: bool = deluca.field(False, jaxed=False)
+  u_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
+  p_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
 
-  # bptt: int = deluca.field(1, trainable=False) not used right now
+  # bptt: int = deluca.field(1, jaxed=False) not used right now
   # TODO: add analogue of activation=torch.nn.ReLU
 
   def setup(self):
@@ -90,7 +89,10 @@ class Deep(Controller):
       self.u_scaler = u_scaler
       self.p_scaler = p_scaler
 
-  def init(self, waveform=BreathWaveform.create()):
+  # TODO: Handle dataclass initialization of jax objects
+  def init(self, waveform=None):
+    if waveform is None:
+      waveform = BreathWaveform.create()
     errs = jnp.array([0.0] * self.history_len)
     state = DeepControllerState(errs=errs, waveform=waveform)
     return state

@@ -24,7 +24,11 @@ from deluca.lung.core import proper_time
 
 
 class Expiratory(Controller):
-  waveform: BreathWaveform = deluca.field(BreathWaveform, trainable=False)
+  waveform: BreathWaveform = deluca.field(jaxed=False)
+  # TODO: Handle dataclass initialization of jax objects
+  def setup(self):
+    if self.waveform is None:
+      self.waveform = BreathWaveform.create()
 
   def __call__(self, state, obs, *args, **kwargs):
     pressure, time = obs.predicted_pressure, obs.time

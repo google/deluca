@@ -15,8 +15,8 @@
 import jax
 import jax.numpy as jnp
 
-from deluca.envs.lung import BreathWaveform
-from deluca.envs.lung.core import Lung
+from deluca.lung.core import BreathWaveform
+from deluca.lung.core import LungEnv
 
 
 def PropValve(x):
@@ -30,7 +30,7 @@ def Solenoid(x):
   return x > 0
 
 
-class BalloonLung(Lung):
+class BalloonLung(LungEnv):
   """
     Lung simulator based on the two-balloon experiment
 

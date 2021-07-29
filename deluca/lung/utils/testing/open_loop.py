@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pickle
+from deluca.lung.controllers._predestined import Predestined
 from deluca.lung.utils.data.analyzer import Analyzer
-from deluca.lung.utils.data.munger import Munger
 from deluca.lung.utils.scripts.run_controller import run_controller
 from deluca.lung.utils.scripts.run_controller import run_controller_scan
-
-import pickle
+import jax
+import jax.numpy as jnp
+import tqdm
 
 
 def open_loop_test(sim,
@@ -36,7 +38,7 @@ def open_loop_test(sim,
 
   all_runs = []
 
-  for test_trajectory in munger.splits[key]:
+  for test_trajectory in tqdm.tqdm(munger.splits[key]):
     test_u_ins, test_pressures = test_trajectory
     T = len(test_u_ins)
     controller = Predestined.create(u_ins=test_u_ins)
@@ -73,3 +75,20 @@ def open_loop_test(sim,
   populate_resids(test_summary)
 
   return test_summary
+
+
+def populate_resids(test_summary, key="all_runs", l1_out="mae", l2_out="rmse"):
+  all_runs = test_summary[key]
+
+  Tmax = max(map(lambda x: len(x[0]), all_runs))
+  l1, l2, counts = jnp.zeros(Tmax), jnp.zeros(Tmax), jnp.zeros(Tmax)
+
+  for preds, truth in all_runs:
+    resids = truth - preds
+    T = len(resids)
+    l1 = jax.ops.index_update(l1, jax.ops.index[:T], l1[:T] + abs(resids))
+    l2 = jax.ops.index_update(l2, jax.ops.index[:T], l2[:T] + resids ** 2)
+    counts = jax.ops.index_update(counts, jax.ops.index[:T], counts[:T] + 1)
+
+  test_summary[l1_out] = l1 / counts
+  test_summary[l2_out] = (l2 / counts) ** 0.5

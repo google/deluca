@@ -16,7 +16,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
-import flax.linen as fnn
+import flax.linen as nn
 import optax
 
 import deluca.core
@@ -41,32 +41,32 @@ class SimulatorState(deluca.Obj):
 
 
 class StitchedSim(LungEnv):
-  params: list = deluca.field(trainable=True)
+  params: list = deluca.field(jaxed=True)
 
-  init_rng: jnp.array = deluca.field(trainable=False)
-  u_window: int = deluca.field(5, trainable=False)
-  p_window: int = deluca.field(3, trainable=False)
-  u_history_len: int = deluca.field(5, trainable=False)
-  p_history_len: int = deluca.field(5, trainable=False)
-  u_scaler: ShiftScaleTransform = deluca.field(trainable=False)
-  p_scaler: ShiftScaleTransform = deluca.field(trainable=False)
-  to_round: bool = deluca.field(False, trainable=False)
-  seed: int = deluca.field(0, trainable=False)
-  flow: int = deluca.field(0, trainable=False)
+  init_rng: jnp.array = deluca.field(jaxed=False)
+  u_window: int = deluca.field(5, jaxed=False)
+  p_window: int = deluca.field(3, jaxed=False)
+  u_history_len: int = deluca.field(5, jaxed=False)
+  p_history_len: int = deluca.field(5, jaxed=False)
+  u_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
+  p_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
+  to_round: bool = deluca.field(False, jaxed=False)
+  seed: int = deluca.field(0, jaxed=False)
+  flow: int = deluca.field(0, jaxed=False)
 
-  default_out_dim: int = deluca.field(1, trainable=False)
-  default_hidden_dim: int = deluca.field(100, trainable=False)
-  default_n_layers: int = deluca.field(4, trainable=False)
-  default_dropout_prob: float = deluca.field(0.0, trainable=False)
+  default_out_dim: int = deluca.field(1, jaxed=False)
+  default_hidden_dim: int = deluca.field(100, jaxed=False)
+  default_n_layers: int = deluca.field(4, jaxed=False)
+  default_dropout_prob: float = deluca.field(0.0, jaxed=False)
 
-  num_boundary_models: int = deluca.field(5, trainable=False)
-  boundary_out_dim: int = deluca.field(1, trainable=False)
-  boundary_hidden_dim: int = deluca.field(100, trainable=False)
-  reset_scaled_peep: float = deluca.field(0.0, trainable=False)
+  num_boundary_models: int = deluca.field(5, jaxed=False)
+  boundary_out_dim: int = deluca.field(1, jaxed=False)
+  boundary_hidden_dim: int = deluca.field(100, jaxed=False)
+  reset_scaled_peep: float = deluca.field(0.0, jaxed=False)
 
-  default_model: fnn.module = deluca.field(SNN, trainable=False)
-  boundary_models: list = deluca.field(default_factory=list, trainable=False)
-  ensemble_models: list = deluca.field(default_factory=list, trainable=False)
+  default_model: nn.module = deluca.field(SNN, jaxed=False)
+  boundary_models: list = deluca.field(default_factory=list, jaxed=False)
+  ensemble_models: list = deluca.field(default_factory=list, jaxed=False)
 
   def setup(self):
     self.u_history_len = max(self.u_window, self.num_boundary_models)
@@ -191,7 +191,7 @@ class StitchedSim(LungEnv):
 
 def get_X_y_for_next_epoch_tf(loader, batch_size):
   # loader is a tensorflow.data.Dataset
-  loader = loader.shuffle(buffer_size=len(loader))
+  loader = loader.shuffle(buffer_size=len(loader), seed=0)
   loader = loader.batch(batch_size=batch_size, drop_remainder=True)
   loader_list = list(loader)
   unzipped_loader = list(zip(*loader_list))
@@ -236,7 +236,7 @@ def loop_over_loader(model_optimState, X_Y, optim, rollout):
   """
     rollout has signature (model, data) -> loss where data.shape = (2, N)
     X_batch.shape = Y_batch.shape = (num_batches, batch_size, N=29)
-    """
+  """
   # print('=================== ENTER loop_over_loader ======================')
   X_batch, y_batch = X_Y
   model, optim_state = model_optimState
