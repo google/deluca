@@ -24,6 +24,7 @@ from deluca.lung.core import LungEnv
 from deluca.lung.utils.data.transform import ShiftScaleTransform
 
 from deluca.lung.utils.nn import SNN
+from deluca.lung.utils.nn import MLP
 from deluca.lung.utils.nn import ShallowBoundaryModel
 
 
@@ -40,7 +41,7 @@ class SimulatorState(deluca.Obj):
   predicted_pressure: float = 0.0
 
 
-class StitchedSim(LungEnv):
+class GeneralizedStitchedSim(LungEnv):
   params: list = deluca.field(jaxed=True)
 
   init_rng: jnp.array = deluca.field(jaxed=False)
@@ -54,17 +55,18 @@ class StitchedSim(LungEnv):
   seed: int = deluca.field(0, jaxed=False)
   flow: int = deluca.field(0, jaxed=False)
 
-  default_out_dim: int = deluca.field(1, jaxed=False)
-  default_hidden_dim: int = deluca.field(100, jaxed=False)
-  default_n_layers: int = deluca.field(4, jaxed=False)
-  default_dropout_prob: float = deluca.field(0.0, jaxed=False)
-
+  # default_out_dim: int = deluca.field(1, jaxed=False)
+  # default_hidden_dim: int = deluca.field(100, jaxed=False)
+  # default_n_layers: int = deluca.field(4, jaxed=False)
+  # default_dropout_prob: float = deluca.field(0.0, jaxed=False)
+  default_model_parameters: dict = deluca.field(jaxed=False)
   num_boundary_models: int = deluca.field(5, jaxed=False)
   boundary_out_dim: int = deluca.field(1, jaxed=False)
   boundary_hidden_dim: int = deluca.field(100, jaxed=False)
   reset_scaled_peep: float = deluca.field(0.0, jaxed=False)
 
-  default_model: nn.module = deluca.field(SNN, jaxed=False)
+  default_model_name: str = deluca.field("SNN", jaxed=False)
+  default_model: nn.module = deluca.field(jaxed=False)
   boundary_models: list = deluca.field(default_factory=list, jaxed=False)
   ensemble_models: list = deluca.field(default_factory=list, jaxed=False)
 
@@ -72,11 +74,18 @@ class StitchedSim(LungEnv):
     self.u_history_len = max(self.u_window, self.num_boundary_models)
     self.p_history_len = max(self.p_window, self.num_boundary_models)
 
-    self.default_model = SNN(
-        out_dim=self.default_out_dim,
-        hidden_dim=self.default_hidden_dim,
-        n_layers=self.default_n_layers,
-    )
+    if self.default_model_name == "SNN":
+      self.default_model = SNN(
+          out_dim=self.default_model_parameters["out_dim"],
+          hidden_dim=self.default_model_parameters["hidden_dim"],
+          n_layers=self.default_model_parameters["n_layers"])
+    elif self.default_model_name == "MLP":
+      self.default_model = MLP(
+          hidden_dim=self.default_model_parameters["hidden_dim"],
+          out_dim=self.default_model_parameters["out_dim"],
+          n_layers=self.default_model_parameters["n_layers"],
+          droprate=self.default_model_parameters["droprate"],
+          activation_fn=self.default_model_parameters["activation_fn"])
     default_params = self.default_model.init(
         jax.random.PRNGKey(0),
         jnp.ones([self.u_history_len + self.p_history_len]))["params"]
@@ -315,7 +324,7 @@ def stitched_sim_train(
       patience_cnt = 0
     prev_loss = loss
     if epoch % print_loss == 0:
-      print('epoch:' + str(epoch))
+      print("epoch:" + str(epoch))
       print("loss:" + str(loss))
       print("prev_loss:" + str(prev_loss))
       print("patience_cnt:" + str(patience_cnt))
@@ -323,13 +332,11 @@ def stitched_sim_train(
       # expensive end-of-epoch eval, just for intuition
       print("X_train.shape:" + str(X_train.shape))
       print("y_train.shape:" + str(y_train.shape))
-      train_loss = map_rollout_over_batch(model, (X_train, y_train),
-                                          rollout)
+      train_loss = map_rollout_over_batch(model, (X_train, y_train), rollout)
       # cross-validation
       print("X_test.shape:" + str(X_test.shape))
       print("y_test.shape:" + str(y_test.shape))
-      test_loss = map_rollout_over_batch(model, (X_test, y_test),
-                                         rollout)
+      test_loss = map_rollout_over_batch(model, (X_test, y_test), rollout)
 
       print(
           f"Epoch {epoch:2d}: train={train_loss.item():.5f}, test={test_loss.item():.5f}"

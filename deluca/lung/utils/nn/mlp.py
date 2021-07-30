@@ -12,27 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Callable
 import flax.linen as nn
-from deluca.lung.utils.nn.alpha_dropout import AlphaDropout
 
 
-class SNN(nn.Module):
+class MLP(nn.Module):
+  hidden_dim: int = 10
   out_dim: int = 1
-  hidden_dim: int = 100
-  n_layers: int = 4
-  dropout_prob: float = 0.0
-  scale: float = 1.0507009873554804934193349852946
-  alpha: float = 1.6732632423543772848170429916717
+  n_layers: int = 2
+  droprate: float = 0.0
+  activation_fn: Callable = nn.relu
 
   @nn.compact
   def __call__(self, x):
     for i in range(self.n_layers - 1):
       x = nn.Dense(
-          features=self.hidden_dim, use_bias=False, name=f"SNN_fc{i}")(
+          features=self.hidden_dim, use_bias=True, name=f"MLP_fc{i}")(
               x)
-      x = self.scale * nn.elu(x, alpha=self.alpha)
-      x = AlphaDropout(rate=self.dropout_prob, deterministic=False)(x)
-    x = nn.Dense(
-        features=self.out_dim, use_bias=True, name=f"SNN_fc{i + 1}")(
-            x)
+      x = nn.Dropout(rate=self.droprate, deterministic=False)(x)
+      x = self.activation_fn(x)
+    x = nn.Dense(features=self.out_dim, use_bias=True, name=f"MLP_fc{i + 1}")(x)
     return x

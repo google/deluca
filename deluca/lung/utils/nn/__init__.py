@@ -14,7 +14,10 @@
 
 from deluca.lung.utils.nn.alpha_dropout import AlphaDropout
 from deluca.lung.utils.nn.constant_model import ConstantModel
+from deluca.lung.utils.nn.mlp import MLP
 from deluca.lung.utils.nn.shallow_boundary_model import ShallowBoundaryModel
 from deluca.lung.utils.nn.snn import SNN
 
-__all__ = ["AlphaDropout", "ConstantModel", "ShallowBoundaryModel", "SNN"]
+__all__ = [
+    "AlphaDropout", "ConstantModel", "ShallowBoundaryModel", "SNN", "MLP"
+]
