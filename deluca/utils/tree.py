@@ -15,8 +15,9 @@
 """Jax tree utilities"""
 import jax
 
+
 def tree_transpose_leaves(pytrees):
-    """Take list of pytrees and returns list of jnp.arrays
+  """Take list of pytrees and returns list of jnp.arrays
 
     Example:
 
@@ -41,17 +42,25 @@ def tree_transpose_leaves(pytrees):
 
       jax.vmap(func)((*blahs_t,), (*blahs_t,))
     """
-    tree_def = jax.tree_util.tree_structure(pytrees[0])
+  tree_def = jax.tree_util.tree_structure(pytrees[0])
 
-    pytree = jax.tree_util.tree_transpose(
-        outer_treedef = jax.tree_structure([0 for p in pytrees]),
-        inner_treedef = jax.tree_structure(pytrees[0]),
-        pytree_to_transpose = pytrees
-    )
+  pytree = jax.tree_util.tree_transpose(
+      outer_treedef=jax.tree_structure([0 for p in pytrees]),
+      inner_treedef=jax.tree_structure(pytrees[0]),
+      pytree_to_transpose=pytrees)
 
-    leaves = tree_def.flatten_up_to(pytree)
+  leaves = tree_def.flatten_up_to(pytree)
 
-    leaves = [jnp.array(leaf) for leaf in leaves]
-    pytree = jax.tree_util.tree_unflatten(tree_def, leaves)
+  leaves = [jnp.array(leaf) for leaf in leaves]
+  pytree = jax.tree_util.tree_unflatten(tree_def, leaves)
 
-    return leaves
+  return leaves
+
+
+def tree_untranspose_leaves(treedef, leaves):
+  """Take pytree of jnp.arrays and returns a list of pytrees"""
+  return [
+      treedef.unflatten([leaf[i]
+                         for leaf in leaves])
+      for i in range(len(leaves[0]))
+  ]
