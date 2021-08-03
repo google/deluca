@@ -14,6 +14,7 @@
 
 from typing import Callable
 import flax.linen as nn
+import jax
 
 
 class MLP(nn.Module):
@@ -29,7 +30,9 @@ class MLP(nn.Module):
       x = nn.Dense(
           features=self.hidden_dim, use_bias=True, name=f"MLP_fc{i}")(
               x)
-      x = nn.Dropout(rate=self.droprate, deterministic=False)(x)
+      x = nn.Dropout(
+          rate=self.droprate, deterministic=False)(
+              x, rng=jax.random.PRNGKey(0))
       x = self.activation_fn(x)
     x = nn.Dense(features=self.out_dim, use_bias=True, name=f"MLP_fc{i + 1}")(x)
     return x

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-
+from absl import logging
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
@@ -95,13 +95,13 @@ class StitchedSim(LungEnv):
     ]
 
     self.ensemble_models = self.boundary_models + [self.default_model]
-    # print("ENSEMBLE MODELS:")
-    # print(self.ensemble_models)
+    # logging.info("ENSEMBLE MODELS:")
+    # logging.info(self.ensemble_models)
     # without ensemble i.e. flattened params
     if self.params is None:
       self.params = boundary_params + [default_params]
-    # print("TREE MAP")
-    # print(jax.tree_map(lambda x: x.shape, self.params))
+    # logging.info("TREE MAP")
+    # logging.info(jax.tree_map(lambda x: x.shape, self.params))
 
   def reset(self):
     scaled_peep = self.reset_scaled_peep
@@ -238,7 +238,7 @@ def loop_over_loader(model_optimState_lrMult_loss, X_Y, optim, rollout):
     X_batch.shape = Y_batch.shape = (num_batches, batch_size, N=29)
     lrMult is the multiplier for the scheduler
   """
-  # print('=================== ENTER loop_over_loader ======================')
+  # logging.info('=================== ENTER loop_over_loader ======================')
   X_batch, y_batch = X_Y
   model, optim_state, lr_mult, loss = model_optimState_lrMult_loss
   loss, grad = jax.value_and_grad(map_rollout_over_batch)(model,
@@ -300,7 +300,7 @@ def stitched_sim_train(
   lr_mult = 1.0
   for epoch in range(epochs + 1):
     # if epoch % 25 == 0:
-    #   print("epoch:" + str(epoch))
+    #   logging.info("epoch:" + str(epoch))
     X, y = get_X_y_for_next_epoch_tf(loader, batch_size)
 
     (model, optim_state, lr_mult,
@@ -315,25 +315,25 @@ def stitched_sim_train(
       patience_cnt = 0
     prev_loss = loss
     if epoch % print_loss == 0:
-      print('epoch:' + str(epoch))
-      print("loss:" + str(loss))
-      print("prev_loss:" + str(prev_loss))
-      print("patience_cnt:" + str(patience_cnt))
-      print("lr_mult:" + str(lr_mult))
+      logging.info('epoch:' + str(epoch))
+      logging.info("loss:" + str(loss))
+      logging.info("prev_loss:" + str(prev_loss))
+      logging.info("patience_cnt:" + str(patience_cnt))
+      logging.info("lr_mult:" + str(lr_mult))
       # expensive end-of-epoch eval, just for intuition
-      print("X_train.shape:" + str(X_train.shape))
-      print("y_train.shape:" + str(y_train.shape))
+      logging.info("X_train.shape:" + str(X_train.shape))
+      logging.info("y_train.shape:" + str(y_train.shape))
       train_loss = map_rollout_over_batch(model, (X_train, y_train),
                                           rollout)
       # cross-validation
-      print("X_test.shape:" + str(X_test.shape))
-      print("y_test.shape:" + str(y_test.shape))
+      logging.info("X_test.shape:" + str(X_test.shape))
+      logging.info("y_test.shape:" + str(y_test.shape))
       test_loss = map_rollout_over_batch(model, (X_test, y_test),
                                          rollout)
 
-      print(
+      logging.info(
           f"Epoch {epoch:2d}: train={train_loss.item():.5f}, test={test_loss.item():.5f}"
       )
-      print("-----------------------------------")
-  print("finished looping over epochs")
+      logging.info("-----------------------------------")
+  logging.info("finished looping over epochs")
   return model, test_loss

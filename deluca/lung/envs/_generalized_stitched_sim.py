@@ -13,7 +13,8 @@
 # limitations under the License.
 
 from functools import partial
-
+from absl import logging
+from typing import Dict, Any
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
@@ -43,7 +44,6 @@ class SimulatorState(deluca.Obj):
 
 class GeneralizedStitchedSim(LungEnv):
   params: list = deluca.field(jaxed=True)
-
   init_rng: jnp.array = deluca.field(jaxed=False)
   u_window: int = deluca.field(5, jaxed=False)
   p_window: int = deluca.field(3, jaxed=False)
@@ -55,11 +55,7 @@ class GeneralizedStitchedSim(LungEnv):
   seed: int = deluca.field(0, jaxed=False)
   flow: int = deluca.field(0, jaxed=False)
 
-  # default_out_dim: int = deluca.field(1, jaxed=False)
-  # default_hidden_dim: int = deluca.field(100, jaxed=False)
-  # default_n_layers: int = deluca.field(4, jaxed=False)
-  # default_dropout_prob: float = deluca.field(0.0, jaxed=False)
-  default_model_parameters: dict = deluca.field(jaxed=False)
+  default_model_parameters: Dict[str, Any] = deluca.field(jaxed=False)
   num_boundary_models: int = deluca.field(5, jaxed=False)
   boundary_out_dim: int = deluca.field(1, jaxed=False)
   boundary_hidden_dim: int = deluca.field(100, jaxed=False)
@@ -73,12 +69,12 @@ class GeneralizedStitchedSim(LungEnv):
   def setup(self):
     self.u_history_len = max(self.u_window, self.num_boundary_models)
     self.p_history_len = max(self.p_window, self.num_boundary_models)
-
     if self.default_model_name == "SNN":
       self.default_model = SNN(
           out_dim=self.default_model_parameters["out_dim"],
           hidden_dim=self.default_model_parameters["hidden_dim"],
-          n_layers=self.default_model_parameters["n_layers"])
+          n_layers=self.default_model_parameters["n_layers"],
+          droprate=self.default_model_parameters["droprate"])
     elif self.default_model_name == "MLP":
       self.default_model = MLP(
           hidden_dim=self.default_model_parameters["hidden_dim"],
@@ -86,6 +82,7 @@ class GeneralizedStitchedSim(LungEnv):
           n_layers=self.default_model_parameters["n_layers"],
           droprate=self.default_model_parameters["droprate"],
           activation_fn=self.default_model_parameters["activation_fn"])
+    # init_rngs = {"params": jax.random.PRNGKey(0), "Dropout_0": jax.random.PRNGKey(0)}
     default_params = self.default_model.init(
         jax.random.PRNGKey(0),
         jnp.ones([self.u_history_len + self.p_history_len]))["params"]
@@ -104,13 +101,13 @@ class GeneralizedStitchedSim(LungEnv):
     ]
 
     self.ensemble_models = self.boundary_models + [self.default_model]
-    # print("ENSEMBLE MODELS:")
-    # print(self.ensemble_models)
+    # logging.info("ENSEMBLE MODELS:")
+    # logging.info(self.ensemble_models)
     # without ensemble i.e. flattened params
     if self.params is None:
       self.params = boundary_params + [default_params]
-    # print("TREE MAP")
-    # print(jax.tree_map(lambda x: x.shape, self.params))
+    # logging.info("TREE MAP")
+    # logging.info(jax.tree_map(lambda x: x.shape, self.params))
 
   def reset(self):
     scaled_peep = self.reset_scaled_peep
@@ -247,7 +244,7 @@ def loop_over_loader(model_optimState_lrMult_loss, X_Y, optim, rollout):
     X_batch.shape = Y_batch.shape = (num_batches, batch_size, N=29)
     lrMult is the multiplier for the scheduler
   """
-  # print('=================== ENTER loop_over_loader ======================')
+  # logging.info('=================== ENTER loop_over_loader ======================')
   X_batch, y_batch = X_Y
   model, optim_state, lr_mult, loss = model_optimState_lrMult_loss
   loss, grad = jax.value_and_grad(map_rollout_over_batch)(model,
@@ -270,22 +267,23 @@ def map_rollout_over_batch(model, data, rollout):
   return jnp.array(losses).mean()
 
 
-def stitched_sim_train(
+def generalized_stitched_sim_train(
     munger,
     model,
     num_boundary_models,
-    # 0 to num_boundary_models-1 are boundary models, and num_boundary_models is #
-    # default_model
+    # idx 0 to num_boundary_models-1 are boundary models,
+    # idx num_boundary_models is default_model
     train_key="train",
     test_key="test",
     batch_size=512,
     epochs=500,
-    optimizer=optax.adam,
-    optimizer_params={"learning_rate": 1e-3},
-    patience=15,
-    lr_decay_factor=0.9,
-    # scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau,
-    # scheduler_params={"factor": 0.9, "patience": 15},
+    optimizer=optax.adamw,
+    optimizer_params={
+        "learning_rate": 1e-3,
+        "weight_decay": 1e-4
+    },
+    patience=10,
+    lr_decay_factor=0.1,
     loss_fn=lambda x, y: (jnp.abs(x - y)).mean(),
     print_loss=100,
 ):
@@ -309,7 +307,7 @@ def stitched_sim_train(
   lr_mult = 1.0
   for epoch in range(epochs + 1):
     # if epoch % 25 == 0:
-    #   print("epoch:" + str(epoch))
+    #   logging.info("epoch:" + str(epoch))
     X, y = get_X_y_for_next_epoch_tf(loader, batch_size)
 
     (model, optim_state, lr_mult,
@@ -324,23 +322,23 @@ def stitched_sim_train(
       patience_cnt = 0
     prev_loss = loss
     if epoch % print_loss == 0:
-      print("epoch:" + str(epoch))
-      print("loss:" + str(loss))
-      print("prev_loss:" + str(prev_loss))
-      print("patience_cnt:" + str(patience_cnt))
-      print("lr_mult:" + str(lr_mult))
+      logging.info("epoch:" + str(epoch))
+      logging.info("loss:" + str(loss))
+      logging.info("prev_loss:" + str(prev_loss))
+      logging.info("patience_cnt:" + str(patience_cnt))
+      logging.info("lr_mult:" + str(lr_mult))
       # expensive end-of-epoch eval, just for intuition
-      print("X_train.shape:" + str(X_train.shape))
-      print("y_train.shape:" + str(y_train.shape))
+      logging.info("X_train.shape:" + str(X_train.shape))
+      logging.info("y_train.shape:" + str(y_train.shape))
       train_loss = map_rollout_over_batch(model, (X_train, y_train), rollout)
       # cross-validation
-      print("X_test.shape:" + str(X_test.shape))
-      print("y_test.shape:" + str(y_test.shape))
+      logging.info("X_test.shape:" + str(X_test.shape))
+      logging.info("y_test.shape:" + str(y_test.shape))
       test_loss = map_rollout_over_batch(model, (X_test, y_test), rollout)
 
-      print(
+      logging.info(
           f"Epoch {epoch:2d}: train={train_loss.item():.5f}, test={test_loss.item():.5f}"
       )
-      print("-----------------------------------")
-  print("finished looping over epochs")
+      logging.info("-----------------------------------")
+  logging.info("finished looping over epochs")
   return model, test_loss
