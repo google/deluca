@@ -35,7 +35,7 @@ class Cartpole(Env):
   goal_state: jnp.ndarray = field(jaxed=False)
   dynamics: bool = field(False, jaxed=False)
 
-  # def setup(self):
+  def setup(self):
     # TODO: Handle dataclass initialization of jax objects
     if self.goal_state is None:
       self.goal_state = jnp.array([0.0, 0.0, 0.0, 0.0])

@@ -69,7 +69,8 @@ class PlanarQuadrotor(Env):
     return self.wind_func(x, y, self.wind)
 
   def init(self):
-    return PlanarQuadrotorState()
+    new_state = PlanarQuadrotorState()
+    return new_state, new_state.arr
 
   def __call__(self, state, action):
     x, y, th, xdot, ydot, thdot = state.arr
