@@ -12,30 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SNN Simulator."""
-from deluca.lung.utils.nn.alpha_dropout import AlphaDropout
+"""CNN Simulator."""
+from typing import Callable
 import flax.linen as nn
-import jax
+import jax.numpy as jnp
 
 
-class SNN(nn.Module):
-  """SNN neural network."""
+class CNN(nn.Module):
+  """CNN neural network."""
+  n_layers: int = 2
+  out_channels: int = 10
+  kernel_size: int = 3
+  # strides: Tuple[int, int] = (1, 1)
+  strides: int = 1
   out_dim: int = 1
-  hidden_dim: int = 100
-  n_layers: int = 4
-  droprate: float = 0.0
-  scale: float = 1.0507009873554804934193349852946
-  alpha: float = 1.6732632423543772848170429916717
+  activation_fn: Callable[[jnp.array], jnp.array] = nn.relu
 
   @nn.compact
   def __call__(self, x):
     for i in range(self.n_layers - 1):
-      x = nn.Dense(
-          features=self.hidden_dim, use_bias=False, name=f"SNN_fc{i}")(
-              x)
-      x = self.scale * nn.elu(x, alpha=self.alpha)
-      x = AlphaDropout(
-          rate=self.droprate, deterministic=False)(
-              x, rng=jax.random.PRNGKey(0))
-    x = nn.Dense(features=self.out_dim, use_bias=True, name=f"SNN_fc{i + 1}")(x)
+      x = nn.Conv(
+          features=self.out_channels,
+          kernel_size=(self.kernel_size,),
+          strides=(self.strides,),
+          name=f"conv{i}")(x)
+      x = self.activation_fn(x)
+    x = x.reshape((x.shape[0], -1))  # flatten
+    x = nn.Dense(
+        features=self.out_dim, use_bias=True, name=f"CNN_fc{i + 1}")(
+            x)
     return x
