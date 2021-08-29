@@ -28,6 +28,9 @@ from deluca.lung.utils.nn import ShallowBoundaryModel
 
 
 class StitchedSimObservation(deluca.Obj):
+  """predcited_pressure: predicted p at corresponding time t.
+     compare actual pressure at time t to measure difference.
+  """
   predicted_pressure: float = 0.0
   time: float = 0.0
 
@@ -184,9 +187,10 @@ class StitchedSim(LungEnv):
 
     partial_false_func = partial(false_func, u_in=u_in, model_idx=model_idx)
     state = jax.lax.cond(u_out == 1, true_func, partial_false_func, state)
+    state = state.replace(steps=state.steps + 1)
     obs = StitchedSimObservation(
         predicted_pressure=state.predicted_pressure, time=self.time(state))
-    return state.replace(steps=state.steps + 1), obs
+    return state, obs
 
 
 def get_X_y_for_next_epoch_tf(loader, batch_size):

@@ -44,7 +44,7 @@ class BreathWaveform(deluca.Obj):
   fp: jnp.array = deluca.field(jaxed=False)
   xp: jnp.array = deluca.field(jaxed=False)
   dtype: jax._src.numpy.lax_numpy._ScalarMeta = deluca.field(
-      jnp.float64, jaxed=False)
+      jnp.float32, jaxed=False)
   keypoints: jnp.array = deluca.field(jaxed=False)
   bpm: int = deluca.field(DEFAULT_BPM, jaxed=False)
   kernel: list = deluca.field(jaxed=False)
@@ -86,6 +86,7 @@ class BreathWaveform(deluca.Obj):
   @property
   def PIP(self):
     # TODO: what's custom range?
+    # TODO: seems simply call max, min can handle both cases.
     if hasattr(self, "custom_range"):
       return self.custom_range[1]
     else:
@@ -118,6 +119,7 @@ class BreathWaveform(deluca.Obj):
   # TODO: change all files where "if decay is None" to "if decay == float("inf")"
   # files affected: _mpc, _clipped_adv_deep, _clipped_deep, _deep_pid_residual,
   # _deep_pid_residual_clipped
+  # TODO can we document this method a bit?
   def decay(self, t):
     elapsed = self.elapsed(t)
 
@@ -137,7 +139,6 @@ class BreathWaveform(deluca.Obj):
     return jnp.searchsorted(
         self.keypoints, jnp.mod(t, self.period), side="right")
 
-  import os
 
 
 class LungEnv(deluca.Env):
