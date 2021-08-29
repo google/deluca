@@ -23,7 +23,7 @@ from deluca.lung.core import BreathWaveform
 
 class Analyzer:
 
-  def __init__(self, path):
+  def __init__(self, path, test_pressure=None):
     self.data = path if isinstance(path, dict) else pickle.load(
         open(path, "rb"))
     timeseries = self.data["timeseries"]
@@ -33,6 +33,7 @@ class Analyzer:
     self.pressure = timeseries["pressure"]
     self.target = timeseries["target"]
     self.flow = timeseries["flow"]
+    self.test_pressure = test_pressure
 
     # TODO: remove legacy logic
     if "waveform" in self.data:
@@ -74,6 +75,8 @@ class Analyzer:
         self.tt, self.pressure, color="blue", label="actual pressure", **kwargs)
     (target,) = axes.plot(
         self.tt, self.target, color="orange", label="target pressure", **kwargs)
+    (test_pressure,) = axes.plot(
+        self.tt, self.test_pressure, color="red", label="test pressure", **kwargs)
     axes.set_ylabel("Pressure (cmH2O)")
     axes.set_ylim(ylim)
     expiratory = axes.fill_between(
@@ -94,7 +97,7 @@ class Analyzer:
         alpha=0.3,
         label="inspiratory phase",
     )
-    plts.extend([pressure, target, inspiratory, expiratory])
+    plts.extend([pressure, target, test_pressure, inspiratory, expiratory])
 
     if control:
       twin_ax = axes.twinx()

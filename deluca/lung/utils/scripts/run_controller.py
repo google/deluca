@@ -151,12 +151,16 @@ def run_controller_scan(
   u_outs = jnp.zeros(T)
 
   state, obs = env.reset()
-  xp = jnp.array(waveform.xp)
-  fp = jnp.array(waveform.fp)
-  period = waveform.period
-  dtype = waveform.dtype
+  # xp = jnp.array(waveform.xp)
+  # fp = jnp.array(waveform.fp)
+  # period = waveform.period
+  # dtype = waveform.dtype
 
-  jit_loop_over_tt = jax.jit(partial(loop_over_tt, controller=controller, expiratory=expiratory, env=env, dt=dt))
+  jit_loop_over_tt = jax.jit(partial(loop_over_tt,
+                                     controller=controller,
+                                     expiratory=expiratory,
+                                     env=env,
+                                     dt=dt))
   try:
     _, (timestamps, u_ins, u_outs, pressures, flows) = jax.lax.scan(
         jit_loop_over_tt, (state, obs, controller_state, expiratory_state, 0),

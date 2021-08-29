@@ -22,6 +22,8 @@ class ShallowBoundaryModel(nn.Module):
 
   @nn.compact
   def __call__(self, x):
+    # need to flatten extra dimensions required by CNN and LSTM
+    x = x.squeeze()
     x = nn.Dense(
         features=self.hidden_dim,
         use_bias=False,
@@ -34,4 +36,4 @@ class ShallowBoundaryModel(nn.Module):
         use_bias=True,
         name=f"shallow_fc{2}_model" + str(self.model_num))(
             x)
-    return x
+    return x.squeeze()  # squeeze for consistent shape w/ boundary model output

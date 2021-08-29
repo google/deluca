@@ -41,4 +41,4 @@ class CNN(nn.Module):
     x = nn.Dense(
         features=self.out_dim, use_bias=True, name=f"CNN_fc{i + 1}")(
             x)
-    return x
+    return x.squeeze()  # squeeze for consistent shape w/ boundary model output
