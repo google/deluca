@@ -17,6 +17,7 @@ from functools import partial
 from enum import Enum
 import jax
 import jax.numpy as jnp
+import numpy as np
 import deluca.core
 
 ROOT = os.path.dirname(os.path.realpath(os.path.join(__file__, "../..")))
@@ -44,7 +45,7 @@ class BreathWaveform(deluca.Obj):
   fp: jnp.array = deluca.field(jaxed=False)
   xp: jnp.array = deluca.field(jaxed=False)
   dtype: jax._src.numpy.lax_numpy._ScalarMeta = deluca.field(
-      jnp.float64, jaxed=False)
+      jnp.float32, jaxed=False)
   keypoints: jnp.array = deluca.field(jaxed=False)
   bpm: int = deluca.field(DEFAULT_BPM, jaxed=False)
   kernel: list = deluca.field(jaxed=False)
@@ -105,12 +106,7 @@ class BreathWaveform(deluca.Obj):
     return not self.is_in(t)
 
   def at(self, t):
-
-    @partial(jax.jit, static_argnums=(3,))
-    def static_interp(t, xp, fp, period):
-      return jnp.interp(t, xp, fp, period=period)
-
-    return static_interp(t, self.xp, self.fp, self.period).astype(self.dtype)
+    return jnp.array(np.interp(t, self.xp, self.fp, self.period))
 
   def elapsed(self, t):
     return t % self.period

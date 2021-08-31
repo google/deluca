@@ -132,7 +132,7 @@ class LSTMWithPID(Controller):
     lstm_state, u_in_residual = self.lstm.apply({"params": self.params},
                                                 lstm_state, features)
     u_in = u_in_base + u_in_residual * self.mult
-    u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float64), 100.0).squeeze()
+    u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float32), 100.0).squeeze()
     controller_state = controller_state.replace(
         featurizer_state=featurizer_state,
         pid_state=pid_state,

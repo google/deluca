@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import functools
 
 import numpy as np
 import jax
@@ -30,8 +31,9 @@ class Expiratory(Controller):
     if self.waveform is None:
       self.waveform = BreathWaveform.create()
 
+  @functools.partial(jax.jit, static_argnums=(2,))
   def __call__(self, state, obs, *args, **kwargs):
-    pressure, time = obs.predicted_pressure, obs.time
+    pressure, time = obs.pressure, obs.time
     phase = self.waveform.phase(time)
     u_out = jnp.zeros_like(phase)
     u_out = jax.lax.cond(

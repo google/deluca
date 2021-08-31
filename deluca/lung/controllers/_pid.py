@@ -11,15 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import functools
 
+import jax
+import jax.numpy as jnp
+import flax.linen as nn
+
+import deluca.core
 from deluca.lung.core import Controller, ControllerState
 from deluca.lung.core import BreathWaveform
 from deluca.lung.core import DEFAULT_DT
 from deluca.lung.core import proper_time
-import deluca.core
-import jax
-import jax.numpy as jnp
-import flax.linen as nn
 
 
 class PIDControllerState(deluca.Obj):
@@ -61,29 +63,30 @@ class PID(Controller):
     state = PIDControllerState()
     return state
 
-  def __call__(self, controller_state, obs):
-    pressure, t = obs.predicted_pressure, obs.time
+  @functools.partial(jax.jit, static_argnums=(2,))
+  def __call__(self, state, obs):
+    pressure, t = obs.pressure, obs.time
     target = self.waveform.at(t)
     err = jnp.array(target - pressure)
 
     decay = jnp.array(self.dt / (self.dt + self.RC))
 
-    P, I, D = controller_state.P, controller_state.I, controller_state.D
+    P, I, D = state.P, state.I, state.D
     next_P = err
     next_I = I + decay * (err - I)
     next_D = D + decay * (err - P - D)
-    controller_state = controller_state.replace(P=next_P, I=next_I, D=next_D)
+    state = state.replace(P=next_P, I=next_I, D=next_D)
 
     next_coef = jnp.array([next_P, next_I, next_D])
     u_in = self.model.apply({"params": self.params}, next_coef)
-    u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float64), 100.0)
+    u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float32), 100.0)
 
-    # update controller_state
+    # update state
     new_dt = jnp.max(
-        jnp.array([DEFAULT_DT, t - proper_time(controller_state.time)]))
+        jnp.array([DEFAULT_DT, t - proper_time(state.time)]))
     new_time = t
-    new_steps = controller_state.steps + 1
-    controller_state = controller_state.replace(
+    new_steps = state.steps + 1
+    state = state.replace(
         time=new_time, steps=new_steps, dt=new_dt)
 
-    return controller_state, u_in
+    return state, u_in

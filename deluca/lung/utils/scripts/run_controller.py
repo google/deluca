@@ -12,14 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import time
+from functools import partial
+import pickle
+
+import numpy as np
+import jax
+import jax.numpy as jnp
+
 from deluca.lung.controllers._expiratory import Expiratory
 from deluca.lung.envs._balloon_lung import BalloonLung
 from deluca.lung.core import BreathWaveform
-from functools import partial
-import os
-import pickle
-import jax
-import jax.numpy as jnp
 
 
 def run_controller(
@@ -34,6 +38,18 @@ def run_controller(
     use_tqdm=False,
     directory=None,
 ):
+  timers = {
+    "init": 0.,
+    "in_ctrl": 0.,
+    "ex_ctrl": 0.,
+    "env": 0.,
+    "record": 0.,
+    "loop": 0.,
+    "total": 0.
+  }
+  
+  start = time.time()
+  overall_start = start
   env = env or BalloonLung()
   waveform = waveform or BreathWaveform.create()
   expiratory = Expiratory.create(waveform=waveform)
@@ -47,34 +63,50 @@ def run_controller(
   if use_tqdm:
     tt = tqdm.tqdm(tt, leave=False)
 
-  timestamps = jnp.zeros(T)
-  pressures = jnp.zeros(T)
-  flows = jnp.zeros(T)
-  u_ins = jnp.zeros(T)
-  u_outs = jnp.zeros(T)
+  timestamps = np.zeros(T)
+  pressures = np.zeros(T)
+  flows = np.zeros(T)
+  u_ins = np.zeros(T)
+  u_outs = np.zeros(T)
 
-  state, obs = env.reset()
+  state = env.init()
 
+  timers["init"] += time.time() - start
+
+  loop_start = time.time()
   try:
     for i, _ in enumerate(tt):
-      pressure = obs.predicted_pressure
+      pressure = state.pressure
       if env.should_abort():
         break
 
-      controller_state, u_in = controller.__call__(controller_state, obs)
-      expiratory_state, u_out = expiratory.__call__(expiratory_state, obs)
-      state, obs = env(state, (u_in, u_out))
+      timestamps[i] = state.time
 
-      timestamps = jax.ops.index_update(timestamps, i, env.time(state) - dt)
-      u_ins = jax.ops.index_update(u_ins, i, u_in)
-      u_outs = jax.ops.index_update(u_outs, i, u_out)
-      pressures = jax.ops.index_update(pressures, i, pressure)
-      flows = jax.ops.index_update(flows, i, env.flow)
+      start = time.time()
+      controller_state, u_in = controller(controller_state, state)
+      timers["in_ctrl"] += time.time() - start
 
-      env.wait(max(dt - env.dt, 0))
+      start = time.time()
+      expiratory_state, u_out = expiratory(expiratory_state, state)
+      timers["ex_ctrl"] += time.time() - start
+
+      start = time.time()
+      state, _ = env(state, (u_in, u_out))
+      timers["env"] += time.time() - start
+
+      start = time.time()
+      u_ins[i] = u_in.squeeze().item()
+      u_outs[i] = u_out.squeeze().item()
+      pressures[i] = state.pressure
+      flows[i] = state.flow
+      timers["record"] += time.time() - start
+
+      state = env.wait(state, max(dt - state.dt, 0))
 
   finally:
     env.cleanup()
+
+  timers["loop"] += time.time() - loop_start
 
   timeseries = {
       "timestamp": jnp.array(timestamps),
@@ -96,7 +128,9 @@ def run_controller(
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     pickle.dump(result, open(f"{directory}/{timestamp}.pkl", "wb"))
 
-  return result
+  timers["total"] += time.time() - overall_start
+
+  return result, timers
 
 def loop_over_tt(envState_obs_ctrlState_ExpState_i, dummy_data, controller, expiratory, env, dt):
   state, obs, controller_state, expiratory_state, i = envState_obs_ctrlState_ExpState_i
