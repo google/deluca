@@ -28,7 +28,7 @@ class PIDControllerState(deluca.Obj):
   P: float = 0.
   I: float = 0.
   D: float = 0.
-  time: float = float("inf")
+  time: float = 0.
   steps: int = 0
   dt: float = DEFAULT_DT
 
@@ -67,26 +67,24 @@ class PID(Controller):
   def __call__(self, state, obs):
     pressure, t = obs.pressure, obs.time
     target = self.waveform.at(t)
-    err = jnp.array(target - pressure)
+    err = target - pressure
 
-    decay = jnp.array(self.dt / (self.dt + self.RC))
+    decay = self.dt / (self.dt + self.RC)
 
     P, I, D = state.P, state.I, state.D
     next_P = err
     next_I = I + decay * (err - I)
     next_D = D + decay * (err - P - D)
-    state = state.replace(P=next_P, I=next_I, D=next_D)
 
     next_coef = jnp.array([next_P, next_I, next_D])
-    u_in = self.model.apply({"params": self.params}, next_coef)
+    u_in = jnp.dot(next_coef, self.params)
     u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float32), 100.0)
 
     # update state
-    new_dt = jnp.max(
-        jnp.array([DEFAULT_DT, t - proper_time(state.time)]))
+    new_dt = obs.dt
     new_time = t
     new_steps = state.steps + 1
-    state = state.replace(
+    state = state.replace(P=next_P, I=next_I, D=next_D,
         time=new_time, steps=new_steps, dt=new_dt)
 
     return state, u_in

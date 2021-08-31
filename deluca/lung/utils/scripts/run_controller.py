@@ -74,6 +74,7 @@ def run_controller(
   timers["init"] += time.time() - start
 
   loop_start = time.time()
+
   try:
     for i, _ in enumerate(tt):
       pressure = state.pressure
@@ -87,16 +88,18 @@ def run_controller(
       timers["in_ctrl"] += time.time() - start
 
       start = time.time()
-      expiratory_state, u_out = expiratory(expiratory_state, state)
+      # expiratory_state, u_out = expiratory(expiratory_state, state)
       timers["ex_ctrl"] += time.time() - start
 
       start = time.time()
-      state, _ = env(state, (u_in, u_out))
+      # state, _ = env(state, (u_in, u_out))
+      state, _ = env(state, (u_in, 0))
       timers["env"] += time.time() - start
 
       start = time.time()
       u_ins[i] = u_in.squeeze().item()
-      u_outs[i] = u_out.squeeze().item()
+      # u_outs[i] = u_out.squeeze().item()
+      u_outs[i] = 0
       pressures[i] = state.pressure
       flows[i] = state.flow
       timers["record"] += time.time() - start
