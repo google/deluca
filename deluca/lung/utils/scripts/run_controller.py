@@ -98,9 +98,11 @@ def run_controller(
 
   return result
 
-def loop_over_tt(envState_obs_ctrlState_ExpState_i, dummy_data, controller, expiratory, env, dt):
+def loop_over_tt(envState_obs_ctrlState_ExpState_i, dummy_data, controller,
+                 expiratory, env, dt):
   state, obs, controller_state, expiratory_state, i = envState_obs_ctrlState_ExpState_i
   pressure = obs.predicted_pressure
+
   # if env.should_abort(): # TODO: how to handle break in scan
   #     break
 
@@ -130,6 +132,7 @@ def run_controller_scan(
     waveform=None,
     use_tqdm=False,
     directory=None,
+    init_controller=False,
 ):
   env = env or BalloonLung()
   waveform = waveform or BreathWaveform.create()
@@ -137,7 +140,10 @@ def run_controller_scan(
 
   result = locals()
 
-  controller_state = controller.init()
+  if init_controller:
+    controller_state = controller.init(waveform)
+  else:
+    controller_state = controller.init()
   expiratory_state = expiratory.init()
 
   tt = range(T)

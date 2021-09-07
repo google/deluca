@@ -66,7 +66,7 @@ class BreathWaveform(deluca.Obj):
           jnp.array(DEFAULT_KEYPOINTS, dtype=self.dtype))
     self.xp = jax.ops.index_update(self.xp, -1, 60 / self.bpm)
     self.keypoints = self.xp
-    self.period = float(self.xp[-1])
+    self.period = 60 / self.bpm
 
     pad = 0
     num = int(1 / self.dt)

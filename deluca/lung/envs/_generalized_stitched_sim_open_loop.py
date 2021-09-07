@@ -15,6 +15,7 @@
 from functools import partial
 from absl import logging
 from typing import Dict, Any
+import time
 import os
 import jax
 import jax.numpy as jnp
@@ -113,10 +114,7 @@ class GeneralizedStitchedSim_open_loop(LungEnv):
           jax.random.PRNGKey(0),
           jnp.ones([1, self.u_history_len + self.p_history_len, 1]))["params"]
       logging.info('[1, self.u_history_len + self.p_history_len, 1]:' + str([1, self.u_history_len + self.p_history_len, 1]))
-    # TODO: edit rollout to init lstm_state and pass it to __call__
     elif self.default_model_name == "LSTM":
-      # init_lstm_state = self.default_model.initialize_carry(batch_dims,
-      #                                                       self.default_model_parameters["hidden_dim"])
       default_params = self.default_model.init(
           jax.random.PRNGKey(0),
           jnp.ones((1, self.u_history_len + self.p_history_len, 1)))["params"]
@@ -135,9 +133,6 @@ class GeneralizedStitchedSim_open_loop(LungEnv):
     ]
 
     self.ensemble_models = self.boundary_models + [self.default_model]
-    # logging.info("ENSEMBLE MODELS:")
-    # logging.info(self.ensemble_models)
-    # without ensemble i.e. flattened params
     if self.params is None:
       self.params = boundary_params + [default_params]
     logging.info("TREE MAP")
@@ -199,12 +194,10 @@ class GeneralizedStitchedSim_open_loop(LungEnv):
       ])
       default_features = jnp.hstack(
           [state.u_history[-self.u_window:], state.p_history[-self.p_window:]])
-      # logging.info("default_features 1:" + str(default_features))
       default_pad_len = (self.u_history_len + self.p_history_len) - (
           self.u_window + self.p_window)
       default_features = jnp.hstack(
           [jnp.zeros((default_pad_len,)), default_features])
-      # logging.info("default_features 2:" + str(default_features))
       if self.default_model_name == "CNN":
         boundary_features = jnp.expand_dims(boundary_features, axis=[0, 2])
         default_features = jnp.expand_dims(default_features, axis=[0, 2])
@@ -222,6 +215,7 @@ class GeneralizedStitchedSim_open_loop(LungEnv):
       else:
         scaled_pressure = jax.lax.switch(model_idx, funcs, features)
 
+      scaled_pressure = scaled_pressure.astype(jnp.float64)
       state = state.replace(predicted_pressure=scaled_pressure)
       new_p_history = self.update_history(state.p_history,
                                           scaled_pressure)
@@ -233,9 +227,10 @@ class GeneralizedStitchedSim_open_loop(LungEnv):
 
     partial_false_func = partial(false_func, u_in=u_in, model_idx=model_idx)
     state = jax.lax.cond(u_out == 1, true_func, partial_false_func, state)
+    state = state.replace(steps=state.steps + 1)
     obs = StitchedSimObservation(
         predicted_pressure=state.predicted_pressure, time=self.time(state))
-    return state.replace(steps=state.steps + 1), obs
+    return state, obs
 
 
 def get_X_y_for_next_epoch_tf(loader, batch_size):
@@ -248,7 +243,7 @@ def get_X_y_for_next_epoch_tf(loader, batch_size):
   y = jnp.array([jnp.array(z.numpy()) for z in unzipped_loader[1]])
   return X, y
 
-
+# @jax.jit
 def rollout(model, data):
   # data.shape == (2, N)
   start_idx = 0
@@ -264,27 +259,14 @@ def rollout(model, data):
   def predict_and_update_state(i, state_loss):
     state, loss = state_loss
     u_in, pressure = data[0, i], data[1, i]  # unscaled u_in and pressure
-    # logging.info("---------------------------")
-    # logging.info("i:" + str(i))
-    # logging.info("state:" + str(state))
-    # logging.info("scaled u_in:" + str(model.u_scaler(u_in).squeeze()))
-    # logging.info("true_pressure to add:" + str(model.p_scaler(pressure).squeeze()))
-    # if i >= model.transition_threshold:
+    # Case 1: i >= model.transition_threshold use true pressures for p_history
     def true_func(state, u_in, pressure):
-      # new_p_history = jnp.append(state.p_history,
-      #                            model.p_scaler(pressure).squeeze())
-      # new_p_history = model.update_history(state.p_history, model.p_scaler(pressure).squeeze())
       new_p_history = state.p_history.at[-1].set(
           model.p_scaler(pressure).squeeze())
-      # logging.info("new_p_history:" + str(new_p_history))
       state = state.replace(p_history=new_p_history)
       next_state, _ = model(state=state, action=(u_in, 0))
-      # drop predicted_pressure since we are training with known true pressure
-      # then, u_history.shape = u_history_len+1, p_history.shape = p_history_len+1
-      # truncated_p_history = next_state.p_history[:-1]
-      # next_state = next_state.replace(p_history=truncated_p_history)
       return next_state
-    # else:  # use predicted pressures for p_history
+    # Case 2: i < model.transition_threshold use predicted pressures for p_history
     def false_func(state, u_in):
       next_state, _ = model(state=state, action=(u_in, 0))
       return next_state
@@ -294,13 +276,8 @@ def rollout(model, data):
                               partial_true_func,
                               partial_false_func,
                               state)
-    # logging.info('next_state:' + str(next_state))
     pred = model.p_scaler(next_state.predicted_pressure)  # scaled gradient step
-    # logging.info("pred:" + str(pred))
-
-    # for debugging test_loss vs. open_loop_score
     return (next_state, loss + jnp.abs(model.p_scaler(data[1, i + 1]) - pred))
-    # scaled gradient step
 
 
   (state, total_loss) = jax.lax.fori_loop(start_idx, end_idx,
@@ -321,7 +298,6 @@ def loop_over_loader(model_optimState_lrMult_loss, X_Y, optim, rollout, schedule
     X_batch.shape = Y_batch.shape = (num_batches, batch_size, N=29)
     lrMult is the multiplier for the scheduler
   """
-  # logging.info('=================== ENTER loop_over_loader ======================')
   X_batch, y_batch = X_Y
   model, optim_state, lr_mult, loss = model_optimState_lrMult_loss
   loss, grad = jax.value_and_grad(map_rollout_over_batch)(model,
@@ -334,6 +310,7 @@ def loop_over_loader(model_optimState_lrMult_loss, X_Y, optim, rollout, schedule
   return (model, optim_state, lr_mult, loss), None
 
 
+# @partial(jax.jit, static_argnums=(2,))
 def map_rollout_over_batch(model, data, rollout):
   """
     rollout has signature (model, data) -> loss where data.shape = (2, N)
@@ -415,13 +392,13 @@ def generalized_stitched_sim_train_open_loop(
           learning_rate) + "_weight_decay" + str(
               optimizer_params["weight_decay"]) + "/"
       file_name = str(config)
-      workdir = "/cns/lu-d/home/brain-pton/deluca_lung/model_ckpts/simulator_search_transition_threshold/" + default_model_name + "_boundary_models0_grid_results_analysis/" + dirname
+      workdir = "/cns/el-d/home/brain-pton/deluca_lung/model_ckpts/simulator_search_transition_threshold/" + default_model_name + "_boundary_models0_grid_results_analysis/" + dirname
     elif mode == "featurization":
       config["batch_size"] = batch_size
       dirname = "R" + str(R) + "_C" + str(C) + "_" + str(config) + "/"
       file_name = "u_window" + str(model.u_window) + "_p_window" + str(
           model.p_window)
-      workdir = "/cns/lu-d/home/brain-pton/deluca_lung/model_ckpts/simulator_search_transition_threshold/" + default_model_name + "_boundary_models0_featurization_analysis/" + dirname
+      workdir = "/cns/el-d/home/brain-pton/deluca_lung/model_ckpts/simulator_search_transition_threshold/" + default_model_name + "_boundary_models0_featurization_analysis/" + dirname
     elif mode == "stitchedSim":
       config["u_window"] = model.u_window
       config["p_window"] = model.p_window
@@ -432,7 +409,23 @@ def generalized_stitched_sim_train_open_loop(
       s3 = "_learning_rate" + str(learning_rate)
       s4 = "_weight_decay" + str(optimizer_params["weight_decay"])
       file_name = s1 + s2 + s3 + s4
-      workdir = "/cns/lu-d/home/brain-pton/deluca_lung/model_ckpts/simulator_search_transition_threshold/" + default_model_name + "_boundary_models0_stitchedSim_analysis/" + dirname
+      workdir = "/cns/el-d/home/brain-pton/deluca_lung/model_ckpts/simulator_search_transition_threshold/" + default_model_name + "_boundary_models0_stitchedSim_analysis/" + dirname
+    elif mode == "stitchedSim_farm":
+      config["u_window"] = model.u_window
+      config["p_window"] = model.p_window
+      config["batch_size"] = batch_size
+      config["num_boundary_models"] = model.num_boundary_models
+      config["transition_threshold"] = model.transition_threshold
+      del config["hidden_dim"]
+      del config["n_layers"]
+      dirname = "R" + str(R) + "_C" + str(C) + "_" + str(config) + "/"
+      s1 = "default_n_layers" + str(model.default_model_parameters["n_layers"])
+      s2 = "_shared_hidden_dim" + str(model.default_model_parameters["hidden_dim"])
+      s3 = "_learning_rate" + str(learning_rate)
+      s4 = "_weight_decay" + str(optimizer_params["weight_decay"])
+      file_name = s1 + s2 + s3 + s4
+      workdir = "/cns/el-d/home/brain-pton/deluca_lung/model_ckpts/simulator_search_farm/" + default_model_name + "_stitchedSim_farm_analysis/" + dirname
+    gfile.SetUser('alexjyu-brain')
     gfile.MakeDirs(os.path.dirname(workdir))
     write_path = workdir + file_name
     summary_writer = tensorboard.SummaryWriter(write_path)
@@ -440,6 +433,7 @@ def generalized_stitched_sim_train_open_loop(
 
   # Main Training Loop
   for epoch in range(epochs + 1):
+    # a = time.time()
     if epoch % 10 == 0:
       logging.info("epoch:" + str(epoch))
     X, y = get_X_y_for_next_epoch_tf(loader, batch_size)
@@ -449,6 +443,7 @@ def generalized_stitched_sim_train_open_loop(
     (model, optim_state, lr_mult,
      loss), _ = jax.lax.scan(loop_over_loader_partial,
                              (model, optim_state, lr_mult, 0.), (X, y))
+    # logging.info('time elapsed for scan:' + str(time.time() - a))
     '''for i in range(X.shape[0]):
       carry = (model, optim_state, lr_mult, 0.)
       carry, _ = loop_over_loader_partial(carry, (X[i], y[i]))
@@ -462,25 +457,18 @@ def generalized_stitched_sim_train_open_loop(
         lr_mult = lr_mult * lr_decay_factor
         patience_cnt = 0
       prev_loss = loss
-    # elif scheduler == "Cosine":
-    #   lr_mult = cosine_scheduler_fn(epoch)
 
     if epoch % print_loss == 0:
       if scheduler == "ReduceLROnPlateau":
-        logging.info("loss:" + str(loss))
-        logging.info("prev_loss:" + str(prev_loss))
-        logging.info("patience_cnt:" + str(patience_cnt))
-        logging.info("lr_mult:" + str(lr_mult))
+        logging.info("loss: %s", str(loss))
+        logging.info("prev_loss: %s", str(prev_loss))
+        logging.info("patience_cnt: %s", str(patience_cnt))
+        logging.info("lr_mult: %s", str(lr_mult))
       # expensive end-of-epoch eval, just for intuition
-      # logging.info("X_train.shape:" + str(X_train.shape))
-      # logging.info("y_train.shape:" + str(y_train.shape))
       train_loss = map_rollout_over_batch(model, (X_train, y_train), rollout)
       # cross-validation
-      # logging.info("X_test.shape:" + str(X_test.shape))
-      # logging.info("y_test.shape:" + str(y_test.shape))
-
       test_loss = map_rollout_over_batch(model, (X_test, y_test), rollout)
-      test_loss_unscaled = test_loss * model.p_scaler.std # biases cancel out in pred - truth
+      test_loss_unscaled = test_loss * model.p_scaler.std  # biases cancel out in pred - truth
 
       if epoch % print_loss == 0:
         logging.info(
