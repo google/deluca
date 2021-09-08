@@ -35,6 +35,8 @@ from deluca.lung.core import DEFAULT_DT
 from deluca.lung.core import proper_time
 from flax.metrics import tensorboard
 from google3.pyglib import gfile
+from collections.abc import Callable
+
 
 
 class DeepNetwork(nn.Module):
@@ -75,6 +77,7 @@ class Deep_cnn(Controller):
   normalize: bool = deluca.field(False, jaxed=False)
   u_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
   p_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
+  model_apply: Callable = deluca.field(jaxed=False)
 
   def setup(self):
     self.model = DeepNetwork(H=self.H, kernel_size=self.kernel_size)
@@ -90,6 +93,7 @@ class Deep_cnn(Controller):
     self.featurizer = jnp.tril(jnp.ones((self.history_len, self.history_len)))
     self.featurizer /= jnp.expand_dims(
         jnp.arange(self.history_len, 0, -1), axis=0)
+    self.model_apply = jax.jit(self.model.apply)
 
     '''if self.normalize:
       self.u_scaler = u_scaler
@@ -103,6 +107,7 @@ class Deep_cnn(Controller):
     state = DeepControllerState(errs=errs, waveform=waveform)
     return state
 
+  @jax.jit
   def __call__(self, controller_state, obs):
     state, t = obs.predicted_pressure, obs.time
     errs, waveform = controller_state.errs, controller_state.waveform
@@ -123,7 +128,7 @@ class Deep_cnn(Controller):
     def true_func(null_arg):
       trajectory = jnp.expand_dims(next_errs[-self.history_len:], axis=(0, 1))
       input = jnp.reshape((trajectory @ self.featurizer), (1, self.history_len, 1))
-      u_in = self.model.apply({"params": self.params}, input)
+      u_in = self.model_apply({"params": self.params}, input)
 
       return u_in.squeeze().astype(jnp.float32)
 

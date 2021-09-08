@@ -20,9 +20,11 @@ import deluca.core
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
+from collections.abc import Callable
 
 
 class PIDControllerState(deluca.Obj):
+  waveform: deluca.Obj
   P: float = 0.
   I: float = 0.
   D: float = 0.
@@ -43,9 +45,10 @@ class PID_network(nn.Module):
 class PID(Controller):
   model: nn.module = deluca.field(PID_network, jaxed=False)
   params: jnp.array = deluca.field(jaxed=True)  # jnp.array([3.0, 4.0, 0.0]
-  waveform: deluca.Obj = deluca.field(jaxed=False)
+  #waveform: deluca.Obj = deluca.field(jaxed=False)
   RC: float = deluca.field(0.5, jaxed=False)
   dt: float = deluca.field(0.03, jaxed=False)
+  model_apply: Callable = deluca.field(jaxed=False)
 
   def setup(self):
     self.model = PID_network()
@@ -54,16 +57,22 @@ class PID(Controller):
           3,
       ]))["params"]
     # TODO: Handle dataclass initialization of jax objects
-    if self.waveform is None:
-      self.waveform = BreathWaveform.create()
+    self.model_apply = jax.jit(self.model.apply)
+    # if self.waveform is None:
+    #   self.waveform = BreathWaveform.create()
 
-  def init(self):
-    state = PIDControllerState()
+  def init(self, waveform=None):
+    if waveform is None:
+      waveform = BreathWaveform.create()
+    state = PIDControllerState(waveform=waveform)
     return state
 
+  @jax.jit
   def __call__(self, controller_state, obs):
     pressure, t = obs.predicted_pressure, obs.time
-    target = self.waveform.at(t)
+    waveform = controller_state.waveform
+    #target = self.waveform.at(t)
+    target = waveform.at(t)
     err = jnp.array(target - pressure)
 
     decay = jnp.array(self.dt / (self.dt + self.RC))
@@ -75,7 +84,7 @@ class PID(Controller):
     controller_state = controller_state.replace(P=next_P, I=next_I, D=next_D)
 
     next_coef = jnp.array([next_P, next_I, next_D])
-    u_in = self.model.apply({"params": self.params}, next_coef)
+    u_in = self.model_apply({"params": self.params}, next_coef)
     u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float64), 100.0)
 
     # update controller_state

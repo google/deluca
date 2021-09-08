@@ -30,6 +30,7 @@ class Expiratory(Controller):
     if self.waveform is None:
       self.waveform = BreathWaveform.create()
 
+  @jax.jit
   def __call__(self, state, obs, *args, **kwargs):
     pressure, time = obs.predicted_pressure, obs.time
     phase = self.waveform.phase(time)

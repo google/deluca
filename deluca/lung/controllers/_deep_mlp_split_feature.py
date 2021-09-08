@@ -30,6 +30,7 @@ import jax
 import jax.numpy as jnp
 import optax
 from google3.pyglib import gfile
+from collections.abc import Callable
 
 
 class DeepControllerState(deluca.Obj):
@@ -56,6 +57,7 @@ class Deep_split_feature(Controller):
   normalize: bool = deluca.field(False, jaxed=False)
   u_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
   p_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
+  model_apply: Callable = deluca.field(jaxed=False)
 
   def setup(self):
     if self.activation_fn_name == "leaky_relu":
@@ -70,6 +72,7 @@ class Deep_split_feature(Controller):
       self.params = self.model.init(
           jax.random.PRNGKey(0),
           jnp.ones([2*self.back_history_len + self.fwd_history_len]))["params"]
+    self.model_apply = jax.jit(self.model.apply)
 
     # linear feature transform:
     # errs -> [average of last h errs, ..., average of last 2 errs, last err]
@@ -90,6 +93,7 @@ class Deep_split_feature(Controller):
         waveform=waveform)
     return state
 
+  @jax.jit
   def __call__(self, controller_state, obs):
     state, t = obs.predicted_pressure, obs.time
     bwd_targets, bwd_pressures, waveform = (controller_state.bwd_targets,
@@ -133,7 +137,7 @@ class Deep_split_feature(Controller):
     decay = waveform.decay(t)
     def true_func(null_arg):
       trajectory = jnp.hstack([next_bwd_targets, next_bwd_pressures, next_fwd_targets])
-      u_in = self.model.apply({"params": self.params},
+      u_in = self.model_apply({"params": self.params},
                               trajectory)
       return u_in.squeeze().astype(jnp.float64)
 
