@@ -67,8 +67,7 @@ class BreathWaveform(deluca.Obj):
           jnp.array(DEFAULT_KEYPOINTS, dtype=self.dtype))
     self.xp = jax.ops.index_update(self.xp, -1, 60 / self.bpm)
     self.keypoints = self.xp
-    self.keypoints = self.xp
-    self.period = float(self.xp[-1])
+    self.period = 60 / self.bpm
 
     pad = 0
     num = int(1 / self.dt)
@@ -86,7 +85,7 @@ class BreathWaveform(deluca.Obj):
 
   @property
   def PIP(self):
-    # TODO: what's custom range?
+    # custom range is (lo, hi)
     if hasattr(self, "custom_range"):
       return self.custom_range[1]
     else:
@@ -106,7 +105,12 @@ class BreathWaveform(deluca.Obj):
     return not self.is_in(t)
 
   def at(self, t):
-    return jnp.array(np.interp(t, self.xp, self.fp, self.period))
+
+    @partial(jax.jit, static_argnums=(3,))
+    def static_interp(t, xp, fp, period):
+      return jnp.interp(t, xp, fp, period=period)
+
+    return static_interp(t, self.xp, self.fp, self.period).astype(self.dtype)
 
   def elapsed(self, t):
     return t % self.period
@@ -119,9 +123,9 @@ class BreathWaveform(deluca.Obj):
 
     def false_func():
       result = jax.lax.cond(
-          elapsed < self.keypoints[3], lambda x: 0.0, lambda x: 5 *
-          (1 - jnp.exp(5 *
-                       (self.keypoints[3] - elapsed))).astype(self.dtype), None)
+          elapsed < self.keypoints[3],
+          lambda x: 0.0,
+          lambda x: 5 * (1 - jnp.exp(5 *(self.keypoints[3] - elapsed))).astype(self.dtype), None)
       return result
 
     # float(inf) as substitute to None since cond requries same type output

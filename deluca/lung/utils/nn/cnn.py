@@ -12,28 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""CNN Simulator."""
+from typing import Callable
 import flax.linen as nn
+import jax.numpy as jnp
 
 
-class ShallowBoundaryModel(nn.Module):
+class CNN(nn.Module):
+  """CNN neural network."""
+  n_layers: int = 2
+  out_channels: int = 10
+  kernel_size: int = 3
+  # strides: Tuple[int, int] = (1, 1)
+  strides: int = 1
   out_dim: int = 1
-  hidden_dim: int = 100
-  model_num: int = 0
+  activation_fn: Callable[[jnp.array], jnp.array] = nn.relu
 
   @nn.compact
   def __call__(self, x):
-    # need to flatten extra dimensions required by CNN and LSTM
-    x = x.squeeze()
+    for i in range(self.n_layers - 1):
+      x = nn.Conv(
+          features=self.out_channels,
+          kernel_size=(self.kernel_size,),
+          strides=(self.strides,),
+          name=f"conv{i}")(x)
+      x = self.activation_fn(x)
+    x = x.reshape((x.shape[0], -1))  # flatten
     x = nn.Dense(
-        features=self.hidden_dim,
-        use_bias=False,
-        name=f"shallow_fc{1}_model" + str(self.model_num),
-    )(
-        x)
-    x = nn.tanh(x)
-    x = nn.Dense(
-        features=self.out_dim,
-        use_bias=True,
-        name=f"shallow_fc{2}_model" + str(self.model_num))(
+        features=self.out_dim, use_bias=True, name=f"CNN_fc{i + 1}")(
             x)
     return x.squeeze()  # squeeze for consistent shape w/ boundary model output

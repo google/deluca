@@ -21,6 +21,7 @@ from deluca.lung.devices.hal import Hal
 
 class PhysicalLungObservation(deluca.Obj):
     pressure: float = 0.
+    predicted_pressure: float = 0.
     flow: float = 0.
     time: float = 0.
     dt: float = 0.
@@ -83,6 +84,7 @@ class PhysicalLung:
         new_state = dataclasses.replace(
             state,
             pressure=self.pressure,
+            predicted_pressure=self.pressure,
             flow=self.flow,
             time=curr_time,
             prev_time=state.time,
@@ -100,9 +102,9 @@ class PhysicalLung:
 
     def should_abort(self):
         # timestamp = self.__time
-        if self.pressure > self.abort:
-            print(f"Pressure of {self.pressure} > {self.abort}; quitting")
-            return True
+        # if self.pressure > self.abort:
+            # print(f"Pressure of {self.pressure} > {self.abort}; quitting")
+            # return True
 
         # self.dt_window = np.roll(self.dt_window, 1)
         # self.dt_window[0] = self.dt

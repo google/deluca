@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import flax.linen as nn
+"""SNN Simulator."""
 from deluca.lung.utils.nn.alpha_dropout import AlphaDropout
+import flax.linen as nn
+import jax
 
 
 class SNN(nn.Module):
+  """SNN neural network."""
   out_dim: int = 1
   hidden_dim: int = 100
   n_layers: int = 4
@@ -31,8 +34,8 @@ class SNN(nn.Module):
           features=self.hidden_dim, use_bias=False, name=f"SNN_fc{i}")(
               x)
       x = self.scale * nn.elu(x, alpha=self.alpha)
-      x = AlphaDropout(rate=self.droprate, deterministic=False)(x)
-    x = nn.Dense(
-        features=self.out_dim, use_bias=True, name=f"SNN_fc{i + 1}")(
-            x)
+      x = AlphaDropout(
+          rate=self.droprate, deterministic=False)(
+              x, rng=jax.random.PRNGKey(0))
+    x = nn.Dense(features=self.out_dim, use_bias=True, name=f"SNN_fc{i + 1}")(x)
     return x

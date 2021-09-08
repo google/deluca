@@ -52,7 +52,7 @@ def run_controller(
   overall_start = start
   env = env or BalloonLung()
   waveform = waveform or BreathWaveform.create()
-  expiratory = Expiratory.create(waveform=waveform)
+  expiratory = Expiratory.create()
 
   result = locals()
 
@@ -88,12 +88,11 @@ def run_controller(
       timers["in_ctrl"] += time.time() - start
 
       start = time.time()
-      # expiratory_state, u_out = expiratory(expiratory_state, state)
+      expiratory_state, u_out = expiratory(expiratory_state, state)
       timers["ex_ctrl"] += time.time() - start
 
       start = time.time()
-      # state, _ = env(state, (u_in, u_out))
-      state, _ = env(state, (u_in, 0))
+      state, _ = env(state, (u_in, u_out))
       timers["env"] += time.time() - start
 
       start = time.time()
@@ -135,9 +134,11 @@ def run_controller(
 
   return result, timers
 
-def loop_over_tt(envState_obs_ctrlState_ExpState_i, dummy_data, controller, expiratory, env, dt):
+def loop_over_tt(envState_obs_ctrlState_ExpState_i, dummy_data, controller,
+                 expiratory, env, dt):
   state, obs, controller_state, expiratory_state, i = envState_obs_ctrlState_ExpState_i
   pressure = obs.predicted_pressure
+
   # if env.should_abort(): # TODO: how to handle break in scan
   #     break
 
@@ -167,6 +168,7 @@ def run_controller_scan(
     waveform=None,
     use_tqdm=False,
     directory=None,
+    init_controller=False,
 ):
   env = env or BalloonLung()
   waveform = waveform or BreathWaveform.create()
@@ -174,7 +176,10 @@ def run_controller_scan(
 
   result = locals()
 
-  controller_state = controller.init()
+  if init_controller:
+    controller_state = controller.init(waveform)
+  else:
+    controller_state = controller.init()
   expiratory_state = expiratory.init()
 
   tt = range(T)
@@ -188,12 +193,16 @@ def run_controller_scan(
   u_outs = jnp.zeros(T)
 
   state, obs = env.reset()
-  xp = jnp.array(waveform.xp)
-  fp = jnp.array(waveform.fp)
-  period = waveform.period
-  dtype = waveform.dtype
+  # xp = jnp.array(waveform.xp)
+  # fp = jnp.array(waveform.fp)
+  # period = waveform.period
+  # dtype = waveform.dtype
 
-  jit_loop_over_tt = jax.jit(partial(loop_over_tt, controller=controller, expiratory=expiratory, env=env, dt=dt))
+  jit_loop_over_tt = jax.jit(partial(loop_over_tt,
+                                     controller=controller,
+                                     expiratory=expiratory,
+                                     env=env,
+                                     dt=dt))
   try:
     _, (timestamps, u_ins, u_outs, pressures, flows) = jax.lax.scan(
         jit_loop_over_tt, (state, obs, controller_state, expiratory_state, 0),
