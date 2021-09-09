@@ -13,15 +13,18 @@
 # limitations under the License.
 
 from deluca.lung.controllers._bang_bang import BangBang
-from deluca.lung.controllers._deep import Deep
+from deluca.lung.controllers._deep import Deep, deep_train
 from deluca.lung.controllers._expiratory import Expiratory
 from deluca.lung.controllers._pid import PID
 from deluca.lung.controllers._predestined import Predestined
+from deluca.lung.controllers._residual import CompositeController
 
 __all__ = [
     "BangBang",
     "Deep",
     "Expiratory",
     "PID",
-    "Predestined"
+    "Predestined",
+    "CompositeController",
+    "deep_train"
 ]

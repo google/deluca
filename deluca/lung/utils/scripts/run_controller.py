@@ -63,6 +63,8 @@ def run_controller(
 
       controller_state, u_in = controller.__call__(controller_state, obs)
       expiratory_state, u_out = expiratory.__call__(expiratory_state, obs)
+
+      u_in = u_in.squeeze()
       state, obs = env(state, (u_in, u_out))
 
       timestamps = jax.ops.index_update(timestamps, i, env.time(state) - dt)
