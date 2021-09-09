@@ -28,7 +28,7 @@ class PhysicalLungObservation(deluca.Obj):
     steps: int = 0
     breaths: int = 0
     prev_time: float = 0.
-    start: float = datetime.datetime.now().timestamp()
+    start: float = 0.
 
 
 class PhysicalLung:
@@ -51,7 +51,7 @@ class PhysicalLung:
         self.prev_time = 0.
 
     def init(self):
-        return PhysicalLungObservation(pressure=self.pressure, flow=self.flow)
+        return PhysicalLungObservation(pressure=self.pressure, flow=self.flow, start=time.time())
 
     @classmethod
     def create(cls, host=None, sleep=3.0, abort=70, PEEP=5):
@@ -80,11 +80,13 @@ class PhysicalLung:
         self.hal.setpoint_ex = u_out
 
         curr_time = time.time() - state.start
+
+        pressure = self.pressure
         
         new_state = dataclasses.replace(
             state,
-            pressure=self.pressure,
-            predicted_pressure=self.pressure,
+            pressure=pressure,
+            predicted_pressure=pressure,
             flow=self.flow,
             time=curr_time,
             prev_time=state.time,

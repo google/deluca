@@ -40,14 +40,17 @@ def run_controller(
 ):
   timers = {
     "init": 0.,
+    "preamble": 0.,
     "in_ctrl": 0.,
     "ex_ctrl": 0.,
     "env": 0.,
     "record": 0.,
+    "wait": 0.,
+    "single_loop": 0.,
     "loop": 0.,
     "total": 0.
   }
-  
+
   start = time.time()
   overall_start = start
   env = env or BalloonLung()
@@ -56,8 +59,8 @@ def run_controller(
 
   result = locals()
 
-  controller_state = controller.init()
-  expiratory_state = expiratory.init()
+  controller_state = controller.init(waveform=waveform)
+  expiratory_state = expiratory.init(waveform=waveform)
 
   tt = range(T)
   if use_tqdm:
@@ -68,47 +71,73 @@ def run_controller(
   flows = np.zeros(T)
   u_ins = np.zeros(T)
   u_outs = np.zeros(T)
+  Ps = np.zeros(T)
+  Is = np.zeros(T)
+  Ds = np.zeros(T)
+  dts = np.zeros(T)
+  ins = np.zeros(T)
+  exs = np.zeros(T)
+  envs = np.zeros(T)
 
   state = env.init()
-
+  controller = jax.jit(controller.__call__)
+  expiratory = jax.jit(expiratory.__call__)
+  _ = controller(controller_state, state)
+  _ = expiratory(expiratory_state, state)
+  _ = env(state, (0., 0.))
   timers["init"] += time.time() - start
 
+  state = env.init()
   loop_start = time.time()
 
   try:
     for i, _ in enumerate(tt):
-      pressure = state.pressure
+      start = time.time()
+      start_single_loop = time.time()
       if env.should_abort():
         break
 
       timestamps[i] = state.time
+      timers["preamble"] = time.time() - start
 
       start = time.time()
       controller_state, u_in = controller(controller_state, state)
-      timers["in_ctrl"] += time.time() - start
+      timers["in_ctrl"] = time.time() - start
 
       start = time.time()
       expiratory_state, u_out = expiratory(expiratory_state, state)
-      timers["ex_ctrl"] += time.time() - start
+      timers["ex_ctrl"] = time.time() - start
 
       start = time.time()
       state, _ = env(state, (u_in, u_out))
-      timers["env"] += time.time() - start
+      timers["env"] = time.time() - start
 
       start = time.time()
       u_ins[i] = u_in.squeeze().item()
-      # u_outs[i] = u_out.squeeze().item()
-      u_outs[i] = 0
+      u_outs[i] = u_out.squeeze().item()
       pressures[i] = state.pressure
       flows[i] = state.flow
-      timers["record"] += time.time() - start
+      Ps[i] = controller_state.P
+      Is[i] = controller_state.I
+      Ds[i] = controller_state.D
+      timers["record"] = time.time() - start
 
+      start = time.time()
       state = env.wait(state, max(dt - state.dt, 0))
+      timers["wait"] = time.time() - start
 
+      timers["single_loop"] = time.time() - start_single_loop
+
+      ins[i] = timers["in_ctrl"]
+      exs[i] = timers["ex_ctrl"]
+      envs[i] = timers["env"]
+      dts[i] = timers["single_loop"]
+
+    timers["loop"] += time.time() - loop_start
   finally:
     env.cleanup()
 
-  timers["loop"] += time.time() - loop_start
+  timers["single_loop"] /= len(tt)
 
   timeseries = {
       "timestamp": jnp.array(timestamps),
@@ -117,6 +146,13 @@ def run_controller(
       "target": waveform.at(timestamps),
       "u_in": jnp.array(u_ins),
       "u_out": jnp.array(u_outs),
+      "P": jnp.array(Ps),
+      "I": jnp.array(Is),
+      "D": jnp.array(Ds),
+      "dt": jnp.array(dts),
+      "in": jnp.array(ins),
+      "ex": jnp.array(exs),
+      "env": jnp.array(envs),
   }
 
   for key, val in timeseries.items():
