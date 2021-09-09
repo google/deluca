@@ -31,8 +31,6 @@ import jax.numpy as jnp
 import optax
 from google3.pyglib import gfile
 from collections.abc import Callable
-
-
 class DeepControllerState(deluca.Obj):
   waveform: deluca.Obj  # waveform has to be here because it is subject to change during training
   errs: jnp.array
@@ -40,8 +38,6 @@ class DeepControllerState(deluca.Obj):
   time: float = float("inf")
   steps: int = 0
   dt: float = DEFAULT_DT
-
-
 class Deep(Controller):
   params: list = deluca.field(jaxed=True)
   model: nn.module = deluca.field(MLP, jaxed=False)
@@ -52,12 +48,12 @@ class Deep(Controller):
   back_history_len: int = deluca.field(10, jaxed=False)
   fwd_history_len: int = deluca.field(2, jaxed=False)
   horizon: int = deluca.field(29, jaxed=False)
-
   clip: float = deluca.field(100.0, jaxed=False)
   normalize: bool = deluca.field(False, jaxed=False)
   u_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
   p_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
   model_apply: Callable = deluca.field(jaxed=False)
+  use_model_apply_jit: bool = deluca.field(False, jaxed=False)
 
   def setup(self):
     if self.activation_fn_name == "leaky_relu":
@@ -72,12 +68,13 @@ class Deep(Controller):
       self.params = self.model.init(
           jax.random.PRNGKey(0),
           jnp.ones([self.back_history_len + self.fwd_history_len]))["params"]
-    self.model_apply = jax.jit(self.model.apply)
-
+    if self.use_model_apply_jit:
+      self.model_apply = jax.jit(self.model.apply)
+    else:
+      self.model_apply = self.model.apply
     # linear feature transform:
     # errs -> [average of last h errs, ..., average of last 2 errs, last err]
     # emulates low-pass filter bank
-
   # TODO: Handle dataclass initialization of jax objects
   def init(self, waveform=None):
     if waveform is None:
@@ -88,7 +85,6 @@ class Deep(Controller):
     state = DeepControllerState(
         errs=errs, fwd_targets=fwd_targets, waveform=waveform)
     return state
-
   @jax.jit
   def __call__(self, controller_state, obs):
     state, t = obs.predicted_pressure, obs.time
@@ -101,7 +97,6 @@ class Deep(Controller):
                                 lambda x: fwd_targets[-1],
                                 lambda x: waveform.at(fwd_t),
                                 None)
-
     if self.normalize:
       target_scaled = self.p_scaler(target).squeeze()
       state_scaled = self.p_scaler(state).squeeze()
@@ -129,7 +124,6 @@ class Deep(Controller):
       u_in = self.model_apply({"params": self.params},
                               trajectory)
       return u_in.squeeze().astype(jnp.float64)
-
     # changed decay compare from None to float(inf) due to cond requirements
     u_in = jax.lax.cond(
         jnp.isinf(decay), true_func, lambda x: jnp.array(decay), None)
@@ -142,15 +136,12 @@ class Deep(Controller):
     controller_state = controller_state.replace(
         time=new_time, steps=new_steps, dt=new_dt)
     return controller_state, u_in
-
-
 def rollout(controller, sim, tt, use_noise, PEEP, PIP, loss_fn, loss):
   waveform = BreathWaveform.create(custom_range=(PEEP, PIP))
   expiratory = Expiratory.create(waveform=waveform)
   controller_state = controller.init(waveform)
   expiratory_state = expiratory.init()
   sim_state, obs = sim.reset()
-
   def loop_over_tt(ctrlState_expState_simState_obs_loss, t):
     controller_state, expiratory_state, sim_state, obs, loss = ctrlState_expState_simState_obs_loss
     mean = 1.5
@@ -160,25 +151,19 @@ def rollout(controller, sim, tt, use_noise, PEEP, PIP, loss_fn, loss):
     sim_state = sim_state.replace(
         predicted_pressure=pressure)
     obs = obs.replace(predicted_pressure=pressure)
-
     controller_state, u_in = controller(controller_state, obs)
     expiratory_state, u_out = expiratory(expiratory_state, obs)
-
     sim_state, obs = sim(sim_state, (u_in, u_out))
     loss = jax.lax.cond(
         u_out == 0, lambda x: x + loss_fn(jnp.array(waveform.at(t)), pressure),
         lambda x: x, loss)
     return (controller_state, expiratory_state, sim_state, obs, loss), None
-
   (_, _, _, _, loss), _ = jax.lax.scan(
       loop_over_tt, (controller_state, expiratory_state, sim_state, obs, loss),
       tt)
-
   # for i in range(len(tt)):
   #   (controller_state, expiratory_state, sim_state, obs, loss), _ = loop_over_tt((controller_state, expiratory_state, sim_state, obs, loss), tt[i])
   return loss
-
-
 @functools.partial(jax.jit, static_argnums=(6,))
 def rollout_parallel(controller, sim, tt, use_noise, PEEP, PIPs, loss_fn):
   loss = jnp.array(0.)
@@ -196,8 +181,6 @@ def rollout_parallel(controller, sim, tt, use_noise, PEEP, PIPs, loss_fn):
   losses = jax.vmap(rollout_partial)(jnp.array(PIPs))
   loss = losses.sum() / float(len(PIPs))
   return loss
-
-
 # Question: Jax analogue of torch.autograd.set_detect_anomaly(True)?
 def deep_train(
     controller,
@@ -220,7 +203,6 @@ def deep_train(
 ):
   PIPs = [10, 15, 20, 25, 30, 35]
   PEEP = 5
-
   optim_params = copy.deepcopy(optimizer_params)
   if scheduler == "Cosine":
     if pip_feed == "parallel":
@@ -236,13 +218,10 @@ def deep_train(
     logging.info("optim_params:" + str(optim_params))
     optim = optimizer(**optim_params)
   optim_state = optim.init(controller)
-
   tt = jnp.linspace(0, duration, int(duration / dt))
   losses = []
-
   # torch.autograd.set_detect_anomaly(True)
   # TODO: handle device-awareness
-
   # Tensorboard writer
   if tensorboard_dir is not None:
     model_parameters = {
@@ -255,14 +234,12 @@ def deep_train(
         "horizon": controller.horizon,
         "epochs": epochs,
     }
-
     if mode == "train":
       trial_name = str(model_parameters)
       write_path = tensorboard_dir + trial_name
     gfile.MakeDirs(os.path.dirname(write_path))
     summary_writer = tensorboard.SummaryWriter(write_path)
     summary_writer.hparams(model_parameters)
-
   for epoch in range(epochs):
     if pip_feed == "parallel":
       value, grad = jax.value_and_grad(rollout_parallel)(controller, sim, tt,
@@ -273,12 +250,10 @@ def deep_train(
       controller = optax.apply_updates(controller, updates)
       per_step_loss = value / len(tt)
       losses.append(per_step_loss)
-
       if epoch % print_loss == 0:
         logging.info(f"Epoch: {epoch}\tLoss: {per_step_loss:.2f}")
         if tensorboard_dir is not None:
           summary_writer.scalar("per_step_loss", per_step_loss, epoch)
-
     if pip_feed == "sequential":
       for PIP in PIPs:
         value, grad = jax.value_and_grad(rollout)(controller, sim, tt,
@@ -288,7 +263,6 @@ def deep_train(
         controller = optax.apply_updates(controller, updates)
         per_step_loss = value / len(tt)
         losses.append(per_step_loss)
-
         if epoch % print_loss == 0:
           logging.info(f"Epoch: {epoch}, PIP: {PIP}\tLoss: {per_step_loss:.2f}")
           if tensorboard_dir is not None:
