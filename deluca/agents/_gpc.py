@@ -151,7 +151,7 @@ class GPC(Agent):
             None
         """
         noise = state - self.A @ self.state - self.B @ u
-        self.noise_history = jax.ops.index_update(self.noise_history, 0, noise)
+        self.noise_history = self.noise_history.at[0].set(noise)
         self.noise_history = jnp.roll(self.noise_history, -1, axis=0)
 
         delta_M, delta_bias = self.grad(self.M, self.noise_history)

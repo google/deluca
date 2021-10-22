@@ -12,62 +12,86 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from deluca.lung.controllers import Expiratory
+"""functions to train controller."""
+import copy
+import functools
+import os
+
+from deluca.lung.controllers._expiratory import Expiratory
 from deluca.lung.core import BreathWaveform
+from deluca.lung.utils.scripts.test_controller import test_controller
+from flax.metrics import tensorboard
 import jax
 import jax.numpy as jnp
 import optax
 
+# Insert any necessary file IO imports
 
-def rollout(controller, sim, waveforms, tt, use_noise, loss_fn, mean, std,
-            loss):
-  for waveform in waveforms:
-    expiratory = Expiratory.create(waveform=waveform)
-    controller_state = controller.init()
-    expiratory_state = expiratory.init()
-    sim_state, obs = sim.reset()
+# pylint: disable=invalid-name
+# pylint: disable=dangerous-default-value
 
-    def loop_over_tt(ctrlState_expState_simState_obs_loss, t):
-      controller_state, expiratory_state, sim_state, obs, loss = ctrlState_expState_simState_obs_loss
-      noise = mean + std * jax.random.normal(jax.random.PRNGKey(0), shape=())
-      pressure = sim_state.predicted_pressure + use_noise * noise
-      sim_state = sim_state.replace(
-          predicted_pressure=pressure)  # update p_history as well or no?
-      obs = obs.replace(predicted_pressure=pressure, time=t)
 
-      controller_state, u_in = controller(controller_state, obs)
-      expiratory_state, u_out = expiratory(expiratory_state, obs)
+@functools.partial(jax.jit, static_argnums=(6,))
+def rollout(controller, sim, tt, use_noise, peep, pip, loss_fn, loss):
+  """rollout function."""
+  waveform = BreathWaveform.create(peep=peep, pip=pip)
+  expiratory = Expiratory.create(waveform=waveform)
+  controller_state = controller.init(waveform)
+  expiratory_state = expiratory.init()
+  sim_state, obs = sim.reset()
 
-      sim_state, obs = sim(sim_state, (u_in, u_out))
+  def loop_over_tt(ctrlState_expState_simState_obs_loss, t):
+    controller_state, expiratory_state, sim_state, obs, loss = ctrlState_expState_simState_obs_loss
+    mean = 1.5
+    std = 1.0
+    noise = mean + std * jax.random.normal(jax.random.PRNGKey(0), shape=())
+    pressure = sim_state.predicted_pressure + use_noise * noise
+    sim_state = sim_state.replace(predicted_pressure=pressure)
+    obs = obs.replace(predicted_pressure=pressure)
+    controller_state, u_in = controller(controller_state, obs)
+    expiratory_state, u_out = expiratory(expiratory_state, obs)
+    sim_state, obs = sim(sim_state, (u_in, u_out))
+    loss = jax.lax.cond(
+        u_out == 0, lambda x: x + loss_fn(jnp.array(waveform.at(t)), pressure),
+        lambda x: x, loss)
+    return (controller_state, expiratory_state, sim_state, obs, loss), None
 
-      loss = jax.lax.cond(
-          u_out == 0,
-          lambda x: x + loss_fn(jnp.array(waveform.at(t)), pressure),
-          lambda x: x, loss)
-      return (controller_state, expiratory_state, sim_state, obs, loss), None
-
-    (_, _, _, _, loss), _ = jax.lax.scan(
-        loop_over_tt,
-        (controller_state, expiratory_state, sim_state, obs, loss), tt)
+  (_, _, _, _, loss), _ = jax.lax.scan(
+      loop_over_tt, (controller_state, expiratory_state, sim_state, obs, loss),
+      tt)
   return loss
 
 
-def train(controller, sim, waveforms, tt, use_noise, loss_fn, mean, std, loss,
-          optim, optim_state):
-  value, grad = jax.value_and_grad(rollout)(controller, sim, waveforms, tt,
-                                            use_noise, loss_fn, mean, std, loss)
-  updates, optim_state = optim.update(grad, optim_state, controller)
-  controller = optax.apply_updates(controller, updates)
-  per_step_loss = value / len(tt)
-  return per_step_loss, optim, optim_state, controller
+@functools.partial(jax.jit, static_argnums=(6,))
+def rollout_parallel(controller, sim, tt, use_noise, peep, pips, loss_fn):
+  """rollout function parallel version."""
+  # loss = jnp.array(0.)
+  # for pip in pips:
+  #   loss = rollout(controller, sim, tt, use_noise, peep, pip, loss_fn, loss)
+  # return loss
+  def rollout_partial(p):
+    return functools.partial(
+        rollout,
+        controller=controller,
+        sim=sim,
+        tt=tt,
+        use_noise=use_noise,
+        peep=peep,
+        loss_fn=loss_fn,
+        loss=0.0)(pip=p)
+
+  losses = jax.vmap(rollout_partial)(jnp.array(pips))
+  # print('losses:' + str(losses))
+  loss = losses.sum() / float(len(pips))
+  return loss
 
 
 def train_controller(
     controller,
     sim,
-    waveform=None,
-    pip_feed="sequential",
-    duration=3,
+    pip_feed="parallel",  # or "sequential"
+    mode="multipip",  # or "singular"
+    duration=0.87,
     dt=0.03,
     epochs=100,
     use_noise=False,
@@ -77,52 +101,74 @@ def train_controller(
         "weight_decay": 1e-4
     },
     loss_fn=lambda x, y: (jnp.abs(x - y)).mean(),
-    # scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau,
-    # scheduler_params={"factor": 0.9, "patience": 10},
+    scheduler="Cosine",
+    tensorboard_dir=None,
+    model_parameters={},  # used for tensorboard
     print_loss=1,
 ):
-  optim = optimizer(**optimizer_params)
+  """train controller."""
+  peep = 5
+  if mode == "multipip":
+    pips = [10, 15, 20, 25, 30, 35]
+  elif mode == "singular":
+    pips = [35]
+
+  # setup optimizer
+  optim_params = copy.deepcopy(optimizer_params)
+  if scheduler == "Cosine":
+    if pip_feed == "parallel":
+      steps_per_epoch = 1
+    elif pip_feed == "sequential":
+      steps_per_epoch = len(pips)
+    decay_steps = int(epochs * steps_per_epoch)
+    print("steps_per_epoch:" + str(steps_per_epoch))
+    print("decay_steps:" + str(decay_steps))
+    cosine_scheduler_fn = optax.cosine_decay_schedule(
+        init_value=optim_params["learning_rate"], decay_steps=decay_steps)
+    optim_params["learning_rate"] = cosine_scheduler_fn
+    print("optim_params:" + str(optim_params))
+    optim = optimizer(**optim_params)
   optim_state = optim.init(controller)
+
+  # setup Tensorboard writer
+  if tensorboard_dir is not None:
+    trial_name = str(model_parameters)
+    write_path = tensorboard_dir + trial_name
+    gfile.MakeDirs(os.path.dirname(write_path))
+    summary_writer = tensorboard.SummaryWriter(write_path)
+    summary_writer.hparams(model_parameters)
 
   tt = jnp.linspace(0, duration, int(duration / dt))
   losses = []
-
-  if waveform is not None:
-    train_mode = "singular"
-    mean, std = 1.0, 1.0
-  else:
-    train_mode = "multipip"
-    mean, std = 1.5, 1.0
-    PIPs = [10, 15, 20, 25, 30, 35]
-    PEEP = 5
-    random_PIPs = random.sample(PIPs, 6)
-
-  # torch.autograd.set_detect_anomaly(True)
   for epoch in range(epochs):
-    if train_mode == "singular" or (train_mode == "multipip" and
-                                    pip_feed == "parallel"):
-      if train_mode == "singular":
-        waveforms = [waveform]
-      else:
-        waveforms = [
-            BreathWaveform.create(custom_range=(PEEP, PIP))
-            for PIP in random_PIPs
-        ]
-      loss = jnp.array(0.)
-      per_step_loss, optim, optim_state, controller = train(
-          controller, sim, waveforms, tt, use_noise, loss_fn, mean, std, loss,
-          optim, optim_state)
+    if pip_feed == "parallel":
+      value, grad = jax.value_and_grad(rollout_parallel)(controller, sim, tt,
+                                                         use_noise, peep,
+                                                         jnp.array(pips),
+                                                         loss_fn)
+      updates, optim_state = optim.update(grad, optim_state, controller)
+      controller = optax.apply_updates(controller, updates)
+      per_step_loss = value / len(tt)
       losses.append(per_step_loss)
       if epoch % print_loss == 0:
-        print(f"Epoch: {epoch}\tLoss: {per_step_loss:.2f}")
-    elif train_mode == "multipip" and pip_feed == "sequential":
-      for PIP in random_PIPs:
-        waveforms = [BreathWaveform.create(custom_range=(PEEP, PIP))]
-        loss = jnp.array(0.)
-        per_step_loss, optim, optim_state, controller = train(
-            controller, sim, waveforms, tt, use_noise, loss_fn, mean, std, loss,
-            optim, optim_state)
+        # make new controller with trained parameters and normal clamp
+        score = test_controller(controller, sim, pips, peep)
+        print(f"Epoch: {epoch}\tLoss: {score:.2f}")
+        if tensorboard_dir is not None:
+          summary_writer.scalar("score", score, epoch)
+    if pip_feed == "sequential":
+      for pip in pips:
+        value, grad = jax.value_and_grad(rollout)(controller, sim, tt,
+                                                  use_noise, peep, pip,
+                                                  loss_fn, jnp.array(0.))
+        updates, optim_state = optim.update(grad, optim_state, controller)
+        controller = optax.apply_updates(controller, updates)
+        per_step_loss = value / len(tt)
         losses.append(per_step_loss)
         if epoch % print_loss == 0:
-          print(f"Epoch: {epoch}, PIP: {PIP}\tLoss: {per_step_loss:.2f}")
-  return controller
+          # make new controller with trained parameters and normal clamp
+          score = test_controller(controller, sim, pips, peep)
+          print(f"Epoch: {epoch}, pip: {pip}\tLoss: {score:.2f}")
+          if tensorboard_dir is not None:
+            summary_writer.scalar("per_step_loss", score, epoch)
+  return controller, per_step_loss, score

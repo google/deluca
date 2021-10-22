@@ -12,17 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import jax
-import jax.numpy as jnp
+"""predestined controller."""
+
 import deluca
-from functools import partial
-from typing import List, Callable
 from deluca.lung.core import Controller
 from deluca.lung.core import DEFAULT_DT
 from deluca.lung.core import proper_time
+import jax
+import jax.numpy as jnp
 
 
 class Predestined(Controller):
+  """predestined controller."""
   time: float = deluca.field(jaxed=False)
   steps: int = deluca.field(jaxed=False)
   dt: float = deluca.field(jaxed=False)

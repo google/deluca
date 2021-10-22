@@ -12,25 +12,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import jax.numpy as jnp
+"""Reacher."""
 
 from deluca.core import Env
 from deluca.core import field
 from deluca.core import Obj
+import jax.numpy as jnp
+
+# pylint:disable=invalid-name
 
 
 class ReacherState(Obj):
+  """ReacherState.
+
+  Attributes:
+    arr:
+    h:
+  """
   arr: jnp.ndarray = field(jaxed=True)
   h: float = field(0.0, jaxed=True)
 
   def flatten(self):
+    """flatten.
+
+    Returns:
+
+    """
     return self.arr
 
+  # TODO(dsuo): this should be a classmethod.
   def unflatten(self, arr):
+    """unflatten.
+
+    Args:
+      arr:
+
+    Returns:
+
+    """
     return ReacherState(arr=arr, h=self.h)
 
 
 class Reacher(Env):
+  """Reacher."""
   m1: float = field(1.0, jaxed=False)
   m2: float = field(1.0, jaxed=False)
   l1: float = field(1.0, jaxed=False)
@@ -39,17 +63,18 @@ class Reacher(Env):
   max_torque: float = field(1.0, jaxed=False)
   dt: float = field(0.01, jaxed=False)
   H: int = field(200, jaxed=False)
-  goal_coord: jnp.ndarray = field(jnp.array([0.0, 1.8]), jaxed=False)
+  goal_coord: jnp.ndarray = field(jaxed=False)
   state_dim: float = field(6, jaxed=False)
   action_dim: float = field(2, jaxed=False)
 
-  # def setup(self):
-    # if self.goal_coord is None:
-    #   self.goal_coord = jnp.array([0.0, 1.8])
-
   def init(self):
+    """init.
+
+    Returns:
+
+    """
     initial_th = (jnp.pi / 4, jnp.pi / 2)
-    return ReacherState(
+    state = ReacherState(
         arr=jnp.array([
             *initial_th,
             0.0,
@@ -61,8 +86,22 @@ class Reacher(Env):
             self.l2 * jnp.sin(initial_th[0] + initial_th[1]) -
             self.goal_coord[1],
         ]))
+    return state, state
+
+  def setup(self):
+    if self.goal_coord is None:
+      self.goal_coord = jnp.array([0., 1.8])
 
   def __call__(self, state, action):
+    """__call__.
+
+    Args:
+      state:
+      action:
+
+    Returns:
+
+    """
     m1, m2, l1, l2, g = self.m1, self.m2, self.l1, self.l2, self.g
     th1, th2, dth1, dth2, Dx, Dy = state.arr
     t1, t2 = action

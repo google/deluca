@@ -12,15 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TODO: - jax.core.valid_jaxtype checks values, but not types, so we don't have a check
+"""deluca.core.
 
-  that state is a jax type
-- Explain why dynamics etc are not static methods (why pass self explicitly as
-arg?)
-- extracting state from the env object is a little messy
-
-QUESTIONS:
-- should env/agent be frozen?
+TODO(dsuo)
+- Enforce init over reset
 
 """
 import dataclasses
@@ -57,17 +52,33 @@ def field(default=None, jaxed=True, **kwargs):
 
 class Obj:
 
+  def freeze(self):
+    object.__setattr__(self, "__frozen__", True)
+
+  def unfreeze(self):
+    object.__setattr__(self, "__frozen__", False)
+
+  def is_frozen(self):
+    return not hasattr(self, "__frozen__") or getattr(self, "__frozen__")
+
   def __new__(cls, *args, **kwargs):
     """A true bastardization of __new__..."""
 
     def __setattr__(self, name, value):
-      if self.__frozen__:
+      if self.is_frozen():
         raise dataclasses.FrozenInstanceError
       object.__setattr__(self, name, value)
 
+    def replace(self, **updates):
+      obj = dataclasses.replace(self, **updates)
+      obj.freeze()
+      return obj
+
     cls.__setattr__ = __setattr__
+    cls.replace = replace
+
     obj = object.__new__(cls)
-    object.__setattr__(obj, "__frozen__", False)
+    obj.unfreeze()
 
     return obj
 
@@ -78,18 +89,9 @@ class Obj:
   @classmethod
   def create(cls, *args, **kwargs):
     # NOTE: Oh boy, this is so janky
-    dummy = cls(*args, **kwargs)
-    dummy.setup()
-    kwargs = {
-        key: getattr(dummy, key) for key in dummy.__dataclass_fields__.keys()
-    }
-
-    obj = cls(**kwargs)
-
-    for key in dummy.__dict__.keys():
-      if not hasattr(obj, key):
-        setattr(obj, key, dummy.__dict__[key])
-    obj.__frozen__ = True
+    obj = cls(*args, **kwargs)
+    obj.setup()
+    obj.freeze()
 
     return obj
 

@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import jax
-import jax.numpy as jnp
-
+"""Acrobot."""
 from deluca.core import Env
 from deluca.core import field
+import jax
+import jax.numpy as jnp
 
 __copyright__ = "Copyright 2013, RLPy http://acl.mit.edu/RLPy"
 __credits__ = [
@@ -34,6 +34,7 @@ __author__ = "Christoph Dann <cdann@cdann.de>"
 
 
 class Acrobot(Env):
+  """Acrobot."""
   key: jnp.ndarray = field(jaxed=False)
   dt: float = field(0.2, jaxed=False)
 
@@ -60,9 +61,12 @@ class Acrobot(Env):
     self.low = -self.high
     if self.key is None:
       self.key = jax.random.PRNGKey(0)
-    # TODO: Handle dataclass initialization of jax objects
     if self.AVAIL_TORQUE is None:
       self.AVAIL_TORQUE = jnp.array([-1.0, 0.0, +1])
+
+  def init(self):
+    # TODO(dsuo): to implement
+    pass
 
   def __call__(self, state, action):
     augmented_state = jnp.append(state, action)
@@ -76,14 +80,12 @@ class Acrobot(Env):
     # self.s_continuous = ns_continuous[-1] # We only care about the state
     # at the ''final timestep'', self.dt
 
-    new_state = jax.ops.index_update(new_state, 0,
-                                     wrap(new_state[0], -jnp.pi, jnp.pi))
-    new_state = jax.ops.index_update(new_state, 1,
-                                     wrap(new_state[1], -jnp.pi, jnp.pi))
-    new_state = jax.ops.index_update(
-        new_state, 2, bound(new_state[2], -self.MAX_VEL_1, self.MAX_VEL_1))
-    new_state = jax.ops.index_update(
-        new_state, 3, bound(new_state[3], -self.MAX_VEL_2, self.MAX_VEL_2))
+    new_state = new_state.at[0].set(wrap(new_state[0], -jnp.pi, jnp.pi))
+    new_state = new_state.at[1].set(wrap(new_state[1], -jnp.pi, jnp.pi))
+    new_state = new_state.at[2].set(
+        bound(new_state[2], -self.MAX_VEL_1, self.MAX_VEL_1))
+    new_state = new_state.at[3].set(
+        bound(new_state[3], -self.MAX_VEL_2, self.MAX_VEL_2))
 
     return (
         new_state,
@@ -213,7 +215,7 @@ def rk4(derivs, y0, t, *args, **kwargs):
   else:
     yout = jnp.zeros((len(t), Ny))
 
-  yout = jax.ops.index_update(yout, 0, y0)
+  yout = yout.at[0].set(y0)
 
   for i in jnp.arange(len(t) - 1):
 
@@ -226,7 +228,6 @@ def rk4(derivs, y0, t, *args, **kwargs):
     k2 = jnp.asarray(derivs(y0 + dt2 * k1, thist + dt2, *args, **kwargs))
     k3 = jnp.asarray(derivs(y0 + dt2 * k2, thist + dt2, *args, **kwargs))
     k4 = jnp.asarray(derivs(y0 + dt * k3, thist + dt, *args, **kwargs))
-    yout = jax.ops.index_update(yout, i + 1,
-                                y0 + dt / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4))
+    yout = yout.at[i + 1].set(y0 + dt / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4))
 
   return yout

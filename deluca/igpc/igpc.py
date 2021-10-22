@@ -98,7 +98,7 @@ def GPC_rollout(env_true,
           F[h][0] @ (X[h].flatten() - X_old[h].flatten()) +
           F[h][1] @ (U[h] - U_old[h]))
 
-    W = jax.ops.index_update(W, 0, w)
+    W = W.at[0].set(w)
     W = jnp.roll(W, -1, axis=0)
     if h >= H:
       delta_E, delta_off = grad_loss(E, off, W, H, M, X[h - H], env_sim,

@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""MLP module."""
 from typing import Callable
 import flax.linen as nn
 import jax
 
+# pylint: disable=g-bare-generic
+
 
 class MLP(nn.Module):
+  """multilayered perceptron."""
   hidden_dim: int = 10
   out_dim: int = 1
   n_layers: int = 2

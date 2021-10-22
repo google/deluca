@@ -12,15 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import flax.linen as nn
+"""Tests for ppo."""
+
+from absl.testing import absltest
+import chex
+
+from deluca.tests.training.ppo_run import run_balloon_lung
 
 
-class ConstantModel(nn.Module):
-  const_out: float = 0.0
+class PpoTest(chex.TestCase):
 
-  @nn.compact
-  def __call__(self, x):
-    return self.const_out
+  def test_will_it_run(self):
+    run_balloon_lung()
 
-  def update_constant(self, const_out):
-    self.const_out = const_out
+
+if __name__ == '__main__':
+  absltest.main()

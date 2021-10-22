@@ -16,6 +16,7 @@
 import deluca.core
 from deluca.lung import core
 import jax
+import jax.numpy as jnp
 
 
 class CompositeState(deluca.Obj):
@@ -43,6 +44,8 @@ class CompositeController(core.Controller):
   """
   base_controller: core.Controller = deluca.field(jaxed=False)
   resid_controller: core.Controller = deluca.field(jaxed=True)
+  use_leaky_clamp: bool = deluca.field(True, jaxed=False)
+  clip: float = deluca.field(100.0, jaxed=False)
 
   def init(self, waveform=None):
     return CompositeState.create(
@@ -55,6 +58,18 @@ class CompositeController(core.Controller):
                                                  obs)
     resid_state, u_in_resid = self.resid_controller(
         controller_state.resid_state, obs)
+
     u_in = u_in_base + u_in_resid
+
+    # Implementing "leaky" clamp to solve the zero gradient problem
+    if self.use_leaky_clamp:
+      u_in = jax.lax.cond(u_in.squeeze() < 0.0,
+                          lambda x: x * 0.01,
+                          lambda x: x, u_in.squeeze())
+      u_in = jax.lax.cond(u_in.squeeze() > self.clip,
+                          lambda x: self.clip + x * 0.01,
+                          lambda x: x, u_in.squeeze())
+    else:
+      u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float32), self.clip).squeeze()
 
     return CompositeState.create(base_state, resid_state), u_in

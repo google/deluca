@@ -124,7 +124,7 @@ class Adaptive(Agent):
 
         # One is born every expert_density steps
         if self.t % self.expert_density == 0:
-            self.alive = jax.ops.index_update(self.alive, self.t, 1)
+            self.alive = self.alive.at[self.t].set(1)
             self.weights[self.t] = self.eps
             self.learners[self.t] = self.base_controller(A, B, cost_fn=self.cost_fn)
             self.learners[self.t].x = x
@@ -134,7 +134,7 @@ class Adaptive(Agent):
         if len(kill_list[0]):
             kill = int(kill_list[0][0])
             if self.alive[kill]:
-                self.alive = jax.ops.index_update(self.alive, kill, 0)
+                self.alive = self.alive.at[kill].set(0)
                 del self.learners[kill]
                 self.weights[kill] = 0
 
@@ -144,7 +144,7 @@ class Adaptive(Agent):
             self.weights /= max_w
 
         # Get new noise (will be located at w[-1])
-        self.w = jax.ops.index_update(self.w, 0, x - self.A @ self.x + self.B @ self.u)
+        self.w = self.w.at[0].set(x - self.A @ self.x + self.B @ self.u)
         self.w = jnp.roll(self.w, -1, axis=0)
 
         # Update System

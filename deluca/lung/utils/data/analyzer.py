@@ -12,16 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import numpy as np
-import matplotlib
+"""Class for handling data processing on individual runs.
+
+Separates runs into breaths, computes default metric,
+and supports plotting runs.
+"""
 import pickle
-import matplotlib.pyplot as plt
 
 from deluca.lung.core import BreathWaveform
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+
+# pylint: disable=unnecessary-lambda
+# pylint: disable=dangerous-default-value
 
 
 class Analyzer:
+  """Class for processing individual runs."""
 
   def __init__(self, path, test_pressure=None):
     self.data = path if isinstance(path, dict) else pickle.load(
@@ -34,18 +42,102 @@ class Analyzer:
     self.target = timeseries["target"]
     self.flow = timeseries["flow"]
     self.test_pressure = test_pressure
-
-    # TODO: remove legacy logic
+    if "global_id" in timeseries:
+      self.global_id = timeseries["global_id"]
     if "waveform" in self.data:
       self.waveform = self.data["waveform"]
-    elif "controller" in self.data:
-      self.controller = self.data["controller"]
-      if hasattr(self.controller, "waveform"):
-        self.waveform = self.controller.waveform
-        self.waveform.dtype = np.float32
 
-    if "env" in self.data:
-      self.env = self.data["env"]
+  ###########################################################################
+  # Utility methods
+  ###########################################################################
+  def get_breaths(self, clip=(0, None), breath_length=29):
+    """Return list of breaths for inspiratory phases only."""
+    breath_indices = self.get_breath_indices(breath_length=breath_length)
+    breaths = []
+
+    # NOTE: remove first two breaths and last breath because they often have
+    # initialization or timing-related issues
+    for start, end in breath_indices[clip[0]:clip[1]]:
+
+      # Ignore breaths shorter than breath_length
+      if end - start < breath_length:
+        continue
+
+      # Truncate clips longer than breath_length to breath_length
+      if end - start > breath_length:
+        end = start + breath_length
+
+      u_in = self.u_in[start:end]
+      pressure = self.pressure[start:end]
+      breaths.append((u_in, pressure))
+
+    return breaths
+
+  def get_breath_indices(self, use_cached=True, breath_length=29):
+    """finds inspiratory phase intervals from expiratory valve controls.
+
+    Args:
+      use_cached: whether or not to use self.cached_breaths
+      breath_length: length of a breath
+    Returns:
+      list of endpoints so that u_out[lo:hi] == 1
+    """
+
+    if not use_cached or not hasattr(self, "cached_breaths"):
+      d_u_out = np.diff(self.u_out, prepend=1)
+
+      starts = np.where(d_u_out == -1)[0]
+      ends = np.where(d_u_out == 1)[0]
+
+      self.cached_breaths = list(zip(starts, ends))
+
+    # Return a single breath of the entire length
+    return self.cached_breaths or [(0, breath_length)]
+
+  ###########################################################################
+  # Metric methods
+  ###########################################################################
+  def losses_per_breath(self,
+                        target,
+                        clip=(0, None),
+                        loss_fn=None,
+                        breath_length=29):
+    """compute losses per breath."""
+    # computes trapezoidally integrated loss per inferred breath
+    loss_fn = loss_fn or np.square
+
+    # handle polymorphic targets
+    if isinstance(target, BreathWaveform):
+      target_fn = lambda t: target.at(t)
+    else:
+      target_fn = lambda _: target
+
+    breaths_indices = self.get_breath_indices(breath_length=breath_length)
+    losses = []
+
+    # integrate loss for each detected inspiratory phase
+    for start, end in breaths_indices[clip[0]:clip[1]]:
+      errs = loss_fn(target_fn(self.tt[start:end]) - self.pressure[start:end])
+      loss = np.trapz(errs, self.tt[start:end])
+      losses.append(loss)
+
+    return np.array(losses)
+
+  def default_metric(self,
+                     clip=(0, None),
+                     target=None,
+                     loss_fn=np.abs,
+                     breath_length=29):
+    """default loss function."""
+    # I suggest keeping a separate function for default settings
+    # so nobody has to change code if we change the benchmark
+    # as it stands: average loss across breaths, discounting first breath
+    if target is None:
+      target = self.waveform
+
+    return self.losses_per_breath(
+        clip=clip, target=target, loss_fn=loss_fn,
+        breath_length=breath_length).mean()
 
   ###########################################################################
   # Plotting methods
@@ -61,6 +153,7 @@ class Analyzer:
            control=True,
            path=None,
            **kwargs):
+    """plot function."""
     matplotlib.pyplot.figure(figsize=(figsize or (12, 6)))
     # trash
     if axes is None:
@@ -75,8 +168,13 @@ class Analyzer:
         self.tt, self.pressure, color="blue", label="actual pressure", **kwargs)
     (target,) = axes.plot(
         self.tt, self.target, color="orange", label="target pressure", **kwargs)
-    (test_pressure,) = axes.plot(
-        self.tt, self.test_pressure, color="red", label="test pressure", **kwargs)
+    if self.test_pressure is not None:
+      (test_pressure,) = axes.plot(
+          self.tt,
+          self.test_pressure,
+          color="red",
+          label="test pressure",
+          **kwargs)
     axes.set_ylabel("Pressure (cmH2O)")
     axes.set_ylim(ylim)
     expiratory = axes.fill_between(
@@ -97,7 +195,10 @@ class Analyzer:
         alpha=0.3,
         label="inspiratory phase",
     )
-    plts.extend([pressure, target, test_pressure, inspiratory, expiratory])
+    if self.test_pressure is not None:
+      plts.extend([pressure, target, test_pressure, inspiratory, expiratory])
+    else:
+      plts.extend([pressure, target, inspiratory, expiratory])
 
     if control:
       twin_ax = axes.twinx()
@@ -127,147 +228,3 @@ class Analyzer:
 
     if path is not None:
       plt.savefig(path)
-
-  def plot_inspiratory_clips(self, **kwargs):
-    inspiratory_clips = self.infer_inspiratory_phases()
-
-    plt.subplot(121)
-    plt.title("u_in")
-    for start, end in inspiratory_clips:
-      u_in = self.u_in[start:end]
-      plt.plot(self.tt[start:end] - self.tt[start], u_in, "k", alpha=0.1)
-
-    plt.subplot(122)
-    plt.title("pressure")
-    for start, end in inspiratory_clips:
-      pressure = self.pressure[start:end]
-      plt.plot(self.tt[start:end] - self.tt[start], pressure, "b", alpha=0.1)
-
-  ###########################################################################
-  # Utility methods
-  ###########################################################################
-  def get_clips(self, inspiratory_only=True, clip=(2, -1)):
-
-    if inspiratory_only:
-      clip_indices = self.infer_inspiratory_phases()
-    else:
-      clip_indices = self.infer_breaths()
-
-    clips = []
-    for start, end in clip_indices[clip[0]:clip[1]]:
-      u_in = self.u_in[start:end]
-      pressure = self.pressure[start:end]
-      clips.append((u_in, pressure))
-
-    return clips
-
-  def get_clips_kaggle(self, R, C, path_id, inspiratory_only=True):
-
-    if inspiratory_only:
-      clip_indices = self.infer_inspiratory_phases()
-    else:
-      clip_indices = self.infer_breaths()
-
-    clips = []
-    for i, (start, end) in enumerate(clip_indices):
-      untruncated_length = end - start
-      if (end - start) < 29:
-        continue
-      if end - start > 29:
-        end = start + 29
-      u_in = self.u_in[start:end]
-      u_out = self.u_out[start:end]
-      pressure = self.pressure[start:end]
-      time_step = self.tt[start:end]
-      initial_time_step = time_step[0]
-      time_step = [t - initial_time_step for t in time_step]
-      row = {}
-      row["time_step"] = time_step
-      row["R"] = R
-      row["C"] = C
-      row["u_in"] = u_in
-      row["u_out"] = u_out
-      row["pressure"] = pressure
-      row["untruncated_length"] = untruncated_length
-      clips.append(row)
-
-    return clips
-
-  def get_min_breath_len_kaggle(self, inspiratory_only=True):
-    if inspiratory_only:
-      clip_indices = self.infer_inspiratory_phases()
-    else:
-      clip_indices = self.infer_breaths()
-    min_breath_len = 10000000
-    for start, end in clip_indices:
-      breath_len = end - start
-      min_breath_len = min(min_breath_len, breath_len)
-    return min_breath_len
-
-  def get_all_breath_lens_kaggle(self, inspiratory_only=True):
-    if inspiratory_only:
-      clip_indices = self.infer_inspiratory_phases()
-    else:
-      clip_indices = self.infer_breaths()
-    breath_lens = []
-    for start, end in clip_indices:
-      breath_lens.append(end - start)
-    return breath_lens
-
-  def infer_inspiratory_phases(self, use_cached=True):
-    # finds inspiratory phase intervals from expiratory valve controls
-    # returns list of endpoints so that u_out[lo:hi] == 1
-
-    if not use_cached or not hasattr(self, "cached_inspiratory_phases"):
-      d_u_out = np.diff(self.u_out, prepend=1)
-
-      starts = np.where(d_u_out == -1)[0]
-      ends = np.where(d_u_out == 1)[0]
-
-      self.cached_inspiratory_phases = list(zip(starts, ends))
-
-    return self.cached_inspiratory_phases
-
-  def infer_breaths(self):
-    d_u_out = np.diff(self.u_out, prepend=1)
-    starts = np.where(d_u_out == -1)[0]
-    ends = np.roll(starts - 1, shift=-1)
-    ends[-1] = len(self.u_out) - 1
-
-    return list(zip(starts, ends))
-
-  ###########################################################################
-  # Metric methods
-  ###########################################################################
-
-  def losses_per_breath(self, target, loss_fn=None):
-    # computes trapezoidally integrated loss per inferred breath
-
-    loss_fn = loss_fn or np.square
-
-    # handle polymorphic targets
-    if isinstance(target, int):
-      target_fn = lambda _: target
-    elif isinstance(target, BreathWaveform):
-      target_fn = lambda t: target.at(t)
-    else:
-      raise ValueError("unrecognized type for target")
-
-    breaths = self.infer_inspiratory_phases()
-    losses = []
-
-    # integrate loss for each detected inspiratory phase
-    for start, end in breaths:
-      errs = loss_fn(target_fn(self.tt[start:end]) - self.pressure[start:end])
-      loss = np.trapz(errs, self.tt[start:end])
-      losses.append(loss)
-
-    return np.array(losses)
-
-  def default_metric(self, target=None, loss_fn=np.abs):
-    # I suggest keeping a separate function for default settings
-    # so nobody has to change code if we change the benchmark
-    # as it stands: average loss across breaths, discounting first breath
-    target = target or self.waveform
-
-    return self.losses_per_breath(target, loss_fn)[1:].mean()

@@ -146,12 +146,8 @@ class Deep(Agent):
         dlog = dsoftmax / self.probs[self.action]
         grad = self.state.reshape(-1, 1) @ dlog.reshape(1, -1)
 
-        self.episode_rewards = jax.ops.index_update(
-            self.episode_rewards, self.current_episode_length, reward
-        )
-        self.episode_grads = jax.ops.index_update(
-            self.episode_grads, self.current_episode_length, grad
-        )
+        self.episode_rewards = self.episode_rewards.at[self.current_episode_length].set(reward)
+        self.episode_grads = self.episode_grads.at[self.current_episode_length].set(grad)
         self.current_episode_length += 1
 
     def update(self) -> None:

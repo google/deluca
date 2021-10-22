@@ -12,21 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""@author: Olivier Sigaud A merge between two sources: * Adaptation of the MountainCar Environment from the "FAReinforcement" library of Jose Antonio Martin H.
+"""@author: Olivier Sigaud A merge between two sources:
+* Adaptation of the MountainCar Environment from the "FAReinforcement" library
+* of Jose Antonio Martin H.
 
 (version 1.0), adapted by  'Tom Schaul, tom@idsia.ch' and then modified by
 Arnaud de Broissia * the OpenAI/gym MountainCar environment itself from
 http://incompleteideas.net/sutton/MountainCar/MountainCar1.cp permalink:
 https://perma.cc/6Z2N-PFWC
 """
-import jax
-import jax.numpy as jnp
+
+# pylint:disable=g-long-lambda
 
 from deluca.core import Env
 from deluca.core import field
+import jax
+import jax.numpy as jnp
 
 
 class MountainCar(Env):
+  """MountainCar."""
   key: jnp.ndarray = field(jaxed=False)
   goal_velocity: float = field(0.0, jaxed=False)
   min_action: float = field(-1.0, jaxed=False)
@@ -41,17 +46,32 @@ class MountainCar(Env):
   high_state: jnp.ndarray = field(jaxed=False)
 
   def setup(self):
+    """setup."""
     self.low_state = jnp.array([self.min_position, -self.max_speed])
     self.high_state = jnp.array([self.max_position, self.max_speed])
-    # TODO: Handle dataclass initialization of jax objects
     if self.key is None:
       self.key = jax.random.PRNGKey(0)
 
   def init(self):
-    return jnp.array(
+    """init.
+
+    Returns:
+
+    """
+    state = jnp.array(
         [jax.random.uniform(self.key, min_val=-0.6, maxval=0.4), 0])
+    return state, state
 
   def __call__(self, state, action):
+    """__call__.
+
+    Args:
+      state:
+      action:
+
+    Returns:
+
+    """
     position, velocity = state
 
     force = jnp.minimum(jnp.maximum(action, self.min_action), self.max_action)

@@ -95,7 +95,7 @@ class DRC(Agent):
         self.G = jnp.zeros((h, d_obs, d_action))
         A_power = jnp.identity(d_state)
         for i in range(h):
-            self.G = jax.ops.index_update(self.G, i, C @ A_power @ B)
+            self.G = self.G.at[i].set(C @ A_power @ B)
             A_power = A_power @ A
 
         # Model Parameters
@@ -166,7 +166,7 @@ class DRC(Agent):
     def update_noise(self, obs: jnp.ndarray) -> None:
         y_nat = obs - jnp.tensordot(self.G, self.us, axes=([0, 2], [0, 1]))
         self.y_nat = jnp.roll(self.y_nat, 1, axis=0)
-        self.y_nat = jax.ops.index_update(self.y_nat, 0, y_nat)
+        self.y_nat = self.y_nat.at[0].set(y_nat)
 
     def update_params(self, obs: jnp.ndarray, u: jnp.ndarray) -> None:
         """
@@ -198,6 +198,6 @@ class DRC(Agent):
 
         # update us
         self.us = jnp.roll(self.us, 1, axis=0)
-        self.us = jax.ops.index_update(self.us, 0, u)
+        self.us = self.us.at[0].set(u)
 
         self.t += 1

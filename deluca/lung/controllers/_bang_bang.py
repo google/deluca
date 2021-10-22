@@ -12,19 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import jax
-import jax.numpy as jnp
+"""bang bang controller."""
 import deluca.core
+from deluca.lung.core import BreathWaveform
 from deluca.lung.core import Controller
 from deluca.lung.core import DEFAULT_DT
 from deluca.lung.core import proper_time
-from deluca.lung.core import BreathWaveform
+import jax
+import jax.numpy as jnp
 
 
 class BangBang(Controller):
-  waveform: deluca.Obj = deluca.field(jaxed=False)
+  """bang bang controller."""
+  waveform: BreathWaveform = deluca.field(jaxed=False)
   min_action: float = deluca.field(0.0, jaxed=False)
   max_action: float = deluca.field(100.0, jaxed=False)
+
+  def setup(self):
+    if self.waveform is None:
+      self.waveform = BreathWaveform.create()
 
   def __call__(self, controller_state, obs):
     pressure, t = obs.predicted_pressure, obs.time

@@ -12,111 +12,119 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Delay Lung."""
+import deluca.core
+from deluca.lung.core import BreathWaveform
+from deluca.lung.core import LungEnv
 import jax
 import jax.numpy as jnp
 
-from deluca.lung.core import BreathWaveform
-from deluca.lung.core import LungEnv
+
+class Observation(deluca.Obj):
+  predicted_pressure: float = 0.0
+  time: float = 0.0
 
 
-class DelayLung(Lung):
+class SimulatorState(deluca.Obj):
+  in_history: jnp.array
+  out_history: jnp.array
+  steps: int = 0
+  time: float = 0.0
+  volume: float = 0.0
+  predicted_pressure: float = 0.0
+  pipe_pressure: float = 0.0
+  target: float = 0.0
 
-  def __init__(
-      self,
-      min_volume=1.5,
-      R_lung=10,
-      C_lung=6,
-      delay=25,
-      inertia=0.995,
-      control_gain=0.02,
-      dt=0.03,
-      waveform=None,
-      reward_fn=None,
-  ):
-    self.viewer = None
-    self.delay = delay
-    self.control_gain = control_gain
-    self.inertia = inertia
-    self.dt = dt
-    self.C_lung = C_lung
-    self.R_lung = R_lung
-    self.min_volume = min_volume
-    self.waveform = waveform or BreathWaveform()
+
+class DelayLung(LungEnv):
+  """Delay lung."""
+  min_volume: float = deluca.field(1.5, jaxed=False)
+  R: int = deluca.field(10, jaxed=False)
+  C: int = deluca.field(6, jaxed=False)
+  delay: int = deluca.field(25, jaxed=False)
+  inertia: float = deluca.field(0.995, jaxed=False)
+  control_gain: float = deluca.field(0.02, jaxed=False)
+  dt: float = deluca.field(0.03, jaxed=False)
+  waveform: BreathWaveform = deluca.field(jaxed=False)
+  r0: float = deluca.field(jaxed=False)
+  flow: float = deluca.field(0.0, jaxed=False)  # Question: initial flow value?
+
+  def setup(self):
+    if self.waveform is None:
+      self.waveform = BreathWaveform.create()
     self.r0 = (3 * self.min_volume / (4 * jnp.pi))**(1 / 3)
 
-    self.reset()
-
   def reset(self):
-    self.volume = self.min_volume
-    self.pipe_pressure = 0
-    self.pressure = 0
-    self.time = 0.0
-    self.target = self.waveform.at(self.time)
-    self.in_history = jnp.zeros(self.delay)
-    self.out_history = jnp.zeros(self.delay)
-
-    self.state = {
-        "volume": self.volume,
-        "pressure": self.pressure,
-        "pipe_pressure": self.pipe_pressure,
-    }
-    return self.observation
-
-  @property
-  def observation(self):
-    return {
-        "measured": self.state["pressure"],
-        "target": self.target,
-        "dt": self.dt,
-        "phase": self.waveform.phase(self.time),
-    }
+    state = SimulatorState(
+        steps=0,
+        time=0.0,
+        volume=self.min_volume,
+        predicted_pressure=0.0,
+        pipe_pressure=0.0,
+        target=self.waveform.at(0.0),
+        in_history=jnp.zeros(self.delay),
+        out_history=jnp.zeros(self.delay))
+    observation = Observation(
+        predicted_pressure=0.0, time=0.0)
+    return state, observation
 
   def dynamics(self, state, action):
+    """dynamics function.
+
+    Args:
+      state: (volume, pressure)
+      action: (u_in, u_out)
+    Returns:
+      state: next state
     """
-        state: (volume, pressure)
-        action: (u_in, u_out)
-        """
-    flow = self.state["pressure"] / self.R_lung
-    volume = self.state["volume"] + flow * self.dt
+    flow = state.predicted_pressure / self.R
+    volume = state.volume + flow * self.dt
     volume = jnp.maximum(volume, self.min_volume)
 
-    r = (3.0 * self.volume / (4.0 * jnp.pi))**(1.0 / 3.0)
-    lung_pressure = self.C_lung * (1 - (self.r0 / r)**6) / (self.r0**2 * r)
+    r = (3.0 * volume / (4.0 * jnp.pi))**(1.0 / 3.0)
+    lung_pressure = self.C * (1 - (self.r0 / r)**6) / (self.r0**2 * r)
 
     pipe_impulse = jax.lax.cond(
-        self.time < self.delay,
+        state.time < self.delay,
         lambda x: 0.0,
-        lambda x: self.control_gain * self.in_history[0],
+        lambda x: self.control_gain * state.in_history[0],
         None,
     )
-    peep = jax.lax.cond(self.time < self.delay, lambda x: 0.0,
-                        lambda x: self.out_history[0], None)
+    peep = jax.lax.cond(state.time < self.delay, lambda x: 0.0,
+                        lambda x: state.out_history[0], None)
 
-    pipe_pressure = self.inertia * state["pipe_pressure"] + pipe_impulse
+    pipe_pressure = self.inertia * state.pipe_pressure + pipe_impulse
     pressure = jnp.maximum(0, pipe_pressure - lung_pressure)
 
     pipe_pressure = jax.lax.cond(peep, lambda x: x * 0.995, lambda x: x,
                                  pipe_pressure)
 
-    return {
-        "volume": volume,
-        "pressure": pressure,
-        "pipe_pressure": pipe_pressure
-    }
+    state = state.replace(
+        steps=state.time + 1,
+        time=state.time + self.dt,
+        volume=volume,
+        predicted_pressure=pressure,
+        pipe_pressure=pipe_pressure,
+        target=self.waveform.at(state.time + self.dt))
+    return state
 
-  def step(self, action):
+  def __call__(self, state, action):
     u_in, u_out = action
-    u_in = jax.lax.cond(u_in > 0.0, lambda x: x, lambda x: 0.0, u_in)
+    u_in = jax.lax.cond(u_in.squeeze() > 0.0,
+                        lambda x: x,
+                        lambda x: 0.0,
+                        u_in.squeeze())
 
-    self.in_history = jnp.roll(self.in_history, shift=1)
-    self.in_history = self.in_history.at[0].set(u_in)
-    self.out_history = jnp.roll(self.out_history, shift=1)
-    self.out_history = self.out_history.at[0].set(u_out)
+    next_in_history = jnp.roll(state.in_history, shift=1)
+    next_in_history = next_in_history.at[0].set(u_in)
+    next_out_history = jnp.roll(state.out_history, shift=1)
+    next_out_history = next_out_history.at[0].set(u_out)
 
-    self.target = self.waveform.at(self.time)
-    reward = -jnp.abs(self.target - self.state["pressure"])
+    state = state.replace(in_history=next_in_history,
+                          out_history=next_out_history)
 
-    self.state = self.dynamics(self.state, action)
-    self.time += 1
+    next_state = self.dynamics(state, action)
+    observation = Observation(
+        predicted_pressure=state.predicted_pressure, time=state.time)
 
-    return self.observation, reward, False, {}
+    return next_state, observation

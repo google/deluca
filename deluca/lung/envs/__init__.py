@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from deluca.lung.envs._stitched_sim import StitchedSim
-from deluca.lung.envs._stitched_sim import StitchedSimObservation
+"""init file."""
+from deluca.lung.envs._balloon_lung import BalloonLung
+from deluca.lung.envs._delay_lung import DelayLung
+from deluca.lung.envs._learned_lung import LearnedLung
+from deluca.lung.envs._learned_lung import LearnedLungObservation
+from deluca.lung.envs._single_comp_lung import SingleCompLung
 
-__all__ = ["StitchedSim", "StitchedSimObservation"]
+__all__ = ["LearnedLung", "LearnedLungObservation", "SingleCompLung",
+           "BalloonLung", "DelayLung"]

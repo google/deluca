@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""lstm module."""
 import functools
 from typing import Callable
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+
+
+# pylint: disable=g-bare-generic
 
 
 class LSTM(nn.Module):
@@ -26,28 +30,22 @@ class LSTM(nn.Module):
   out_dim: int = 1
   bptt: int = 3  # or 10 or 29
   activation_fn: Callable = nn.tanh
-  # seq_len: int = 8 # TODO: how to use variable seq_len in length=seq_len?
 
   @nn.compact
   def __call__(self, inputs):
     # inputs.shape = (batch_size, seq_length, vocab_size).
     batch_size = (inputs.shape[0],)
-    lstm = LSTM_network(
+    lstm = LSTMNetwork(
         n_layers=self.n_layers, activation_fn=self.activation_fn)
     init_lstm_state = lstm.initialize_carry(batch_size, self.hidden_dim)
-    # init_is_eos = jnp.zeros(batch_size, dtype=np.bool)
-    # init_carry = (init_lstm_state, init_is_eos)
-    # inputs = inputs.astype(jnp.float64)
-    # print('init_lstm_state:' + str(init_lstm_state))
-    # print('inputs:' + str(inputs))
     init_lstm_state = (init_lstm_state[0].astype(jnp.float64),
                        init_lstm_state[1].astype(jnp.float64))
-    final_lstm_state, y = lstm(init_lstm_state, inputs)
-    y = nn.Dense(features=self.out_dim, use_bias=True, name=f'lstm_fc')(y)
+    _, y = lstm(init_lstm_state, inputs)
+    y = nn.Dense(features=self.out_dim, use_bias=True, name='lstm_fc')(y)
     return y[0, -1, 0]  # squeeze for consistent shape w/ boundary model output
 
 
-class LSTM_network(nn.Module):
+class LSTMNetwork(nn.Module):
   """A simple unidirectional LSTM."""
   n_layers: int = 2  # or 4
   activation_fn: Callable = nn.tanh
@@ -55,15 +53,14 @@ class LSTM_network(nn.Module):
   @functools.partial(
       nn.transforms.scan,
       variable_broadcast='params',
-      in_axes=1, out_axes=1,
+      in_axes=1,
+      out_axes=1,
       split_rngs={'params': False})
-      # length=seq_len)
   @nn.compact
   def __call__(self, carry, x):
     for _ in range(self.n_layers):
       carry, x = nn.OptimizedLSTMCell(activation_fn=self.activation_fn)(carry,
                                                                         x)
-      # carry = (carry[0].as_type(jnp.float32), carry[1].as_type(jnp.float32))
     return carry, x
 
   @staticmethod

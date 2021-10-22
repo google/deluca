@@ -15,7 +15,6 @@
 """deluca.agents._bpc"""
 from numbers import Real
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.random as random
@@ -121,7 +120,7 @@ class BPC(Agent):
             None
         """
         noise = state - self.A @ self.state - self.B @ action
-        self.noise_history = jax.ops.index_update(self.noise_history, 0, noise)
+        self.noise_history = self.noise_history.at[0].set(noise)
         self.noise_history = jnp.roll(self.noise_history, -1, axis=0)
 
         lr = self.lr_scale
@@ -130,9 +129,7 @@ class BPC(Agent):
         delta_M = self.grad(self.M, self.noise_history, cost)
         self.M -= lr * delta_M
 
-        self.eps = jax.ops.index_update(
-            self.eps, 0, generate_uniform((self.H, self.d_action, self.d_state))
-        )
+        self.eps = self.eps.at[0].set(generate_uniform((self.H, self.d_action, self.d_state)))
         self.eps = np.roll(self.eps, -1, axis=0)
 
         self.M += self.delta * self.eps[-1]

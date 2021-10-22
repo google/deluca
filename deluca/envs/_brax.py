@@ -12,27 +12,65 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import brax
-from brax.io import html
-from IPython.display import HTML
+"""Wrapper for Brax systems."""
 
+import brax
+from brax import envs as brax_envs
+from brax.io import html
 from deluca.core import Env
 from deluca.core import field
+from IPython.display import HTML
 
+# pylint:disable=protected-access
 
 class BraxEnv(Env):
-    sys: brax.System = field(jaxed=False)
+  """Brax."""
+  sys: brax.System = field(jaxed=False)
+  env: brax_envs.Env = field(jaxed=False)
 
-    def setup(self):
-        if isinstance(self.sys, brax.physics.config_pb2.Config):
-            self.sys = brax.System(self.sys)
+  def setup(self):
+    """setup."""
+    if self.env is not None:
+      self.sys = self.env.sys
+    elif isinstance(self.sys, brax.physics.config_pb2.Config):
+      self.sys = brax.System(self.sys)
 
-    def init(self):
-        return self.sys.default_qp()
+  def init(self):
+    """init.
 
-    def __call__(self, state, action):
-        state, _ = self.sys.step(state, action)
-        return state, state
+    Returns:
 
-    def render(self, states):
-        return HTML(html.render(self.sys, states))
+    """
+    state = self.sys.default_qp()
+    obs = state if self.env is None else self.env._get_obs(
+        state, self.sys.info(state))
+    return state, obs
+
+  def reset(self):
+    return self.init()
+
+  def __call__(self, state, action):
+    """__call__.
+
+    Args:
+      state:
+      action:
+
+    Returns:
+
+    """
+    state, info = self.sys.step(state, action)
+    obs = state if self.env is None else self.env._get_obs(
+        state, info)
+    return state, obs
+
+  def render(self, states):
+    """render.
+
+    Args:
+      states:
+
+    Returns:
+
+    """
+    return HTML(html.render(self.sys, states))

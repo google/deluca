@@ -77,7 +77,7 @@ def rolls_by_igpc(env_true, env_sim, U_old, k, K, X_old, D, F, alpha, w_is, ref_
                 X_old[h + 1] + F[h][0] @ (X[h] - X_old[h]) + F[h][1] @ (U[h] - U_old[h])
             )
 
-        W = jax.ops.index_update(W, 0, w)
+        W = W.at[0].set(w)
         W = jnp.roll(W, -1, axis=0)
         if h >= H:
             delta_E, delta_off = grad_loss(

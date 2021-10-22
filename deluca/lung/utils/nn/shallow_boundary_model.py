@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Shallow boundary module for first few time steps."""
 import flax.linen as nn
 
 
 class ShallowBoundaryModel(nn.Module):
+  """Shallow boundary module."""
   out_dim: int = 1
   hidden_dim: int = 100
   model_num: int = 0

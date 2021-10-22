@@ -12,15 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from deluca.lung.utils.nn.alpha_dropout import AlphaDropout
-from deluca.lung.utils.nn.constant_model import ConstantModel
-from deluca.lung.utils.nn.mlp import MLP
-from deluca.lung.utils.nn.shallow_boundary_model import ShallowBoundaryModel
-from deluca.lung.utils.nn.snn import SNN
+"""init file for utils/nn."""
 from deluca.lung.utils.nn.cnn import CNN
 from deluca.lung.utils.nn.lstm import LSTM
+from deluca.lung.utils.nn.mlp import MLP
+from deluca.lung.utils.nn.shallow_boundary_model import ShallowBoundaryModel
 
-__all__ = [
-    "AlphaDropout", "ConstantModel", "ShallowBoundaryModel", "SNN", "MLP",
-    "CNN", "LSTM"
-]
+__all__ = ["ShallowBoundaryModel", "MLP", "CNN", "LSTM"]

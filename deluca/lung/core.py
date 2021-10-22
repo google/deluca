@@ -12,100 +12,44 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Core."""
+import functools
 import os
-from functools import partial
-from enum import Enum
+
+import deluca.core
 import jax
 import jax.numpy as jnp
-import deluca.core
 
 ROOT = os.path.dirname(os.path.realpath(os.path.join(__file__, "../..")))
 
+DEFAULT_XP = [0.0, 1.0, 1.5, 3.0 - 1e-8, 3.0]
 DEFAULT_DT = 0.03
 
-DEFAULT_PRESSURE_RANGE = (5.0, 35.0)
-DEFAULT_KEYPOINTS = [1e-8, 1.0, 1.5, 3.0]
-DEFAULT_BPM = 20
-
-
-class Phase(Enum):
-  RAMP_UP = 1
-  PIP = 2
-  RAMP_DOWN = 3
-  PEEP = 4
+# pylint: disable=protected-access
+# pylint: disable=g-long-lambda
 
 
 class BreathWaveform(deluca.Obj):
-  """Waveform generator with shape |‾\_"""
-
-  custom_range: tuple = deluca.field(jaxed=False)
-  lo: float = deluca.field(jaxed=False)
-  hi: float = deluca.field(jaxed=False)
+  r"""Waveform generator with shape |‾\_."""
+  peep: float = deluca.field(5., jaxed=False)
+  pip: float = deluca.field(35., jaxed=False)
+  bpm: int = deluca.field(20, jaxed=False)
   fp: jnp.array = deluca.field(jaxed=False)
   xp: jnp.array = deluca.field(jaxed=False)
-  dtype: jax._src.numpy.lax_numpy._ScalarMeta = deluca.field(
-      jnp.float64, jaxed=False)
-  keypoints: jnp.array = deluca.field(jaxed=False)
-  bpm: int = deluca.field(DEFAULT_BPM, jaxed=False)
-  kernel: list = deluca.field(jaxed=False)
-  dt: float = deluca.field(0.01, jaxed=False)
   period: float = deluca.field(jaxed=False)
+  dt: float = deluca.field(DEFAULT_DT, jaxed=False)
+  dtype: jax._src.numpy.lax_numpy._ScalarMeta = deluca.field(
+      jnp.float32, jaxed=False)
 
   def setup(self):
-    self.lo, self.hi = self.custom_range or DEFAULT_PRESSURE_RANGE
-    self.fp = jnp.array([self.lo, self.hi, self.hi, self.lo, self.lo])
-
-    self.xp = jnp.zeros(len(self.fp), dtype=self.dtype)
-    if self.keypoints:
-      self.xp = jax.ops.index_update(
-          self.xp, jax.ops.index[1:],
-          jnp.array(self.keypoints, dtype=self.dtype))
-    else:
-      self.xp = jax.ops.index_update(
-          self.xp, jax.ops.index[1:],
-          jnp.array(DEFAULT_KEYPOINTS, dtype=self.dtype))
-    self.xp = jax.ops.index_update(self.xp, -1, 60 / self.bpm)
-    self.keypoints = self.xp
+    # TODO(dsuo): we ignore fp and xp
+    self.fp = jnp.array([self.pip, self.pip, self.peep, self.peep, self.pip])
+    self.xp = jnp.array(DEFAULT_XP)
     self.period = 60 / self.bpm
-
-    pad = 0
-    num = int(1 / self.dt)
-    if self.kernel is not None:
-      pad = 60 / bpm / (num - 1)
-      num += len(kernel) // 2 * 2
-
-    tt = jnp.linspace(-pad, 60 / self.bpm + pad, num, dtype=self.dtype)
-    self.fp = self.at(tt)
-    self.xp = tt
-
-    if self.kernel is not None:
-      self.fp = jnp.convolve(self.fp, self.kernel, mode="valid")
-      self.xp = jnp.linspace(0, 60 / bpm, int(1 / self.dt), dtype=dtype)
-
-  @property
-  def PIP(self):
-    # custom range is (lo, hi)
-    if hasattr(self, "custom_range"):
-      return self.custom_range[1]
-    else:
-      return jnp.max(self.fp)
-
-  @property
-  def PEEP(self):
-    if hasattr(self, "custom_range"):
-      return self.custom_range[0]
-    else:
-      return jnp.min(self.fp)
-
-  def is_in(self, t):
-    return self.elapsed(t) <= self.keypoints[2]
-
-  def is_ex(self, t):
-    return not self.is_in(t)
 
   def at(self, t):
 
-    @partial(jax.jit, static_argnums=(3,))
+    @functools.partial(jax.jit, static_argnums=(3,))
     def static_interp(t, xp, fp, period):
       return jnp.interp(t, xp, fp, period=period)
 
@@ -114,33 +58,16 @@ class BreathWaveform(deluca.Obj):
   def elapsed(self, t):
     return t % self.period
 
-  # TODO: change all files where "if decay is None" to "if decay == float("inf")"
-  # files affected: _mpc, _clipped_adv_deep, _clipped_deep, _deep_pid_residual,
-  # _deep_pid_residual_clipped
-  def decay(self, t):
-    elapsed = self.elapsed(t)
+  def is_in(self, t):
+    return self.elapsed(t) <= self.xp[1]
 
-    def false_func():
-      result = jax.lax.cond(
-          elapsed < self.keypoints[3],
-          lambda x: 0.0,
-          lambda x: 5 * (1 - jnp.exp(5 *(self.keypoints[3] - elapsed))).astype(self.dtype), None)
-      return result
-
-    # float(inf) as substitute to None since cond requries same type output
-    result = jax.lax.cond(elapsed < self.keypoints[2], lambda x: float("inf"),
-                          lambda x: false_func(), None)
-    return result
-
-  def phase(self, t):
-    return jnp.searchsorted(
-        self.keypoints, jnp.mod(t, self.period), side="right")
-
-  import os
+  def is_ex(self, t):
+    return not self.is_in(t)
 
 
 class LungEnv(deluca.Env):
-  # @property
+  """Lung environment."""
+
   def time(self, state):
     return self.dt * state.steps
 
@@ -162,6 +89,13 @@ class LungEnv(deluca.Env):
     pass
 
 
+# TODO(alexjyu): change predicted_pressure to pressure
+class LungEnvState(deluca.Obj):
+  t_in: int = 0
+  steps: int = 0
+  predicted_pressure: float = 0.0
+
+
 class ControllerState(deluca.Obj):
   time: float = float("inf")
   steps: int = 0
@@ -173,8 +107,11 @@ def proper_time(t):
 
 
 class Controller(deluca.Agent):
+  """Controller."""
 
-  def init(self):
+  def init(self, waveform=None):
+    if waveform is None:
+      waveform = BreathWaveform.create()
     return ControllerState()
 
   @property
@@ -184,3 +121,18 @@ class Controller(deluca.Agent):
   @property
   def min(self):
     return 0
+
+  def decay(self, waveform, t):
+    elapsed = waveform.elapsed(t)
+
+    def false_func():
+      result = jax.lax.cond(
+          elapsed < waveform.xp[2], lambda x: 0.0, lambda x: 5 *
+          (1 - jnp.exp(5 * (waveform.xp[2] - elapsed))).astype(waveform.dtype),
+          None)
+      return result
+
+    # float(inf) as substitute to None since cond requries same type output
+    result = jax.lax.cond(elapsed < waveform.xp[1], lambda x: float("inf"),
+                          lambda x: false_func(), None)
+    return result

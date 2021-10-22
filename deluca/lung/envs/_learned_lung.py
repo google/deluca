@@ -12,135 +12,192 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
+"""learned_lung."""
+import functools
+from typing import Any, Dict
 
-import pickle
+import deluca.core
+from deluca.lung.core import LungEnv
+from deluca.lung.utils.data.transform import ShiftScaleTransform
+from deluca.lung.utils.nn import MLP
+from deluca.lung.utils.nn import ShallowBoundaryModel
+import flax.linen as nn
+import jax
 import jax.numpy as jnp
 
-from deluca.lung.core import BreathWaveform
-from deluca.lung.core import LungEnv
+# pylint: disable=unused-argument
+# pylint: disable=g-bare-generic
+# pylint: disable=g-complex-comprehension
 
 
-class LearnedLung(Lung):
+class LearnedLungObservation(deluca.Obj):
+  predicted_pressure: float = 0.0
+  time: float = 0.0
 
-  def __init__(
-      self,
-      weights,
-      pressure_mean=0.0,
-      pressure_std=1.0,
-      PEEP=5,
-      input_dim=3,
-      history_len=5,
-      dt=0.03,
-      waveform=None,
-      reward_fn=None,
-  ):
-    self.viewer = None
-    self.weights = weights
-    self.pressure_mean = pressure_mean
-    self.pressure_std = pressure_std
-    self.input_dim = input_dim
-    self.history_len = history_len
-    self.dt = dt
-    self.PEEP = PEEP
-    self.waveform = waveform or BreathWaveform()
-    self.reset()
+
+# Note: can't inherit from core because jax arrays not allowed to be manipulated
+# as default values, and non-default args can't follow inherited default args
+class SimulatorState(deluca.Obj):
+  u_history: jnp.ndarray
+  p_history: jnp.ndarray
+  t_in: int = 0
+  steps: int = 0
+  predicted_pressure: float = 0.0
+
+
+def call_if_t_in_positive(state, reset):
+  new_state, _ = reset()
+  return new_state
+
+
+def true_func(state, reset):
+  """True branch of jax.lax.cond in call function."""
+  state = jax.lax.cond(state.t_in > 0,
+                       functools.partial(call_if_t_in_positive, reset=reset),
+                       lambda x: x, state)
+  return state
+
+
+def false_func(state, u_in, model_idx, u_normalizer, update_history,
+               u_history_len, p_history_len, u_window, p_window,
+               sync_unnormalized_pressure, num_boundary_models, funcs):
+  """False branch of jax.lax.cond in call function."""
+  u_in_normalized = u_normalizer(u_in).squeeze()
+  state = state.replace(
+      u_history=update_history(state.u_history, u_in_normalized),
+      t_in=state.t_in + 1)
+  boundary_features = jnp.hstack(
+      [state.u_history[-u_history_len:], state.p_history[-p_history_len:]])
+  default_features = jnp.hstack(
+      [state.u_history[-u_window:], state.p_history[-p_window:]])
+  default_pad_len = (u_history_len + p_history_len) - (u_window + p_window)
+  default_features = jnp.hstack(
+      [jnp.zeros((default_pad_len,)), default_features])
+  features = jax.lax.cond(
+      model_idx == num_boundary_models,
+      lambda x: default_features,
+      lambda x: boundary_features,
+      None,
+  )
+  normalized_pressure = jax.lax.switch(model_idx, funcs, features)
+  normalized_pressure = normalized_pressure.astype(jnp.float64)
+  state = state.replace(predicted_pressure=normalized_pressure)
+  new_p_history = update_history(state.p_history, normalized_pressure)
+  state = state.replace(p_history=new_p_history
+                       )  # just for inference. This is undone during training
+  state = sync_unnormalized_pressure(state)  # unscale predicted pressure
+  return state
+
+
+class LearnedLung(LungEnv):
+  """Learned lung."""
+  params: list = deluca.field(jaxed=True)
+  init_rng: jnp.array = deluca.field(jaxed=False)
+  u_window: int = deluca.field(5, jaxed=False)
+  p_window: int = deluca.field(3, jaxed=False)
+  u_history_len: int = deluca.field(5, jaxed=False)
+  p_history_len: int = deluca.field(5, jaxed=False)
+  u_normalizer: ShiftScaleTransform = deluca.field(jaxed=False)
+  p_normalizer: ShiftScaleTransform = deluca.field(jaxed=False)
+  seed: int = deluca.field(0, jaxed=False)
+  flow: int = deluca.field(0, jaxed=False)
+  transition_threshold: int = deluca.field(0, jaxed=False)
+
+  default_model_parameters: Dict[str, Any] = deluca.field(jaxed=False)
+  num_boundary_models: int = deluca.field(5, jaxed=False)
+  boundary_out_dim: int = deluca.field(1, jaxed=False)
+  boundary_hidden_dim: int = deluca.field(100, jaxed=False)
+  reset_normalized_peep: float = deluca.field(0.0, jaxed=False)
+
+  default_model_name: str = deluca.field("MLP", jaxed=False)
+  default_model: nn.module = deluca.field(jaxed=False)
+  boundary_models: list = deluca.field(default_factory=list, jaxed=False)
+  ensemble_models: list = deluca.field(default_factory=list, jaxed=False)
+
+  def setup(self):
+    self.u_history_len = max(self.u_window, self.num_boundary_models)
+    self.p_history_len = max(self.p_window, self.num_boundary_models)
+    self.default_model = MLP(
+        hidden_dim=self.default_model_parameters["hidden_dim"],
+        out_dim=self.default_model_parameters["out_dim"],
+        n_layers=self.default_model_parameters["n_layers"],
+        droprate=self.default_model_parameters["droprate"],
+        activation_fn=self.default_model_parameters["activation_fn"])
+    default_params = self.default_model.init(
+        jax.random.PRNGKey(0),
+        jnp.ones([self.u_history_len + self.p_history_len]))["params"]
+    self.boundary_models = [
+        ShallowBoundaryModel(
+            out_dim=self.boundary_out_dim,
+            hidden_dim=self.boundary_hidden_dim,
+            model_num=i + 1) for i in range(self.num_boundary_models)
+    ]
+    boundary_params = [
+        self.boundary_models[i].init(
+            jax.random.PRNGKey(0),
+            jnp.ones([self.u_history_len + self.p_history_len]))["params"]
+        for i in range(self.num_boundary_models)
+    ]
+
+    self.ensemble_models = self.boundary_models + [self.default_model]
+    if self.params is None:
+      self.params = boundary_params + [default_params]
+    print("TREE MAP")
+    print(jax.tree_map(lambda x: x.shape, self.params))
 
   def reset(self):
-    # pressure
-    self.pressure = 0
-    self.time = 0
-
-    # NOTE: we don't combine this into a single trajectory because we must
-    # roll these arrays at different times (e.g., u_ins, u_outs before
-    # running through model, normalized pressures after)
-    u_ins = jnp.zeros(self.history_len)
-    u_outs = jnp.ones(self.history_len)
-    normalized_pressures = (
-        jnp.ones(self.history_len) * (self.PEEP - self.pressure_mean) /
-        self.pressure_std)
-    self.state = {
-        "u_ins": u_ins,
-        "u_outs": u_outs,
-        "normalized_pressures": normalized_pressures,
-    }
-
-    return self.observation
-
-  @classmethod
-  def from_torch(cls, path):
-    torch_sim = pickle.load(open(path, "rb"))
-    args = {
-        key: val
-        for key, val in torch_sim.items()
-        if key in inspect.signature(LearnedLung.__init__).parameters.keys()
-    }
-    sim = cls(**args)
-
-    weights = []
-    for weight in sim.weights:
-      weights.append(jnp.array(weight))
-
-    sim.weights = weights
-
-    return sim
-
-  @property
-  def observation(self):
-    return {
-        "measured": self.pressure,
-        "target": self.waveform.at(self.time),
-        "dt": self.dt,
-        "phase": self.waveform.phase(self.time),
-    }
-
-  def dynamics(self, state, action):
-    """
-        pressure: (u_in, u_out, normalized pressure) histories
-        action: (u_in, u_out)
-        """
-
-    u_ins, u_outs, normalized_pressures = (
-        state["u_ins"],
-        state["u_outs"],
-        state["normalized_pressures"],
+    normalized_peep = self.reset_normalized_peep
+    state = SimulatorState(
+        u_history=jnp.zeros([self.u_history_len]),
+        p_history=jnp.hstack(
+            [jnp.zeros([self.p_history_len - 1]),
+             jnp.array([normalized_peep])]),
+        t_in=0,
+        steps=0,
+        predicted_pressure=normalized_peep,
     )
+    state = self.sync_unnormalized_pressure(state)
+    obs = LearnedLungObservation(
+        predicted_pressure=state.predicted_pressure, time=self.time(state))
+    return state, obs
+
+  def update_history(self, history, value):
+    history = jnp.roll(history, shift=-1)
+    history = history.at[-1].set(value)
+    return history
+
+  def sync_unnormalized_pressure(self, state):
+    normalized_pressure = self.p_normalizer.inverse(
+        state.predicted_pressure).squeeze()
+    return state.replace(predicted_pressure=normalized_pressure)
+
+  def __call__(self, state, action):
     u_in, u_out = action
-
-    u_in /= 50.0
-    u_out = u_out * 2.0 - 1.0
-
-    u_ins = jnp.roll(u_ins, shift=-1)
-    u_ins = u_ins.at[-1].set(u_in)
-    u_outs = jnp.roll(u_outs, shift=-1)
-    u_outs = u_outs.at[-1].set(u_out)
-
-    normalized_pressure = jnp.concatenate((u_ins, u_outs, normalized_pressures))
-    for i in range(0, len(self.weights), 2):
-      normalized_pressure = self.weights[
-          i] @ normalized_pressure + self.weights[i + 1]
-      if i <= len(self.weights) - 4:
-        normalized_pressure = jnp.tanh(normalized_pressure)
-
-    normalized_pressures = jnp.roll(normalized_pressures, shift=-1)
-    normalized_pressures = normalized_pressures.at[-1].set(
-        normalized_pressure.squeeze())
-
-    return {
-        "u_ins": u_ins,
-        "u_outs": u_outs,
-        "normalized_pressures": normalized_pressures
-    }
-
-  def step(self, action):
-    self.state = self.dynamics(self.state, action)
-    self.pressure = (self.state["normalized_pressures"][-1] *
-                     self.pressure_std) + self.pressure_mean
-    self.pressure = jnp.clip(self.pressure, 0.0, 100.0)
-
-    self.target = self.waveform.at(self.time)
-    reward = -jnp.abs(self.target - self.pressure)
-
-    self.time += self.dt
-
-    return self.observation, reward, False, {}
+    model_idx = jnp.min(jnp.array([state.t_in, self.num_boundary_models]))
+    funcs = [
+        functools.partial(self.ensemble_models[i].apply,
+                          {"params": self.params[i]})
+        for i in range(self.num_boundary_models + 1)
+    ]
+    # partial_false_func = functools.partial(
+    #     false_func, u_in=u_in, model_idx=model_idx, funcs=funcs)
+    partial_false_func = functools.partial(
+        false_func,
+        u_in=u_in,
+        model_idx=model_idx,
+        u_normalizer=self.u_normalizer,
+        update_history=self.update_history,
+        u_history_len=self.u_history_len,
+        p_history_len=self.p_history_len,
+        u_window=self.u_window,
+        p_window=self.p_window,
+        sync_unnormalized_pressure=self.sync_unnormalized_pressure,
+        num_boundary_models=self.num_boundary_models,
+        funcs=funcs)
+    partial_true_func = functools.partial(true_func, reset=self.reset)
+    state = jax.lax.cond(u_out == 1, partial_true_func, partial_false_func,
+                         state)
+    state = state.replace(steps=state.steps + 1)
+    obs = LearnedLungObservation(
+        predicted_pressure=state.predicted_pressure, time=self.time(state))
+    return state, obs

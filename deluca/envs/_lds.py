@@ -12,26 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Linear dynamical system."""
+from deluca.core import Env
+from deluca.core import field
 import jax
 import jax.numpy as jnp
 
-from deluca.core import Env
-from deluca.core import field
-
 
 class LDS(Env):
-    A: jnp.array = field(jaxed=False)
-    B: jnp.array = field(jaxed=False)
-    C: jnp.array = field(jaxed=False)
-    key: int = field(jax.random.PRNGKey(0), jaxed=False)
-    state_size: int = field(1, jaxed=False)
-    action_size: int = field(1, jaxed=False)
+  """LDS."""
+  A: jnp.array = field(jaxed=False)
+  B: jnp.array = field(jaxed=False)
+  C: jnp.array = field(jaxed=False)
+  key: int = field(jax.random.PRNGKey(0), jaxed=False)
+  state_size: int = field(1, jaxed=False)
+  action_size: int = field(1, jaxed=False)
 
-    def init(self):
-        return jax.random.normal(self.key, shape=(self.state_size, 1))
+  def init(self):
+    """init.
 
-    def __call__(self, state, action):
-        new_state = self.A @ state + self.B @ action
-        obs = self.C @ new_state
+    Returns:
 
-        return new_state, obs
+    """
+    state = jax.random.normal(self.key, shape=(self.state_size, 1))
+    return state, state
+
+  def __call__(self, state, action):
+    """__call__.
+
+    Args:
+      state:
+      action:
+
+    Returns:
+
+    """
+    new_state = self.A @ state + self.B @ action
+
+    return new_state, self.C @ new_state

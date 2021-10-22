@@ -12,20 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import jax.numpy as jnp
+"""Cartpole."""
 
 from deluca.core import Env
 from deluca.core import field
 from deluca.core import Obj
+import jax.numpy as jnp
+
+
+# pylint:disable=invalid-name
 
 
 class CartpoleState(Obj):
+  """CartpoleState."""
   arr: jnp.ndarray = field(jaxed=True)
   h: int = field(0, jaxed=True)
   offset: float = field(0.0, jaxed=False)
 
 
 class Cartpole(Env):
+  """Cartpole."""
   m: float = field(0.1, jaxed=False)
   M: float = field(1.0, jaxed=False)
   l: float = field(1.0, jaxed=False)
@@ -36,14 +42,29 @@ class Cartpole(Env):
   dynamics: bool = field(False, jaxed=False)
 
   def setup(self):
-    # TODO: Handle dataclass initialization of jax objects
+    """setup."""
     if self.goal_state is None:
       self.goal_state = jnp.array([0.0, 0.0, 0.0, 0.0])
 
   def init(self):
-    return CartpoleState(arr=jnp.array([0.0, 0.0, 0.0, 0.0]))
+    """init.
+
+    Returns:
+
+    """
+    state = CartpoleState(arr=jnp.array([0.0, 0.0, 0.0, 0.0]))
+    return state, state
 
   def __call__(self, state, action):
+    """__call__.
+
+    Args:
+      state:
+      action:
+
+    Returns:
+
+    """
     A = jnp.array([
         [1.0, 0.0, self.dt, 0.0],
         [0.0, 1.0, 0.0, self.dt],

@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""init for controllers."""
 from deluca.lung.controllers._bang_bang import BangBang
-from deluca.lung.controllers._deep import Deep, deep_train
+from deluca.lung.controllers._deep_actor_critic import DeepAC
+from deluca.lung.controllers._deep_cnn import DeepCnn
+from deluca.lung.controllers._deep_mlp import DeepMlp
+
 from deluca.lung.controllers._expiratory import Expiratory
 from deluca.lung.controllers._pid import PID
 from deluca.lung.controllers._predestined import Predestined
@@ -21,10 +25,11 @@ from deluca.lung.controllers._residual import CompositeController
 
 __all__ = [
     "BangBang",
-    "Deep",
+    "DeepAC",
+    "DeepCnn",
+    "DeepMlp",
     "Expiratory",
     "PID",
     "Predestined",
     "CompositeController",
-    "deep_train"
 ]

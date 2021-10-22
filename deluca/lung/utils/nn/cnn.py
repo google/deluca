@@ -35,10 +35,9 @@ class CNN(nn.Module):
           features=self.out_channels,
           kernel_size=(self.kernel_size,),
           strides=(self.strides,),
-          name=f"conv{i}")(x)
+          name=f"conv{i}")(
+              x)
       x = self.activation_fn(x)
     x = x.reshape((x.shape[0], -1))  # flatten
-    x = nn.Dense(
-        features=self.out_dim, use_bias=True, name=f"CNN_fc{i + 1}")(
-            x)
+    x = nn.Dense(features=self.out_dim, use_bias=True, name=f"CNN_fc{i + 1}")(x)
     return x.squeeze()  # squeeze for consistent shape w/ boundary model output

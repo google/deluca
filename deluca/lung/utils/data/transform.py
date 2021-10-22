@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Shift Scale Transform."""
 import jax.numpy as jnp
 
 
 class ShiftScaleTransform:
+  """Data normalizer."""
+
   # vectors is an array of vectors
   def __init__(self, vectors):
     vectors_concat = jnp.concatenate(vectors)

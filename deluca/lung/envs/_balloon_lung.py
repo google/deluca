@@ -12,11 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Balloon Lung."""
+import deluca.core
+from deluca.lung.core import BreathWaveform
+from deluca.lung.core import LungEnv
 import jax
 import jax.numpy as jnp
 
-from deluca.lung.core import BreathWaveform
-from deluca.lung.core import LungEnv
+
+# pylint: disable=g-long-lambda
+
+
+class Observation(deluca.Obj):
+  predicted_pressure: float = 0.0
+  time: float = 0.0
+
+
+class SimulatorState(deluca.Obj):
+  steps: int = 0
+  time: float = 0.0
+  volume: float = 0.0
+  predicted_pressure: float = 0.0
+  target: float = 0.0
 
 
 def PropValve(x):
@@ -31,73 +48,64 @@ def Solenoid(x):
 
 
 class BalloonLung(LungEnv):
+  """Lung simulator based on the two-balloon experiment.
+
+     Source: https://en.wikipedia.org/wiki/Two-balloon_experiment
+     TODO:
+      - time / dt
+      - dynamics
+      - waveform
+      - phase
   """
-    Lung simulator based on the two-balloon experiment
 
-    Source: https://en.wikipedia.org/wiki/Two-balloon_experiment
+  leak: bool = deluca.field(False, jaxed=False)
+  peep_valve: float = deluca.field(5.0, jaxed=False)
+  PC: float = deluca.field(40.0, jaxed=False)
+  P0: float = deluca.field(0.0, jaxed=False)
+  R: float = deluca.field(15.0, jaxed=False)
+  C: float = deluca.field(10.0, jaxed=False)
+  dt: float = deluca.field(0.03, jaxed=False)
+  min_volume: float = deluca.field(1.5, jaxed=False)
+  r0: float = deluca.field(jaxed=False)
+  waveform: BreathWaveform = deluca.field(jaxed=False)
+  # reward_fn: Callable = deluca.field(None, jaxed=False)
+  reset_normalized_peep: float = deluca.field(0.0, jaxed=False)
+  flow: float = deluca.field(0, jaxed=False)  # needed for run_controller
 
-    TODO:
-    - time / dt
-    - dynamics
-    - waveform
-    - phase
-    """
+  def setup(self):
+    if self.waveform is None:
+      self.waveform = BreathWaveform.create()
 
-  def __init__(
-      self,
-      leak=False,
-      peep_valve=5.0,
-      PC=40.0,
-      P0=0.0,
-      C=10.0,
-      R=15.0,
-      dt=0.03,
-      waveform=None,
-      reward_fn=None,
-  ):
-    self.viewer = None
     # dynamics hyperparameters
-    self.min_volume = 1.5
-    self.C = C
-    self.R = R
-    self.PC = PC
-    self.P0 = 0.0
-    self.leak = leak
-    self.peep_valve = peep_valve
-    self.time = 0.0
-    self.dt = dt
-
-    self.waveform = waveform or BreathWaveform()
+    # self.time = 0.0
 
     self.r0 = (3.0 * self.min_volume / (4.0 * jnp.pi))**(1.0 / 3.0)
 
     # reset states
-    self.reset()
+    # self.reset()
 
   def reset(self):
-    self.time = 0.0
-    self.target = self.waveform.at(self.time)
-    self.state = self.dynamics({
-        "volume": self.min_volume,
-        "pressure": -1.0
-    }, (0.0, 0.0))
-    return self.observation
+    state = SimulatorState(
+        steps=0,
+        time=0.0,
+        volume=self.min_volume,
+        predicted_pressure=self.reset_normalized_peep,
+        target=self.waveform.at(0.0))
+    observation = Observation(
+        predicted_pressure=self.reset_normalized_peep, time=0.0)
+    return state, observation
 
-  @property
-  def observation(self):
-    return {
-        "measured": self.state["pressure"],
-        "target": self.target,
-        "dt": self.dt,
-        "phase": self.waveform.phase(self.time),
-    }
+  def __call__(self, state, action):
+    """call function.
 
-  def dynamics(self, state, action):
+    Args:
+      state: (steps, time, volume, predicted_pressure, target)
+      action: (u_in, u_out)
+    Returns:
+      state: next state
+      observation: next observation
     """
-        state: (volume, pressure)
-        action: (u_in, u_out)
-        """
-    volume, pressure = state["volume"], state["pressure"]
+    volume, pressure = state.volume, state.predicted_pressure
     u_in, u_out = action
 
     flow = jnp.clip(PropValve(u_in) * self.R, 0.0, 2.0)
@@ -111,7 +119,8 @@ class BalloonLung(LungEnv):
     volume += flow * self.dt
     volume += jax.lax.cond(
         self.leak,
-        lambda x: (self.dt / (5.0 + self.dt) * (self.min_volume - volume)),
+        lambda x: ((self.dt / (5.0 + self.dt) *
+                    (self.min_volume - volume))).squeeze(),
         lambda x: 0.0,
         0.0,
     )
@@ -121,13 +130,13 @@ class BalloonLung(LungEnv):
         self.r0**2.0 * r)
     # pressure = flow * self.R + volume / self.C + self.peep_valve
 
-    return {"volume": volume, "pressure": pressure}
+    state = state.replace(
+        steps=state.time + 1,
+        time=state.time + self.dt,
+        volume=volume.squeeze(),
+        predicted_pressure=pressure.squeeze(),
+        target=self.waveform.at(state.time + self.dt))
 
-  def step(self, action):
-    self.target = self.waveform.at(self.time)
-    reward = -jnp.abs(self.target - self.state["pressure"])
-    self.state = self.dynamics(self.state, action)
-
-    self.time += self.dt
-
-    return self.observation, reward, False, {}
+    observation = Observation(
+        predicted_pressure=state.predicted_pressure, time=state.time)
+    return state, observation
