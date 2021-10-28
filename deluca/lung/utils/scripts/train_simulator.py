@@ -15,16 +15,14 @@
 """functions for training simulator."""
 import copy
 import functools
-import os
 
 from absl import logging
+from clu import metric_writers
 from deluca.lung.utils.data.breath_dataset import get_shuffled_and_batched_data
 from flax.metrics import tensorboard
 import jax
 import jax.numpy as jnp
 import optax
-
-# Insert any necessary file IO imports
 
 # pylint: disable=pointless-string-statement
 # pylint: disable=invalid-name
@@ -209,11 +207,11 @@ def train_simulator(
 
     if mode == "train":
       file_name = str(config)
-    gfile.SetUser(user_name)
-    gfile.MakeDirs(os.path.dirname(tb_dir))
     write_path = tb_dir + file_name
+    summary_writer = metric_writers.create_default_writer(
+        logdir=write_path, just_logging=jax.process_index() != 0)
     summary_writer = tensorboard.SummaryWriter(write_path)
-    summary_writer.hparams(dict(config))
+    summary_writer.write_hparams(dict(config))
 
   # Main Training Loop
   prng_key = jax.random.PRNGKey(0)
@@ -262,8 +260,8 @@ def train_simulator(
         )
         logging.info("-----------------------------------")
       if use_tensorboard:
-        summary_writer.scalar("train_loss", train_loss, epoch)
-        summary_writer.scalar("test_loss", test_loss, epoch)
+        summary_writer.write_scalars(epoch, {"train_loss": train_loss})
+        summary_writer.write_scalars(epoch, {"test_loss": test_loss})
   if use_tensorboard:
     summary_writer.flush()
   logging.info("finished looping over epochs")
