@@ -96,7 +96,6 @@ class TrainSimulatorParameterizedTest(chex.TestCase):
         reset_normalized_peep=reset_scaled_peep,
     )
 
-  # test train simulator on both lr schedulers
   @parameterized.named_parameters(('Cosine', 'Cosine'),
                                   ('ReduceLROnPlateau', 'ReduceLROnPlateau'))
   def test_train_simulator(self, scheduler):

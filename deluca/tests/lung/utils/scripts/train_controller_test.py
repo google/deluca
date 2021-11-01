@@ -113,7 +113,10 @@ class TrainControllerParameterizedTest(chex.TestCase):
         'kernel_size': kernel_size,
     }
 
-  # test all training modes
+  # @parameterized.product(
+  #     pip_feed=['sequential'],
+  #     mode=['multipip', 'singular'],
+  # )
   @parameterized.named_parameters(('test1', 'parallel', 'multipip'),
                                   ('test2', 'sequential', 'singular'))
   def test_train_controller(self, pip_feed, mode):
