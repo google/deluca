@@ -163,6 +163,7 @@ class TestControllerParameterizedTest(chex.TestCase):
 
     self.controllers['residual'] = self.residual
 
+  # test all lungs vs. all controllers
   @parameterized.product(
       sim_name=['learned_lung',
                 'balloon_lung',

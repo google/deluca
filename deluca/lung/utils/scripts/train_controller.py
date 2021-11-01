@@ -15,17 +15,15 @@
 """functions to train controller."""
 import copy
 import functools
-import os
 
+from clu import metric_writers
 from deluca.lung.controllers._expiratory import Expiratory
 from deluca.lung.core import BreathWaveform
 from deluca.lung.utils.scripts.test_controller import test_controller
-from flax.metrics import tensorboard
+# from flax.metrics import tensorboard
 import jax
 import jax.numpy as jnp
 import optax
-
-# Insert any necessary file IO imports
 
 # pylint: disable=invalid-name
 # pylint: disable=dangerous-default-value
@@ -134,9 +132,10 @@ def train_controller(
   if tensorboard_dir is not None:
     trial_name = str(model_parameters)
     write_path = tensorboard_dir + trial_name
-    gfile.MakeDirs(os.path.dirname(write_path))
-    summary_writer = tensorboard.SummaryWriter(write_path)
-    summary_writer.hparams(model_parameters)
+    summary_writer = metric_writers.create_default_writer(
+        logdir=write_path, just_logging=jax.process_index() != 0)
+    # summary_writer = tensorboard.SummaryWriter(write_path)
+    summary_writer.write_hparams(model_parameters)
 
   tt = jnp.linspace(0, duration, int(duration / dt))
   losses = []
@@ -155,7 +154,7 @@ def train_controller(
         score = test_controller(controller, sim, pips, peep)
         print(f"Epoch: {epoch}\tLoss: {score:.2f}")
         if tensorboard_dir is not None:
-          summary_writer.scalar("score", score, epoch)
+          summary_writer.write_scalars(epoch, {"score": score})
     if pip_feed == "sequential":
       for pip in pips:
         value, grad = jax.value_and_grad(rollout)(controller, sim, tt,
@@ -170,5 +169,5 @@ def train_controller(
           score = test_controller(controller, sim, pips, peep)
           print(f"Epoch: {epoch}, pip: {pip}\tLoss: {score:.2f}")
           if tensorboard_dir is not None:
-            summary_writer.scalar("per_step_loss", score, epoch)
+            summary_writer.write_scalars(epoch, {"per_step_loss": score})
   return controller, per_step_loss, score
