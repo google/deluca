@@ -85,6 +85,7 @@ class TestSimulatorTest(chex.TestCase):
         reset_normalized_peep=reset_scaled_peep,
     )
 
+  # compute open loop score
   def test_test_simulator(self):
     open_loop_summary = test_simulator(self.sim, self.dataset)
     score = open_loop_summary['mae'].mean()
