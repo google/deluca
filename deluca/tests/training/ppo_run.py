@@ -24,7 +24,6 @@ from deluca.lung.controllers import DeepAC
 from deluca.lung.core import BreathWaveform
 from deluca.lung.envs import BalloonLung
 from deluca.training import ppo
-# Insert any necessary file IO imports
 import jax.numpy as jnp
 import ml_collections
 import dill as pickle
@@ -124,11 +123,8 @@ def run_reacher():
     print(obs[-3:], action)
 
 
-def run_learned():
-  with gfile.Open(
-      "/your_file/brain-pton/sims/vent/MLP_R20_C10_hidden_dim100_out_dim1_n_layers4_droprate0.1_activation_fn_namerelu_learning_rate0.001_weight_decay0.05_num_boundary_models1_batch_size20_u_window29_p_window1_transition_threshold29_train",
-      "rb") as f:
-    env = pickle.load(f)["model_ckpt"]
+def run_learned(f):
+  env = pickle.load(f)["model_ckpt"]
 
   agent = DeepAC.create()
   waveform = BreathWaveform.create()
