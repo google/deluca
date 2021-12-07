@@ -145,6 +145,10 @@ class LearnedLung(LungEnv):
     print("TREE MAP")
     print(jax.tree_map(lambda x: x.shape, self.params))
 
+  def init(self, key):
+    return self.reset()
+
+
   def reset(self):
     normalized_peep = self.reset_normalized_peep
     state = SimulatorState(

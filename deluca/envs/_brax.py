@@ -35,7 +35,7 @@ class BraxEnv(Env):
     elif isinstance(self.sys, brax.physics.config_pb2.Config):
       self.sys = brax.System(self.sys)
 
-  def init(self):
+  def init(self, key=None):
     """init.
 
     Returns:

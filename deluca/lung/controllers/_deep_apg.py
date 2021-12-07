@@ -27,11 +27,10 @@ from deluca.lung.controllers._expiratory import Expiratory
 from deluca.lung.utils.data.transform import ShiftScaleTransform
 
 
-# TODO(wenhanxia): modify arguments to config dict of model specification.
-class ActorCritic(nn.Module):
-  """Class defining the actor-critic model."""
+class CNN(nn.Module):
+  """Class defining a simple CNN model."""
 
-  num_actions: int = 100
+  num_actions: int = 1
   chan1: int = 32
   chan2: int = 64
   dtype = jnp.float32
@@ -70,15 +69,12 @@ class ActorCritic(nn.Module):
     x = nn.relu(x)
 
     x = x.reshape((x.shape[0], -1))  # flatten
-    logits = nn.Dense(
-        features=self.num_actions, name='logits', dtype=self.dtype)(
+    outputs = nn.Dense(
+        features=self.num_actions, name='outputs', dtype=self.dtype)(
             x)
-    policy_log_probabilities = nn.log_softmax(logits)
-    value = nn.Dense(features=1, name='value', dtype=self.dtype)(x)
-    return policy_log_probabilities, value
+    return outputs
 
-
-class DeepACControllerState(deluca.Obj):
+class DeepControllerState(deluca.Obj):
   errs: jnp.array
   key: int
   time: float = float('inf')
@@ -86,18 +82,18 @@ class DeepACControllerState(deluca.Obj):
   dt: float = DEFAULT_DT
 
 
-class DeepAC(Controller):
+class Deep(Controller):
   """ Class defining the conroller based on the actor critic model """
 
 
   params: list = deluca.field(jaxed=True)
-  model: nn.module = deluca.field(ActorCritic, jaxed=False)
+  model: nn.module = deluca.field(CNN, jaxed=False)
   featurizer: jnp.array = deluca.field(jaxed=False)
   H: int = deluca.field(100, jaxed=False)
   input_dim: int = deluca.field(1, jaxed=False)
   history_len: int = deluca.field(10, jaxed=False)
   kernel_size: int = deluca.field(5, jaxed=False)
-  clip: float = deluca.field(40.0, jaxed=False)
+  clip: float = deluca.field(100.0, jaxed=False)
   normalize: bool = deluca.field(False, jaxed=False)
   u_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
   p_scaler: ShiftScaleTransform = deluca.field(jaxed=False)
@@ -108,7 +104,7 @@ class DeepAC(Controller):
   # TODO: add analogue of activation=torch.nn.ReLU
 
   def setup(self, waveform=None):
-    self.model = ActorCritic()
+    self.model = CNN()
     if self.params is None:
       self.params = self.model.init(
           jax.random.PRNGKey(0),
@@ -132,19 +128,9 @@ class DeepAC(Controller):
   # TODO(dsuo): Handle dataclass initialization of jax objects
   def init(self, key):
     errs = jnp.array([0.0] * self.history_len)
-    state = DeepACControllerState(errs=errs, key=key)
+    #key = jax.random.PRNGKey(seed)
+    state = DeepControllerState(errs=errs, key=key)
     return state
-
-  def derive_prob_and_value(self, cont_state):
-    # expects a batch dimension
-    # adds the spatial dimension
-    errs = jax.tree_map(lambda x: jnp.expand_dims(x, axis=(1)), cont_state.errs)
-    log_prob, value = self.model.apply({'params': self.params},
-                                       (errs @ self.featurizer))
-    return log_prob.squeeze(), value.squeeze()
-
-  def log_prob_action(self, log_probs, action):
-    return log_probs[action[0]]
 
   def __call__(self, controller_state, obs):
     state, t = obs.predicted_pressure, obs.time
@@ -160,17 +146,11 @@ class DeepAC(Controller):
       next_errs = next_errs.at[-1].set(target - state)
 
     current_key, next_key = jax.random.split(controller_state.key)
-    ## adding a batch dimension ##
-    next_errs_expanded = jnp.expand_dims(next_errs, axis=(0))
+    ## adding a batch and spatial dimension ##
+    next_errs_expanded = jnp.expand_dims(next_errs, axis=(0, 1))
 
-    controller_state_big = controller_state.replace(
-        errs=next_errs_expanded, key=current_key)
-    decay = self.decay(waveform, t)
-    log_prob, value = self.derive_prob_and_value(controller_state_big)
-    #value = value[0]
-    prob = jnp.exp(log_prob)
-    # environment step
-    u_in = jax.random.choice(current_key, prob.shape[0], p=prob)
+    u_in = self.model.apply({'params': self.params}, next_errs_expanded)
+    u_in = u_in.squeeze()
 
     # changed decay compare from None to float(inf) due to cond requirements
     ## TODO(@namanagarwal) - Need to do this
@@ -178,7 +158,7 @@ class DeepAC(Controller):
     #     jnp.isinf(decay), true_func, lambda x: (jnp.array(decay), None, None), None)
 
     # TODO (@namanagarwal) : Figure out what to do with clamping
-    #u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float64), self.clip).squeeze()
+    u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float64), self.clip)
 
     # update controller_state
 
@@ -188,4 +168,4 @@ class DeepAC(Controller):
     new_steps = controller_state.steps + 1
     controller_state = controller_state.replace(
         time=new_time, steps=new_steps, dt=new_dt, key=next_key, errs=next_errs)
-    return controller_state, (u_in, 0), log_prob[u_in], value
+    return controller_state, (u_in, 0)
