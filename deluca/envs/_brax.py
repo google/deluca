@@ -28,26 +28,40 @@ class BraxEnv(Env):
   sys: brax.System = field(jaxed=False)
   env: brax_envs.Env = field(jaxed=False)
 
+  @classmethod
+  def from_env(cls, env):
+    return cls.create(env=env, sys=env.sys)
+
+  @classmethod
+  def from_name(cls, name):
+    return cls.from_env(brax_envs.create(env_name=name))
+
+  @classmethod
+  def from_config(cls, config):
+    return cls.create(sys=brax.System(config))
+
   def setup(self):
     """setup."""
-    if self.env is not None:
-      self.sys = self.env.sys
-    elif isinstance(self.sys, brax.physics.config_pb2.Config):
-      self.sys = brax.System(self.sys)
+    if self.sys is None:
+      raise ValueError("BraxEnv requires `sys` or `env` field specified.")
 
-  def init(self, key=None):
+  def init(self, rng=None):
     """init.
 
     Returns:
 
     """
-    state = self.sys.default_qp()
-    obs = state if self.env is None else self.env._get_obs(
-        state, self.sys.info(state))
-    return state, obs
+    if self.env is None:
+      state = self.sys.default_qp()
+      obs = state if self.env is None else self.env._get_obs(
+          state, self.sys.info(state))
+      return state, obs
+    else:
+      state = self.env.reset(rng=rng)
+      return state.qp, state.obs
 
-  def reset(self):
-    return self.init()
+  def reset(self, rng=None):
+    return self.init(rng=rng)
 
   def __call__(self, state, action):
     """__call__.
