@@ -1,4 +1,4 @@
-# Copyright 2021 The Deluca Authors.
+# Copyright 2022 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -116,7 +116,7 @@ def run_reacher():
     return reward_dist + reward_ctrl
 
   ppo.train(
-      reacher, DeepAC.create(), rewards_func, horizon=10, config=get_config())
+      reacher, agent.create(), rewards_func, horizon=10, config=get_config())
   for _ in range(10):
     agent_state, action = agent(agent_state, obs)
     reacher_state, obs = reacher(reacher_state, action)
@@ -141,7 +141,7 @@ def run_learned(f):
       config=get_config())
 
 
-def main(argv: Sequence[str]) -> None:
+def main(argv):
   if flags.FLAGS.name == "balloon":
     run_balloon_lung()
   elif flags.FLAGS.name == "reacher":
