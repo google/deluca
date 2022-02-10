@@ -1,4 +1,4 @@
-# Copyright 2021 The Deluca Authors.
+# Copyright 2022 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -134,6 +134,7 @@ class RunControllerTest(chex.TestCase):
         1.4621152, 1.462115, 1.462115, 1.462115, 1.462115
     ])
 
+  # test jitted and unjitted variants of inner loop
   @parameterized.product(variant=[chex.with_jit, chex.without_jit])
   def test_loop_over_tt(self, variant):
     dt = 0.03

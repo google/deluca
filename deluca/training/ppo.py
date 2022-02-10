@@ -1,4 +1,4 @@
-# Copyright 2021 The Deluca Authors.
+# Copyright 2022 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,15 +22,16 @@ import deluca.core
 import jax
 import jax.numpy as jnp
 import optax
+import time
 
 # pylint:disable=invalid-name
 
 Rollout = collections.namedtuple("Rollout", [
-    "agent_states", "actions", "log_probs", "values", "rewards", "done_masks",
+    "agent_states", "actions", "log_probs", "values", "losses", "done_masks",
     "advantages", "returns"
 ])
 
-
+@jax.jit
 def gae_advantages(rewards: jnp.ndarray, terminal_masks: jnp.ndarray,
                    values: jnp.ndarray, discount: float, gae_param: float):
   """Use Generalized Advantage Estimation (GAE) to compute advantages.
@@ -54,81 +55,82 @@ def gae_advantages(rewards: jnp.ndarray, terminal_masks: jnp.ndarray,
     gae = delta + discount * gae_param * terminal_masks[t] * gae
     advantages.append(gae)
   advantages = advantages[::-1]
+
+  # The following was an attempt to make the above fast
+  # values_shifted = jnp.roll(values, -1)
+  # delta = rewards + discount*values_shifted*terminal_masks - values
+  # def shift_one_step(carry, n):
+  #   delta, terminal_mask = n
+  #   new_carry = delta + discount*gae_param*terminal_mask*carry
+  #   return new_carry, new_carry
+  # _, advantages = jax.lax.scan(0, delta, reverse=True)
+  # advantages = jnp.flip(advantages)
+  # print(advantages)
+
   return jnp.array(advantages)
 
 
 @functools.partial(
     jax.jit, static_argnums=(
         5,
-        6,
+        8,
     ))
-def ac_rollout(env, env_start_state, env_init_obs, agent, agent_seed: int, H,
-               reward_func, gamma, lambda_):
+def ac_rollout(env, env_start_state, env_init_obs, agent, agent_start_state,
+               unroll_length, gamma, lambda_, loss_func):
   """Comment."""
-  agent_start_state = agent.init(seed=agent_seed.astype(int))
-
   def rollout_step(inp, counter):
     env_state, env_obs, agent_state = inp
     agent_next_state, action, log_probs, values = agent(agent_state, env_obs)
     env_next_state, env_next_obs = env(env_state, action)
-    reward = reward_func(env_state, env_obs, action, env, counter)
+    loss = loss_func(env_state, env_obs, action, env, counter)
     done_mask = 1.0
     return (env_next_state, env_next_obs,
             agent_next_state), (env_next_state, env_next_obs, agent_next_state,
-                                action, log_probs, values, reward, done_mask)
+                                action, log_probs, values, loss, done_mask)
 
   _, t = jax.lax.scan(rollout_step,
                       (env_start_state, env_init_obs, agent_start_state),
-                      jnp.arange(H))
-  advantages = gae_advantages(t[6], t[7], t[5], gamma, lambda_)
+                      jnp.arange(unroll_length))
+  ## The advantage function expects rewards
+  ## We convert losses to rewards here (seems only place where this is required)
+  rewards = -1.0*t[6]
+  advantages = gae_advantages(rewards, t[7], t[5], gamma, lambda_)
   returns = advantages + t[4]
   return Rollout(t[2], t[3], t[4], t[5], t[6], t[7], advantages, returns)
 
 
 @functools.partial(
     jax.jit, static_argnums=(
-        0,
-        3,
-        4,
+        5,
+        8,
     ))
-def ac_parallel_rollouts(
-    num,
-    env,
-    agent,
-    H,
-    cost_func,
-    gamma,
-    lambda_,
-    agent_seeds=None,
-):
+def ac_parallel_rollouts(env, env_start_states, env_init_obs, agent,
+                         agent_start_states, unroll_length, gamma, lambda_,
+                         loss_func):
   """Parallelize rollouts."""
-  if agent_seeds == None:
-    agent_seeds = jnp.arange(num)
-  env_start_states, env_init_obs = env.reset()
+  # if agent_seeds == None:
+  #   agent_seeds = jnp.arange(num)
+  # env_start_states, env_init_obs = env.reset()
   all_rollouts = jax.vmap(ac_rollout,
-                          (None, None, None, None, 0, None, None, None, None))(
+                          (None, 0, 0, None, 0, None, None, None, None))(
                               env, env_start_states, env_init_obs, agent,
-                              agent_seeds, H, cost_func, gamma, lambda_)
+                              agent_start_states, unroll_length, gamma, lambda_,
+                              loss_func)
   return all_rollouts
 
 
-def ac_get_experience(agent, sim, actor_steps, num_agents, gamma, lambda_,
-                      rewards_func):
+def ac_get_experience(env, env_start_states, env_init_obs, agent,
+                      agent_init_states, unroll_length, gamma, lambda_,
+                      loss_func):
   """Serialize the experiences."""
-  rollouts = ac_parallel_rollouts(
-      num_agents,
-      sim,
-      agent,
-      actor_steps,
-      rewards_func,
-      gamma,
-      lambda_,
-      agent_seeds=None)
+  rollouts = ac_parallel_rollouts(env, env_start_states, env_init_obs, agent,
+                                  agent_init_states, unroll_length, gamma,
+                                  lambda_, loss_func)
   experiences = jax.tree_map(
       lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]), rollouts)
   return experiences
 
-
+@jax.jit
 def ppo_loss_fn(agent, batch_data, clip_param: float, vf_coeff: float,
                 entropy_coeff: float):
   """Evaluate the loss function.
@@ -168,6 +170,10 @@ def ppo_loss_fn(agent, batch_data, clip_param: float, vf_coeff: float,
   return ppo_loss + vf_coeff * value_loss - entropy_coeff * entropy
 
 
+@functools.partial(
+    jax.jit, static_argnums=(
+        0,
+    ))
 def train_step(optim, optim_state, agent, experiences, batch_size: int,
                clip_param: float, vf_coeff: float, entropy_coeff: float):
   """Compilable train step.
@@ -176,19 +182,36 @@ def train_step(optim, optim_state, agent, experiences, batch_size: int,
   an epoch is included here for performance reasons).
   """
   loss = 0.
-  batch_inits = list(range(0, len(experiences.advantages), batch_size))
-  # TODO(dsuo): convert to jax.lax.scan.
-  for b in batch_inits:
-    batched_exps = jax.tree_map(lambda x: x[b:b + batch_size], experiences)
+  #batch_inits = jnp.arange(0, len(experiences.advantages), batch_size)
+  @jax.jit
+  def train_step_batch(carry, batched_exps):
+    loss, agent, optim_state = carry
+    # batched_exps = jax.tree_map(lambda x: x[counter:counter + batch_size],
+    #                             experiences)
     grad_fn = jax.value_and_grad(ppo_loss_fn)
     l, grads = grad_fn(agent, batched_exps, clip_param, vf_coeff, entropy_coeff)
     loss += l
     updates, optim_state = optim.update(grads, optim_state, agent)
     agent = optax.apply_updates(agent, updates)
+    return (loss, agent, optim_state), loss
+
+  # TODO(dsuo): convert to jax.lax.scan.
+  # for b in batch_inits:
+  #   batched_exps = jax.tree_map(lambda x: x[b:b + batch_size], experiences)
+  #   grad_fn = jax.value_and_grad(ppo_loss_fn)
+  #   l, grads = grad_fn(agent, batched_exps, clip_param, vf_coeff, entropy_coeff)
+  #   loss += l
+  #   updates, optim_state = optim.update(grads, optim_state, agent)
+  #   agent = optax.apply_updates(agent, updates)
+  # return loss, agent, optim_state
+
+  init_carry = (loss, agent, optim_state)
+  (loss, agent, optim_state), _ = jax.lax.scan(train_step_batch, init_carry,
+                                               experiences)
   return loss, agent, optim_state
 
 
-def train(env, agent, reward_fn, horizon, config, workdir=None):
+def train(env, agent, loss_func, horizon, config, workdir=None):
   """Main training loop.
 
   config
@@ -212,20 +235,34 @@ def train(env, agent, reward_fn, horizon, config, workdir=None):
         logdir=workdir, just_logging=jax.process_index() != 0)
     writer.write_hparams(dict(config))
 
-  # config
-  episodes_per_eval = 10
+  key = jax.random.PRNGKey(config.seed)
+  key_train_agent, key_eval_agent, key_train_env, key_eval_env, key_train, key = jax.random.split(key, 6)
+  key_train_envs = jax.random.split(key_train_env, config.training_env_batch_size)
+  key_train_agents = jax.random.split(key_train_agent, config.training_env_batch_size)
+  key_eval_envs = jax.random.split(key_eval_env, config.eval_env_batch_size)
+  key_eval_agents = jax.random.split(key_eval_agent, config.eval_env_batch_size)
+
+  train_env_start_states, train_env_init_obs = jax.vmap(env.init)(
+      key_train_envs)
+  eval_env_start_states, eval_env_init_obs = jax.vmap(env.init)(key_eval_envs)
+  train_agent_start_states = jax.vmap(agent.init)(key_train_agents)
+  eval_agent_start_states = jax.vmap(agent.init)(key_eval_agents)
+
 
   optim = optax.adam(learning_rate=config.learning_rate)
   optim_state = optim.init(agent)
 
   for episode in range(config.num_episodes):
     # Bookkeeping and testing.
-    if (episode + 1) % episodes_per_eval == 0:
-      state, obs = env.reset()
+    if (episode + 1) % config.episodes_per_eval == 0:
       # TODO(dsuo): testing currently takes random action
-      rollout = ac_rollout(env, state, obs, agent, 0, horizon, reward_fn,
-                           config.gamma, config.lambda_)
-      score = rollout.rewards.mean()
+      eval_rollouts = ac_parallel_rollouts(env, eval_env_start_states,
+                                           eval_env_init_obs, agent,
+                                           eval_agent_start_states, horizon,
+                                           config.gamma, config.lambda_,
+                                           loss_func)
+      score = eval_rollouts.losses.mean()
+      print(score)
       if workdir is not None:
         writer.write_scalars(episode, {"test_score": score})
       print(f"TESTING episode {episode}:")
@@ -235,21 +272,34 @@ def train(env, agent, reward_fn, horizon, config, workdir=None):
     clip_param = config.clip_param * alpha
 
     # collect experience of all agents.
-    experiences = ac_get_experience(agent, env, horizon, config.num_agents,
-                                    config.gamma, config.lambda_, reward_fn)
-    score = experiences.rewards.mean()
+    ttt = time.time()
+    experiences = ac_get_experience(env, train_env_start_states,
+                                    train_env_init_obs, agent,
+                                    train_agent_start_states, horizon,
+                                    config.gamma, config.lambda_, loss_func)
+    print("exp collection time", time.time() - ttt)
+    score = experiences.losses.mean()
 
     for epoch in range(config.num_epochs):
+      # TODO(namanagarwal): fix the randomness in permutations
+      key_permute, key_train = jax.random.split(key_train)
       es = jax.tree_map(
-          lambda x: jax.random.permutation(jax.random.PRNGKey(1), x),
+          lambda x: jax.random.permutation(key_permute, x),
           experiences)
+      ## give a batch dimension to data
+      ## make sure to assert that batch_size divides num agents * horizon
+      num_batches = config.training_env_batch_size * horizon // config.batch_size
+      es = jax.tree_map(
+          lambda x: jnp.reshape(x,
+                                (num_batches, config.batch_size) + x.shape[1:]),
+          es)
       loss, agent, optim_state = train_step(optim, optim_state, agent, es,
                                             config.batch_size, clip_param,
                                             config.vf_coeff,
                                             config.entropy_coeff)
-      print(f"TRAINING: episode {episode}, epoch {epoch}:")
-      print(f"  - loss: {loss}")
-      print(f"  - score: {score}")
+      # print(f"TRAINING: episode {episode}, epoch {epoch}:")
+      # print(f"  - loss: {loss}")
+      # print(f"  - score: {score}")
 
     if workdir is not None:
       writer.write_scalars(episode, {"train_loss": loss, "train_score": score})

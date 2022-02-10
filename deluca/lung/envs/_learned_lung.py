@@ -1,4 +1,4 @@
-# Copyright 2021 The Deluca Authors.
+# Copyright 2022 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -144,6 +144,10 @@ class LearnedLung(LungEnv):
       self.params = boundary_params + [default_params]
     print("TREE MAP")
     print(jax.tree_map(lambda x: x.shape, self.params))
+
+  def init(self, key):
+    return self.reset()
+
 
   def reset(self):
     normalized_peep = self.reset_normalized_peep
