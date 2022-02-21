@@ -1,4 +1,4 @@
-# Copyright 2021 The Deluca Authors.
+# Copyright 2022 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 """Core."""
 import functools
 import os
+from typing import Tuple
 
 import deluca.core
 import jax
@@ -36,15 +37,18 @@ class BreathWaveform(deluca.Obj):
   bpm: int = deluca.field(20, jaxed=False)
   fp: jnp.array = deluca.field(jaxed=False)
   xp: jnp.array = deluca.field(jaxed=False)
+  in_bounds: Tuple[int, int] = deluca.field((0, 1), jaxed=False)
+  ex_bounds: Tuple[int, int] = deluca.field((2, 4), jaxed=False)
   period: float = deluca.field(jaxed=False)
   dt: float = deluca.field(DEFAULT_DT, jaxed=False)
   dtype: jax._src.numpy.lax_numpy._ScalarMeta = deluca.field(
       jnp.float32, jaxed=False)
 
   def setup(self):
-    # TODO(dsuo): we ignore fp and xp
-    self.fp = jnp.array([self.pip, self.pip, self.peep, self.peep, self.pip])
-    self.xp = jnp.array(DEFAULT_XP)
+    if self.fp is None:
+      self.fp = jnp.array([self.pip, self.pip, self.peep, self.peep, self.pip])
+    if self.xp is None:
+      self.xp = jnp.array(DEFAULT_XP)
     self.period = 60 / self.bpm
 
   def at(self, t):
@@ -59,7 +63,7 @@ class BreathWaveform(deluca.Obj):
     return t % self.period
 
   def is_in(self, t):
-    return self.elapsed(t) <= self.xp[1]
+    return self.elapsed(t) <= self.xp[self.in_bounds[1]]
 
   def is_ex(self, t):
     return not self.is_in(t)
@@ -127,12 +131,12 @@ class Controller(deluca.Agent):
 
     def false_func():
       result = jax.lax.cond(
-          elapsed < waveform.xp[2], lambda x: 0.0, lambda x: 5 *
-          (1 - jnp.exp(5 * (waveform.xp[2] - elapsed))).astype(waveform.dtype),
-          None)
+          elapsed < waveform.xp[waveform.ex_bounds[0]], lambda x: 0.0,
+          lambda x: 5 * (1 - jnp.exp(5 * (waveform.xp[waveform.ex_bounds[
+              0]] - elapsed))).astype(waveform.dtype), None)
       return result
 
     # float(inf) as substitute to None since cond requries same type output
-    result = jax.lax.cond(elapsed < waveform.xp[1], lambda x: float("inf"),
-                          lambda x: false_func(), None)
+    result = jax.lax.cond(elapsed < waveform.xp[waveform.in_bounds[1]],
+                          lambda x: float("inf"), lambda x: false_func(), None)
     return result
