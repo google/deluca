@@ -66,13 +66,13 @@ class Adaptive(Agent):
         self.n, self.m = B.shape
 
         cost_fn = cost_fn or quad_loss
+        self.cost_fn = cost_fn
 
         self.base_controller = base_controller
 
         # Start From Uniform Distribution
         self.T = T
         self.weights = np.zeros(T)
-        self.weights[0] = 1.0
 
         # Track current timestep
         self.t, self.expert_density = 0, expert_density
@@ -111,10 +111,14 @@ class Adaptive(Agent):
     def __call__(self, x, A, B):
 
         play_i = np.argmax(self.weights)
+        if not self.alive[play_i]:
+            play_i = 0
+
         self.u = self.learners[play_i].get_action(x)
 
         # Update alive models
         for i in jnp.nonzero(self.alive)[0]:
+            i = int(i)
             loss_i = self.policy_loss(self.learners[i], A, B, x, self.w)
             self.weights[i] *= np.exp(-self.eta * loss_i)
             self.weights[i] = min(max(self.weights[i], self.eps), self.inf)
@@ -144,7 +148,7 @@ class Adaptive(Agent):
             self.weights /= max_w
 
         # Get new noise (will be located at w[-1])
-        self.w = self.w.at[0].set(x - self.A @ self.x + self.B @ self.u)
+        self.w = self.w.at[0].set(x - self.A @ self.x - self.B @ self.u)
         self.w = jnp.roll(self.w, -1, axis=0)
 
         # Update System
