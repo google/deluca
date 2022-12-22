@@ -142,10 +142,10 @@ class Adaptive(Agent):
                 del self.learners[kill]
                 self.weights[kill] = 0
 
-        # Rescale
-        max_w = np.max(self.weights)
-        if max_w < 1:
-            self.weights /= max_w
+        # # Rescale
+        # max_w = np.max(self.weights)
+        # if max_w < 1:
+        #     self.weights /= max_w
 
         # Get new noise (will be located at w[-1])
         self.w = self.w.at[0].set(x - self.A @ self.x - self.B @ self.u)
