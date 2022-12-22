@@ -20,7 +20,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from deluca.agents.core import Agent
+from deluca.core import Agent
 
 
 def quad_loss(x: jnp.ndarray, u: jnp.ndarray) -> Real:
