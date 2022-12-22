@@ -14,7 +14,7 @@
 
 import jax.numpy as jnp
 
-from deluca.agents.core import Agent
+from deluca.core import Agent
 from deluca.utils.planning import f_at_x
 from deluca.utils.planning import LQR
 from deluca.utils.planning import rollout
