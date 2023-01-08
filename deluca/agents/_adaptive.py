@@ -146,6 +146,10 @@ class Adaptive(Agent):
         # max_w = np.max(self.weights)
         # if max_w < 1:
         #     self.weights /= max_w
+        max_weight_i = np.argmax(self.weights)
+        max_w = self.weights[max_weight_i]
+        if self.alive[max_weight_i] and max_w < 1:
+          self.weights /= max_w
 
         # Get new noise (will be located at w[-1])
         self.w = self.w.at[0].set(x - self.A @ self.x - self.B @ self.u)
