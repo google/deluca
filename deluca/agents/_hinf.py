@@ -19,7 +19,7 @@ from typing import Tuple
 import jax.numpy as jnp
 from jax.numpy.linalg import inv
 
-from deluca.agents.core import Agent
+from deluca.core import Agent
 
 
 class Hinf(Agent):

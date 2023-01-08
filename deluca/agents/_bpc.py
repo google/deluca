@@ -20,7 +20,7 @@ import numpy as np
 import numpy.random as random
 
 from deluca.agents._lqr import LQR
-from deluca.agents.core import Agent
+from deluca.core import Agent
 
 
 def generate_uniform(shape, norm=1.00):

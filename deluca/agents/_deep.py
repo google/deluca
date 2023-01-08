@@ -18,7 +18,7 @@ from numbers import Real
 import jax
 import jax.numpy as jnp
 
-from deluca.agents.core import Agent
+from deluca.core import Agent
 from deluca.utils import Random
 
 

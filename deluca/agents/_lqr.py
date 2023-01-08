@@ -16,7 +16,7 @@
 import jax.numpy as jnp
 from scipy.linalg import solve_discrete_are as dare
 
-from deluca.agents.core import Agent
+from deluca.core import Agent
 
 
 class LQR(Agent):
