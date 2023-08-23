@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2023 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -92,7 +92,7 @@ def false_func(state, u_in, model_idx, u_normalizer, update_history,
 class LearnedLung(LungEnv):
   """Learned lung."""
   params: list = deluca.field(jaxed=True)
-  init_rng: jnp.array = deluca.field(jaxed=False)
+  init_rng: jnp.ndarray = deluca.field(jaxed=False)
   u_window: int = deluca.field(5, jaxed=False)
   p_window: int = deluca.field(3, jaxed=False)
   u_history_len: int = deluca.field(5, jaxed=False)
@@ -147,7 +147,6 @@ class LearnedLung(LungEnv):
 
   def init(self, key):
     return self.reset()
-
 
   def reset(self):
     normalized_peep = self.reset_normalized_peep
