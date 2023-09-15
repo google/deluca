@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2023 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -185,7 +185,7 @@ class experiment:
         self._validate()
 
         single = lambda: map(runner, self._generate_arglists())  # noqa: E731
-        num_tasks = np.product([len(spec[1]) for spec in self._spec])
+        num_tasks = np.prod([len(spec[1]) for spec in self._spec])
 
         # TODO: Figure out why parallel hangs in pytest
         parallel = lambda: pathos.pools.ProcessPool(nodes=processes).imap(  # noqa: E731
