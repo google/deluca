@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2023 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -75,7 +75,7 @@ class CNN(nn.Module):
     return outputs
 
 class DeepControllerState(deluca.Obj):
-  errs: jnp.array
+  errs: jnp.ndarray
   key: int
   time: float = float('inf')
   steps: int = 0
@@ -85,10 +85,9 @@ class DeepControllerState(deluca.Obj):
 class Deep(Controller):
   """ Class defining the conroller based on the actor critic model """
 
-
   params: list = deluca.field(jaxed=True)
   model: nn.module = deluca.field(CNN, jaxed=False)
-  featurizer: jnp.array = deluca.field(jaxed=False)
+  featurizer: jnp.ndarray = deluca.field(jaxed=False)
   H: int = deluca.field(100, jaxed=False)
   input_dim: int = deluca.field(1, jaxed=False)
   history_len: int = deluca.field(10, jaxed=False)
@@ -128,7 +127,7 @@ class Deep(Controller):
   # TODO(dsuo): Handle dataclass initialization of jax objects
   def init(self, key):
     errs = jnp.array([0.0] * self.history_len)
-    #key = jax.random.PRNGKey(seed)
+    # key = jax.random.PRNGKey(seed)
     state = DeepControllerState(errs=errs, key=key)
     return state
 
