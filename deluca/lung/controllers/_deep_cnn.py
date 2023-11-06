@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2023 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ class DeepNetwork(nn.Module):
 
 class DeepControllerState(deluca.Obj):
   waveform: deluca.Obj  # waveform can change during training
-  errs: jnp.array
+  errs: jnp.ndarray
   time: float = float("inf")
   steps: int = 0
   dt: float = DEFAULT_DT
@@ -65,7 +65,7 @@ class DeepCnn(Controller):
   """deep cnn controller."""
   params: list = deluca.field(jaxed=True)
   model: nn.module = deluca.field(DeepNetwork, jaxed=False)
-  featurizer: jnp.array = deluca.field(jaxed=False)
+  featurizer: jnp.ndarray = deluca.field(jaxed=False)
   H: int = deluca.field(100, jaxed=False)
   input_dim: int = deluca.field(1, jaxed=False)
   history_len: int = deluca.field(10, jaxed=False)
