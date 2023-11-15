@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2023 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,9 +21,9 @@ import jax.numpy as jnp
 
 class LDS(Env):
   """LDS."""
-  A: jnp.array = field(jaxed=False)
-  B: jnp.array = field(jaxed=False)
-  C: jnp.array = field(jaxed=False)
+  A: jnp.ndarray = field(jaxed=False)
+  B: jnp.ndarray = field(jaxed=False)
+  C: jnp.ndarray = field(jaxed=False)
   key: int = field(jax.random.PRNGKey(0), jaxed=False)
   state_size: int = field(1, jaxed=False)
   action_size: int = field(1, jaxed=False)
