@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,22 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable
+"""deluca envs."""
 
-import jax
+from .classic.planar_quadrotor import planar_quadrotor
 
-from deluca.core import Agent
-from deluca.core import field
-
-
-class Random(Agent):
-    seed: int = field(0, jaxed=False)
-    func: Callable = field(lambda key: 0.0, jaxed=False)
-
-    def init(self):
-        return jax.random.PRNGKey(self.seed)
-
-    def __call__(self, state, obs):
-        key, subkey = jax.random.split(state)
-
-        return subkey, self.func(key)
+__all__ = ('planar_quadrotor',)

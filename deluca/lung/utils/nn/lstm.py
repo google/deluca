@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -55,17 +55,21 @@ class LSTMNetwork(nn.Module):
       variable_broadcast='params',
       in_axes=1,
       out_axes=1,
-      split_rngs={'params': False})
+      split_rngs={'params': False},
+  )
   @nn.compact
   def __call__(self, carry, x):
+    features = carry[0].shape[-1]
     for _ in range(self.n_layers):
-      carry, x = nn.OptimizedLSTMCell(activation_fn=self.activation_fn)(carry,
-                                                                        x)
+      carry, x = nn.OptimizedLSTMCell(
+          features, activation_fn=self.activation_fn
+      )(carry, x)
     return carry, x
 
   @staticmethod
   def initialize_carry(batch_dims, hidden_dim):
     # (N, C, H, W) = (N, 1, 1, W) where W = feature_dim and N is batch_size
     # Use fixed random key since default state init fn is just zeros.
-    return nn.OptimizedLSTMCell.initialize_carry(
-        jax.random.PRNGKey(0), batch_dims, hidden_dim)
+    return nn.OptimizedLSTMCell(hidden_dim, parent=None).initialize_carry(
+        jax.random.PRNGKey(0), (batch_dims, 1)
+    )

@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,8 +26,8 @@ class Observation(deluca.Obj):
 
 
 class SimulatorState(deluca.Obj):
-  in_history: jnp.array
-  out_history: jnp.array
+  in_history: jnp.ndarray
+  out_history: jnp.ndarray
   steps: int = 0
   time: float = 0.0
   volume: float = 0.0
