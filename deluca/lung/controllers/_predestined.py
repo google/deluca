@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ class Predestined(Controller):
   time: float = deluca.field(jaxed=False)
   steps: int = deluca.field(jaxed=False)
   dt: float = deluca.field(jaxed=False)
-  u_ins: jnp.array = deluca.field(jaxed=False)
+  u_ins: jnp.ndarray = deluca.field(jaxed=False)
 
   def __call__(self, state, obs, *args, **kwargs):
     action = jax.lax.dynamic_slice(self.u_ins, (state.steps.astype(int),), (1,))
