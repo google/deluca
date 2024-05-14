@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ from deluca.core import AgentState
 class Predestined(Agent):
   time: float = deluca.field(jaxed=False)
   steps: int = deluca.field(jaxed=False)
-  u: jnp.array = deluca.field(jaxed=False)
+  u: jnp.ndarray = deluca.field(jaxed=False)
 
   def __call__(self, state, obs, *args, **kwargs):
     action = jax.lax.dynamic_slice(self.u, (state.steps.astype(int),), (1,))

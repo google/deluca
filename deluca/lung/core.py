@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 """Core."""
 import functools
 import os
-from typing import Tuple
+from typing import Any, Tuple
 
 import deluca.core
 import jax
@@ -35,14 +35,13 @@ class BreathWaveform(deluca.Obj):
   peep: float = deluca.field(5., jaxed=False)
   pip: float = deluca.field(35., jaxed=False)
   bpm: int = deluca.field(20, jaxed=False)
-  fp: jnp.array = deluca.field(jaxed=False)
-  xp: jnp.array = deluca.field(jaxed=False)
+  fp: jnp.ndarray = deluca.field(jaxed=False)
+  xp: jnp.ndarray = deluca.field(jaxed=False)
   in_bounds: Tuple[int, int] = deluca.field((0, 1), jaxed=False)
   ex_bounds: Tuple[int, int] = deluca.field((2, 4), jaxed=False)
   period: float = deluca.field(jaxed=False)
   dt: float = deluca.field(DEFAULT_DT, jaxed=False)
-  dtype: jax._src.numpy.lax_numpy._ScalarMeta = deluca.field(
-      jnp.float32, jaxed=False)
+  dtype: type[Any] = deluca.field(jnp.float32, jaxed=False)
 
   def setup(self):
     if self.fp is None:

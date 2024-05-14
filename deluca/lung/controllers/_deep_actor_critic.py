@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ class ActorCritic(nn.Module):
 
 
 class DeepACControllerState(deluca.Obj):
-  errs: jnp.array
+  errs: jnp.ndarray
   key: int
   time: float = float('inf')
   steps: int = 0
@@ -89,10 +89,9 @@ class DeepACControllerState(deluca.Obj):
 class DeepAC(Controller):
   """ Class defining the conroller based on the actor critic model """
 
-
   params: list = deluca.field(jaxed=True)
   model: nn.module = deluca.field(ActorCritic, jaxed=False)
-  featurizer: jnp.array = deluca.field(jaxed=False)
+  featurizer: jnp.ndarray = deluca.field(jaxed=False)
   H: int = deluca.field(100, jaxed=False)
   input_dim: int = deluca.field(1, jaxed=False)
   history_len: int = deluca.field(10, jaxed=False)
@@ -138,7 +137,7 @@ class DeepAC(Controller):
   def derive_prob_and_value(self, cont_state):
     # expects a batch dimension
     # adds the spatial dimension
-    errs = jax.tree_map(lambda x: jnp.expand_dims(x, axis=(1)), cont_state.errs)
+    errs = jax.tree.map(lambda x: jnp.expand_dims(x, axis=(1)), cont_state.errs)
     log_prob, value = self.model.apply({'params': self.params},
                                        (errs @ self.featurizer))
     return log_prob.squeeze(), value.squeeze()
@@ -167,7 +166,7 @@ class DeepAC(Controller):
         errs=next_errs_expanded, key=current_key)
     decay = self.decay(waveform, t)
     log_prob, value = self.derive_prob_and_value(controller_state_big)
-    #value = value[0]
+    # value = value[0]
     prob = jnp.exp(log_prob)
     # environment step
     u_in = jax.random.choice(current_key, prob.shape[0], p=prob)
@@ -178,7 +177,7 @@ class DeepAC(Controller):
     #     jnp.isinf(decay), true_func, lambda x: (jnp.array(decay), None, None), None)
 
     # TODO (@namanagarwal) : Figure out what to do with clamping
-    #u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float64), self.clip).squeeze()
+    # u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float64), self.clip).squeeze()
 
     # update controller_state
 
