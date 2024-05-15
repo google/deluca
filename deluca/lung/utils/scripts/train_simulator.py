@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -118,7 +118,7 @@ def loop_over_loader(model_optimState_lrMult_loss, X_Y, optim, rollout_fn,
                                                           rollout_fn)
   updates, optim_state = optim.update(grad, optim_state, model)
   if scheduler == "ReduceLROnPlateau":
-    updates = jax.tree_map(lambda g: lr_mult * g, updates)
+    updates = jax.tree.map(lambda g: lr_mult * g, updates)
   model = optax.apply_updates(model, updates)
   return (model, optim_state, lr_mult, loss), None
 

@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,8 +36,8 @@ import jax.numpy as jnp
 
 class DeepControllerState(deluca.Obj):
   waveform: deluca.Obj  # waveform can change during training
-  errs: jnp.array
-  fwd_targets: jnp.array
+  errs: jnp.ndarray
+  fwd_targets: jnp.ndarray
   time: float = float("inf")
   steps: int = 0
   dt: float = DEFAULT_DT
