@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,18 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from deluca.core import Agent
-from deluca.core import field
+"""deluca agents."""
+
+from .bang_bang import bang_bang
+from .constant import constant
+from .pid import pid
+from .random import random
 
 
-class BangBang(Agent):
-    target: float = field(0.0, jaxed=False)
-    min_action: float = field(0.0, jaxed=False)
-    max_action: float = field(100.0, jaxed=False)
-
-    def init(self):
-        return None
-
-    def __call__(self, state, obs):
-        """Assume observation is env state"""
-        return state, self.min_action if obs > self.target else self.max_action
+__all__ = (
+    'bang_bang',
+    'constant',
+    'pid',
+    'random',
+)

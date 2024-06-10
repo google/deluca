@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ class CNN(nn.Module):
   # strides: Tuple[int, int] = (1, 1)
   strides: int = 1
   out_dim: int = 1
-  activation_fn: Callable[[jnp.array], jnp.array] = nn.relu
+  activation_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.relu
 
   @nn.compact
   def __call__(self, x):
