@@ -1,4 +1,4 @@
-# Copyright 2022 The Deluca Authors.
+# Copyright 2024 The Deluca Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ class PIDNetwork(nn.Module):
 class PID(Controller):
   """PID controller."""
   model: nn.module = deluca.field(PIDNetwork, jaxed=False)
-  params: jnp.array = deluca.field(jaxed=True)  # jnp.array([3.0, 4.0, 0.0]
+  params: jnp.ndarray = deluca.field(jaxed=True)  # jnp.array([3.0, 4.0, 0.0]
   RC: float = deluca.field(0.5, jaxed=False)
   dt: float = deluca.field(0.03, jaxed=False)
   model_apply: collections.abc.Callable = deluca.field(jaxed=False)
