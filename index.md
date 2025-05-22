@@ -24,7 +24,7 @@ from deluca.envs import Reacher
 from deluca.agents import Random
 
 env = Reacher.create()
-env_state = env.init()
+env_state, obs = env.init()
 
 agent = Random.create(func=lambda key: jax.random.uniform(key, (env.action_dim,)))
 agent_state = agent.init()
