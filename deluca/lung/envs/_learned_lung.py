@@ -143,7 +143,7 @@ class LearnedLung(LungEnv):
     if self.params is None:
       self.params = boundary_params + [default_params]
     print("TREE MAP")
-    print(jax.tree_map(lambda x: x.shape, self.params))
+    print(jax.tree_util.tree_map(lambda x: x.shape, self.params))
 
   def init(self, key):
     return self.reset()

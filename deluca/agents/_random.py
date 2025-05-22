@@ -25,9 +25,8 @@ class Random(Agent):
     func: Callable = field(lambda key: 0.0, jaxed=False)
 
     def init(self):
-        return jax.random.PRNGKey(self.seed)
+        return jax.random.PRNGKey(self.seed)  # Old API
 
     def __call__(self, state, obs):
-        key, subkey = jax.random.split(state)
-
+        key, subkey = jax.random.split(state)  # Old API
         return subkey, self.func(key)

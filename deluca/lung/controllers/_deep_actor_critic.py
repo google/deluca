@@ -138,7 +138,7 @@ class DeepAC(Controller):
   def derive_prob_and_value(self, cont_state):
     # expects a batch dimension
     # adds the spatial dimension
-    errs = jax.tree_map(lambda x: jnp.expand_dims(x, axis=(1)), cont_state.errs)
+    errs = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=(1)), cont_state.errs)
     log_prob, value = self.model.apply({'params': self.params},
                                        (errs @ self.featurizer))
     return log_prob.squeeze(), value.squeeze()
