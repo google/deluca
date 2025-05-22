@@ -24,7 +24,7 @@ class LDS(Env):
   A: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
   B: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
   C: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
-  key: int = field(jax.random.key(0), jaxed=False)  # New API
+  key: int = field(default_factory=lambda: jax.random.key(0), jaxed=False)
   state_size: int = field(1, jaxed=False)
   action_size: int = field(1, jaxed=False)
 
