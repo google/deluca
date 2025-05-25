@@ -21,20 +21,29 @@ import jax.numpy as jnp
 
 class LDS(Env):
   """LDS."""
-  A: jnp.array = field(jaxed=False)
-  B: jnp.array = field(jaxed=False)
-  C: jnp.array = field(jaxed=False)
-  key: int = field(jax.random.PRNGKey(0), jaxed=False)
+  A: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
+  B: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
+  C: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
+  key: int = field(default_factory=lambda: jax.random.key(0), jaxed=False)
   state_size: int = field(1, jaxed=False)
   action_size: int = field(1, jaxed=False)
+  d_hidden: int = field(1, jaxed=False)
+  d_in: int = field(1, jaxed=False)
+  d_out: int = field(1, jaxed=False)
 
-  def init(self):
+  def init(self,d_in = 1,d_hidden  = 1, d_out = 1):
     """init.
 
     Returns:
 
     """
     state = jax.random.normal(self.key, shape=(self.state_size, 1))
+    A = jnp.diag( jnp.sign( jax.random.normal(self.key, shape=(d_hidden))) * 0.9  + jax.random.uniform( d_hidden ) * 0.04  )
+    B = jax.random.normal(self.key, shape=(d_hidden, d_in))
+    C = jax.random.normal(self.key, shape=(d_out, d_hidden))
+    self.A = A
+    self.B = B
+    self.C = C
     return state, state
 
   def __call__(self, state, action):
@@ -50,3 +59,18 @@ class LDS(Env):
     new_state = self.A @ state + self.B @ action
 
     return new_state, self.C @ new_state
+
+
+
+  def generate_random_trajectory(self, env_state, trajectory_length = 1000):
+    results = jnp.zeros(trajectory_length)
+    for i in range(trajectory_length):
+      rand = jnp.random.normal(size = (1,))
+      env_state, obs = self( env_state, rand)
+      results[i] = obs.item()
+    return results
+
+  def show_me_the_signal(self,length = 1000):
+    results = self.generate_random_trajectory(self.init()[0],length)
+    plt.plot(results)
+    plt.show()
