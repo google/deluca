@@ -33,19 +33,27 @@ class LDS(Env):
   d_in: int = field(1, jaxed=False)
   d_out: int = field(1, jaxed=False)
 
-  def init(self,d_in = 1,d_hidden  = 1, d_out = 1):
+  def init(self,d_in = 1,d_hidden  = 1, d_out = 1, key = None):
     """init.
 
     Returns:
 
     """
+    self.unfreeze()
+    if key is not None:
+      self.key = key
+
+    self.d_hidden = d_hidden
+    self.d_in = d_in
+    self.d_out = d_out
+
     key1, key2, key3, key4 = jax.random.split(self.key, 4) 
     state = jax.random.normal(key4, shape=(self.d_hidden, 1))
-    A = jnp.diag(jnp.sign(jax.random.normal(key1, shape=(d_hidden,))) * 0.9 + jax.random.uniform(key1, shape=(d_hidden,)) * 0.04)
-    B = jax.random.normal(key2, shape=(d_hidden, d_in))
-    C = jax.random.normal(key3, shape=(d_out, d_hidden))
+    A = jnp.diag(jnp.sign(jax.random.normal(key1, shape=(self.d_hidden))) * 0.9 + jax.random.uniform(key1, shape=(self.d_hidden,)) * 0.04)
+    B = jax.random.normal(key2, shape=(self.d_hidden, self.d_in))
+    C = jax.random.normal(key3, shape=(self.d_out, self.d_hidden))
 
-    self.unfreeze()
+    
     self.A = A
     self.B = B
     self.C = C
