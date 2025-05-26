@@ -126,7 +126,7 @@ def ac_get_experience(env, env_start_states, env_init_obs, agent,
   rollouts = ac_parallel_rollouts(env, env_start_states, env_init_obs, agent,
                                   agent_init_states, unroll_length, gamma,
                                   lambda_, loss_func)
-  experiences = jax.tree_map(
+  experiences = jax.tree_util.tree_map(
       lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]), rollouts)
   return experiences
 
@@ -283,13 +283,13 @@ def train(env, agent, loss_func, horizon, config, workdir=None):
     for epoch in range(config.num_epochs):
       # TODO(namanagarwal): fix the randomness in permutations
       key_permute, key_train = jax.random.split(key_train)
-      es = jax.tree_map(
+      es = jax.tree_util.tree_map(
           lambda x: jax.random.permutation(key_permute, x),
           experiences)
       ## give a batch dimension to data
       ## make sure to assert that batch_size divides num agents * horizon
       num_batches = config.training_env_batch_size * horizon // config.batch_size
-      es = jax.tree_map(
+      es = jax.tree_util.tree_map(
           lambda x: jnp.reshape(x,
                                 (num_batches, config.batch_size) + x.shape[1:]),
           es)

@@ -62,6 +62,14 @@ def get_config():
   config.vf_coeff = 0.5
   # Weight of entropy bonus in the total loss.
   config.entropy_coeff = 0.01
+  # RNG Seed
+  config.seed = 42
+
+  #unifying config variable names
+  config.training_env_batch_size = config.batch_size
+  config.eval_env_batch_size = config.batch_size
+  config.episodes_per_eval = config.num_episodes
+
   # Linearly decay learning rate and clipping parameter to zero during
   # the training.
   config.decaying_lr_and_clip_param = True

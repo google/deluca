@@ -41,8 +41,7 @@ class BreathWaveform(deluca.Obj):
   ex_bounds: Tuple[int, int] = deluca.field((2, 4), jaxed=False)
   period: float = deluca.field(jaxed=False)
   dt: float = deluca.field(DEFAULT_DT, jaxed=False)
-  dtype: jax._src.numpy.lax_numpy._ScalarMeta = deluca.field(
-      jnp.float32, jaxed=False)
+  dtype: jnp.dtype = deluca.field(jnp.float32, jaxed=False)
 
   def setup(self):
     if self.fp is None:

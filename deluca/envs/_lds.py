@@ -17,6 +17,8 @@ from deluca.core import Env
 from deluca.core import field
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 class LDS(Env):
@@ -25,7 +27,7 @@ class LDS(Env):
   B: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
   C: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
   key: int = field(default_factory=lambda: jax.random.key(0), jaxed=False)
-  state_size: int = field(1, jaxed=False)
+  # state_size: int = field(1, jaxed=False)
   action_size: int = field(1, jaxed=False)
   d_hidden: int = field(1, jaxed=False)
   d_in: int = field(1, jaxed=False)
@@ -37,13 +39,18 @@ class LDS(Env):
     Returns:
 
     """
-    state = jax.random.normal(self.key, shape=(self.state_size, 1))
-    A = jnp.diag( jnp.sign( jax.random.normal(self.key, shape=(d_hidden))) * 0.9  + jax.random.uniform( d_hidden ) * 0.04  )
-    B = jax.random.normal(self.key, shape=(d_hidden, d_in))
-    C = jax.random.normal(self.key, shape=(d_out, d_hidden))
+    key1, key2, key3, key4 = jax.random.split(self.key, 4) 
+    state = jax.random.normal(key4, shape=(self.d_hidden, 1))
+    A = jnp.diag(jnp.sign(jax.random.normal(key1, shape=(d_hidden,))) * 0.9 + jax.random.uniform(key1, shape=(d_hidden,)) * 0.04)
+    B = jax.random.normal(key2, shape=(d_hidden, d_in))
+    C = jax.random.normal(key3, shape=(d_out, d_hidden))
+
+    self.unfreeze()
     self.A = A
     self.B = B
     self.C = C
+    self.freeze()
+
     return state, state
 
   def __call__(self, state, action):
@@ -63,9 +70,9 @@ class LDS(Env):
 
 
   def generate_random_trajectory(self, env_state, trajectory_length = 1000):
-    results = jnp.zeros(trajectory_length)
+    results = np.zeros(trajectory_length)
     for i in range(trajectory_length):
-      rand = jnp.random.normal(size = (1,))
+      rand = np.random.normal(size = (1,))
       env_state, obs = self( env_state, rand)
       results[i] = obs.item()
     return results

@@ -135,7 +135,7 @@ class RunControllerTest(chex.TestCase):
     ])
 
   # test jitted and unjitted variants of inner loop
-  @parameterized.product(variant=[chex.with_jit, chex.without_jit])
+  @chex.variants(with_jit=True, without_jit=False)
   def test_loop_over_tt(self, variant):
     dt = 0.03
     horizon = 29
