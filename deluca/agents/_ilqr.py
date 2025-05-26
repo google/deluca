@@ -22,7 +22,7 @@ import time
 
 import jax.numpy as jnp
 
-from deluca.agents.core import Agent
+from deluca.core import Agent
 
 
 def iLQR_loop(env, U_initial, T, alpha=1.0, log=None):

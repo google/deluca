@@ -21,7 +21,7 @@ import jax.numpy as jnp
 from jax import grad
 from jax import jit
 
-from deluca.agents.core import Agent
+from deluca.core import Agent
 from deluca.utils import Random
 
 
