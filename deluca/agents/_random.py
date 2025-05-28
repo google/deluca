@@ -21,15 +21,15 @@ from deluca.core import field
 
 
 class Random(Agent):
-    seed: int = field(0, jaxed=False)
-    func: Callable = field(lambda key: 0.0, jaxed=False)
+  seed: int = field(0, jaxed=False)
+  func: Callable = field(lambda key: 0.0, jaxed=False)
 
-    def init(self):
-        return jax.random.PRNGKey(self.seed)  # Old API
+  def init(self):
+    return jax.random.PRNGKey(self.seed)  # Old API
 
-    def __call__(self, state, obs):
-        key, subkey = jax.random.split(state)  # Old API
-        return subkey, self.func(key)
+  def __call__(self, state, obs):
+    key, subkey = jax.random.split(state)  # Old API
+    return subkey, self.func(key)
 
 
 
@@ -37,16 +37,16 @@ class SimpleRandom(Agent):
   """SimpleRandom.
   This agent return a normally distributed action.
   """
-    d_action: int = field(1, jaxed=False)
-    agent_state: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
-    key: int = field(default_factory=lambda: jax.random.key(0), jaxed=False)
+  d_action: int = field(1, jaxed=False)
+  agent_state: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
+  key: int = field(default_factory=lambda: jax.random.key(0), jaxed=False)
 
-    def init(self,d_action):
-        self.d_action = d_action
-        self.agent_state = None
-        self.key = jax.random.key(0)
-        return None
+  def init(self,d_action):
+    self.d_action = d_action
+    self.agent_state = None
+    self.key = jax.random.key(0)
+    return None
 
-    def __call__(self, agent_state, obs):
-        self.key = jax.random.split(self.key)[0]
-        return agent_state, jax.random.normal( self.key, shape = (self.d_action,1))
+  def __call__(self, agent_state, obs):
+    self.key = jax.random.split(self.key)[0]
+    return agent_state, jax.random.normal( self.key, shape = (self.d_action,1))
