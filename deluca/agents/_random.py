@@ -15,6 +15,7 @@
 from typing import Callable
 
 import jax
+import jax.numpy as jnp
 
 from deluca.core import Agent
 from deluca.core import field
