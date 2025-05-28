@@ -39,15 +39,15 @@ def quad_loss(y: jnp.ndarray, u: jnp.ndarray) -> Real:
     return jnp.sum(y.T @ y + u.T @ u)
 
 
-class GPC(Agent):
+class GRC(Agent):
     def __init__(
         self,
         A: jnp.ndarray,
         B: jnp.ndarray,
         C: jnp.ndarray,
         cost_fn: Callable[[jnp.ndarray, jnp.ndarray], Real] = None,
-        R_M: float,
-        key: jax.random.key,
+        R_M: float = 10.0,
+        key: jax.random.key = jax.random.PRNGKey(0),
         init_scale: float = 1.0,
         m: int = 10,
         lr: Real = 0.005,
