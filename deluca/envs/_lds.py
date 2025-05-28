@@ -40,19 +40,17 @@ class LDS(Env):
     Returns:
       obs:
     """
-    print("doing init")
     self.d_in = d_in
     self.d_hidden = d_hidden
     self.d_out = d_out
     A = jnp.diag( jnp.sign( jax.random.normal(self.key, shape=(self.d_hidden))) * 0.9  + jax.random.uniform(self.key, self.d_hidden ) * 0.04  )
-    print(jnp.diag(A))
+    print("the eigenvalues of our system:",jnp.diag(A))
     B = jax.random.normal(self.key, shape=(self.d_hidden, self.d_in))
     C = jax.random.normal(self.key, shape=(d_out, d_hidden)) # jax.numpy.identity(self.d_hidden) #
     self.A = A
     self.B = B
     self.C = C
     self.state = jax.random.normal(self.key, shape=(self.d_hidden, 1))
-    print(self.state)
     return self.C @ self.state
 
 
