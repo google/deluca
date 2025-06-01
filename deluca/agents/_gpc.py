@@ -23,7 +23,7 @@ from jax import grad
 from jax import jit
 
 from deluca.agents._lqr import LQR
-from deluca.agents.core import Agent
+from deluca.core import Agent
 
 
 def quad_loss(x: jnp.ndarray, u: jnp.ndarray) -> Real:
