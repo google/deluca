@@ -27,5 +27,5 @@ class Zero(Agent):
         self.agent_state = None
         return None
 
-    def __call__(self, state, obs):
-        return state, jnp.zeros(self.d_action)
+    def __call__(self, obs):
+        return jnp.zeros(self.d_action)
