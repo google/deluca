@@ -112,11 +112,11 @@ class Env(Obj):
 
   @abstractmethod
   def init(self):
-    """Return an initialized state"""
+    """Return an initial observation"""
 
   @abstractmethod
   def __call__(self, state, action, *args, **kwargs):
-    """Return an updated state"""
+    """Return an updated observation after taking input action"""
 
 
 class AgentState(Obj):
