@@ -41,15 +41,8 @@ class SimpleRandom(Agent):
 #  agent_state: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
 #  key: int = field(default_factory=lambda: jax.random.key(0), jaxed=False)
 
-  def __init__(self,d_action):
-    self.d_action = d_action
-    self.agent_state = None
-    self.key = jax.random.key(0)
-    return None
+  def __init__(self, n: int):
+    self.n = n
 
-  def __call__(self, obs):
-    self.key = jax.random.split(self.key)[0]
-    return jax.random.normal( self.key, shape = (self.d_action,1))
-
-  def update(self, state: jnp.ndarray, u: jnp.ndarray) -> None:
-    return None
+  def __call__(self, obs: jnp.array, key: jax.random.key):
+    return jax.random.normal(key, shape = (self.n, 1))
