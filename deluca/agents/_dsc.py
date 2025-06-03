@@ -85,7 +85,7 @@ class DSC(Agent):
         self.h = h
 
         self.t = 0
-        subkey_1, subkey2, subkey3, subkey4 = jax.random.split(key, 4)
+        subkey1, subkey2, subkey3, subkey4 = jax.random.split(key, 4)
         self.M_0 = init_scale*jax.random.normal(subkey1, shape=(self.n, self.p))
         self.M_1 = init_scale*jax.random.normal(subkey2, shape=(self.h, self.n, self.p))
         self.M_2 = init_scale*jax.random.normal(subkey3, shape=(self.h, self.n, self.p))

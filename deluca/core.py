@@ -134,9 +134,21 @@ class Agent(Obj):
     return AgentState()
 
 
+class Disturbance(Obj):
+
+  @abstractmethod
+  def init(self):
+    """Initializes disturbance class"""
+
+  @abstractmethod
+  def __call__(self, *args, **kwargs):
+    """Returns the next disturbance"""
+
+
 deluca.field = field
 deluca.Obj = Obj
 deluca.Env = Env
 deluca.Agent = Agent
 deluca.save = save
 deluca.load = load
+deluca.Disturbance = Disturbance
