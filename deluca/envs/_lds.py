@@ -54,17 +54,11 @@ class LDS(Env):
     self.x = jnp.zeros((self.d, 1)) if x0 is None else jnp.array(x0)
     self.t = 0
     self.disturbance = disturbance or ZeroDisturbance(self.d)
-    self.history = {"x": [self.x], "u": [], "w": [], "y": []}
 
   def __call__(self, u_t, key):
     w_t = self.disturbance(self.t, key)
-    x_next = self.A @ self.x + self.B @ u_t + w_t
+    self.x = self.A @ self.x + self.B @ u_t + w_t
     y_t = self.C @ self.x
-    self.history["x"].append(x_next)
-    self.history["u"].append(u_t)
-    self.history["w"].append(w_t)
-    self.history["y"].append(y_t)
-    self.x = x_next
     self.t += 1
     return y_t
 
@@ -104,4 +98,4 @@ class LDS(Env):
     print("A, B, C are: ")
     print(self.A, self.B, self.C)
     print("state is:")
-    print(self.state)
+    print(self.x)
