@@ -92,8 +92,8 @@ class LDS(Env):
     
     return results
 
-  def show_me_the_signal(self,length = 1000):
-    results = self.generate_random_trajectory(length)
+  def show_me_the_signal(self,length = 1000, key=None):
+    results = self.generate_random_trajectory(length, key)
     plt.plot(np.array(results))
     plt.show()
 
