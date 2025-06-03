@@ -137,7 +137,7 @@ class Agent(Obj):
 class Disturbance(Obj):
 
   @abstractmethod
-  def init(self):
+  def init(self, *args):
     """Initializes disturbance class"""
 
   @abstractmethod
