@@ -55,12 +55,12 @@ class LDS(Env):
     self.t = 0
     self.disturbance = disturbance or ZeroDisturbance(self.d)
 
-  def __call__(self, u_t, key):
+  def __call__(self, u, key):
     w_t = self.disturbance(self.t, key)
-    self.x = self.A @ self.x + self.B @ u_t + w_t
-    y_t = self.C @ self.x
+    self.x = self.A @ self.x + self.B @ u + w_t
+    y = self.C @ self.x
     self.t += 1
-    return y_t
+    return y
 
 
   def generate_random_trajectory(self, trajectory_length = 1000, key=None):
