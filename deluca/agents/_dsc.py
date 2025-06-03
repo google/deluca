@@ -116,7 +116,7 @@ class DSC(Agent):
         self.last_ynat = last_ynat
 
         def slice_window(start):
-            return jax.lax.dynamic_slice(self.ynat_history, (start, 0, 0), (self.m, p, 1))
+            return jax.lax.dynamic_slice(self.ynat_history, (start, 0, 0), (self.m, self.p, 1))
 
         self.slice_window = slice_window
 
