@@ -54,7 +54,7 @@ class LDS(Env):
     self.p = C.shape[0]
     self.x = jnp.zeros((self.d, 1)) if x0 is None else jnp.array(x0)
     self.t = 0
-    if disturbance is None
+    if disturbance is None:
       self.disturbance = GaussianDisturbance()
       self.disturbance.init(self.d)
     else:
