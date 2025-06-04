@@ -46,7 +46,7 @@ class LDS(Env):
 
   def init(self, d_in = 1, d_hidden = 25, d_out = 1, A = None, B = None, C = None, key = jax.random.PRNGKey(0), x0=None, disturbance=None):
     key, subkey1, subkey2, subkey3 = jax.random.split(key, 4)
-    self.A = jnp.array(A) if A is not None else jax.random.normal(subkey1, (d_hidden, d_hidden))
+    self.A = jnp.array(A) if A is not None else jnp.diag(jax.random.uniform(subkey1, (d_hidden,), minval=0.9, maxval=0.95))
     self.B = jnp.array(B) if B is not None else jax.random.normal(subkey2, (d_hidden, d_in))
     self.C = jnp.array(C) if C is not None else jax.random.normal(subkey3, (d_out, d_hidden))
     self.d = self.A.shape[0]
