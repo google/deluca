@@ -44,7 +44,7 @@ class GaussianDisturbance(Disturbance):
 class LDS(Env):
   """LDS."""
 
-  def init(self, A = None, B = None, C = None, d_in = 1, d_hidden = 25, d_out = 1, key = jax.random.PRNGKey(0), x0=None, disturbance=None):
+  def init(self, d_in = 1, d_hidden = 25, d_out = 1, A = None, B = None, C = None, key = jax.random.PRNGKey(0), x0=None, disturbance=None):
     key, subkey1, subkey2, subkey3 = jax.random.split(key, 4)
     self.A = jnp.array(A) if A is not None else jnp.random.normal(subkey1, (d_hidden, d_hidden))
     self.B = jnp.array(B) if B is not None else jnp.random.normal(subkey2, (d_hidden, d_in))
