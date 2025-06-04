@@ -51,3 +51,6 @@ class SimpleRandom(Agent):
       return jax.random.normal(subkey, shape = (self.n, 1))
     else:
       return jax.random.normal(key, shape = (self.n, 1))
+
+  def update(self, obs: jnp.ndarray, action: jnp.ndarray) -> None:
+      return None
