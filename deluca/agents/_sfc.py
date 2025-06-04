@@ -85,7 +85,7 @@ class SFC(Agent):
         self.h = h
 
         self.t = 0
-        subkey_1, subkey2 = jax.random.split(key)
+        subkey1, subkey2 = jax.random.split(key)
         self.M = init_scale*jax.random.normal(subkey1, shape=(self.h, self.n, self.p))
         self.M_0 = init_scale*jax.random.normal(subkey2, shape=(self.n, self.p))
 

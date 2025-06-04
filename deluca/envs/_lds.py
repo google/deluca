@@ -14,62 +14,66 @@
 
 """Linear dynamical system."""
 from deluca.core import Env
-from deluca.core import field
+from deluca.core import Disturbance
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 
 
+class ZeroDisturbance(Disturbance):
+  def init(self, d):
+    self.d = d
+
+  def __call__(self, t, key):
+    del t
+    del key
+    return jnp.zeros((self.d, 1))
+
+
+class GaussianDisturbance(Disturbance):
+  def init(self, d, std=0.5):
+    self.d = d
+    self.std = std
+
+  def __call__(self, t, key):
+    del t
+    return jax.random.normal(key, (self.d, 1)) * self.std
+
+
 class LDS(Env):
   """LDS."""
-  key: int = field(default_factory=lambda: jax.random.key(0), jaxed=False)
-  A: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
-  B: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
-  C: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
-  state: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
-  d_hidden: int = field(1, jaxed=False)
-  d_in: int = field(1, jaxed=False)
-  d_out: int = field(1, jaxed=False)
+
+  def init(self, d_in = 1, d_hidden = 25, d_out = 1, A = None, B = None, C = None, key = jax.random.PRNGKey(0), x0=None, disturbance=None):
+    key, subkey1, subkey2, subkey3 = jax.random.split(key, 4)
+    self.A = jnp.array(A) if A is not None else jnp.diag(jax.random.uniform(subkey1, (d_hidden,), minval=0.9, maxval=0.95))
+    self.B = jnp.array(B) if B is not None else jax.random.normal(subkey2, (d_hidden, d_in))
+    self.C = jnp.array(C) if C is not None else jax.random.normal(subkey3, (d_out, d_hidden))
+    self.d = self.A.shape[0]
+    self.n = self.B.shape[1]
+    self.p = self.C.shape[0]
+    self.x = jnp.zeros((self.d, 1)) if x0 is None else jnp.array(x0)
+    self.t = 0
+    if disturbance is None:
+      self.disturbance = GaussianDisturbance()
+      self.disturbance.init(self.d)
+    else:
+      self.disturbance = disturbance
+    self.key = key
+
+  def __call__(self, u, key = None):
+    if key is None:
+      self.key, subkey = jax.random.split(self.key, 2)
+      w_t = self.disturbance(self.t, subkey)
+    else:
+      w_t = self.disturbance(self.t, key)
+    self.x = self.A @ self.x + self.B @ u + w_t
+    y = self.C @ self.x
+    self.t += 1
+    return y
 
 
-  def init(self,d_in = 1,d_hidden  = 1, d_out = 1):
-    """init.
-    initialize internal state to be random
-
-    Returns:
-      obs:
-    """
-    self.d_in = d_in
-    self.d_hidden = d_hidden
-    self.d_out = d_out
-    A = jnp.diag( jnp.sign( jax.random.normal(self.key, shape=(self.d_hidden))) * 0.9  + jax.random.uniform(self.key, self.d_hidden ) * 0.04  )
-    print("the eigenvalues of our system:",jnp.diag(A))
-    B = jax.random.normal(self.key, shape=(self.d_hidden, self.d_in))
-    C = jax.random.normal(self.key, shape=(d_out, d_hidden)) # jax.numpy.identity(self.d_hidden) #
-    self.A = A
-    self.B = B
-    self.C = C
-    self.state = jax.random.normal(self.key, shape=(self.d_hidden, 1))
-    return self.C @ self.state
-
-
-  def __call__(self, action):
-    """__call__.
-
-    Args:
-      action:
-
-    Returns:
-      observation signal:
-
-    """
-    assert action.shape[0] == self.d_in , "dimension of action is wrong"
-    self.state = self.A @ self.state + self.B @ action
-    return self.C @ self.state
-
-
-  def generate_random_trajectory(self, trajectory_length = 1000):
+  def generate_random_trajectory(self, trajectory_length = 1000, key=None):
     """generate_random_trajectory.
     generates a trajectory of the environment with random actions
 
@@ -79,24 +83,29 @@ class LDS(Env):
 
     """
     print("trajectory length =" , trajectory_length)
-    results = np.zeros(trajectory_length)
+
+    if key is None:
+      key = jax.random.PRNGKey(0)
+
+    results = jnp.zeros((trajectory_length,))
     for i in range(trajectory_length):
-      # rand_action = jax.random.normal(self.key, shape = (self.d_in,1))
-      rand_action = np.random.normal(0,1,size=(self.d_in,1))
-      obs = self( rand_action )
-      results[i] = obs[0,0] # first coordinate of the observation
+      key, subkey1, subkey2 = jax.random.split(key, 3)
+      rand_action = jax.random.normal(subkey1, (self.n, 1))
+      obs = self(rand_action, subkey2)
+      results = results.at[i].set(obs[0, 0]) # first coordinate of the observation
+    
     return results
 
-  def show_me_the_signal(self,length = 1000):
-    results = self.generate_random_trajectory(length)
-    plt.plot(results)
+  def show_me_the_signal(self,length = 1000, key=None):
+    results = self.generate_random_trajectory(length, key)
+    plt.plot(np.array(results))
     plt.show()
 
   def diagnostics(self):
     print("my parameters are")
-    print("d_in, d_hidden, d_out are:")
-    print(self.d_in, self.d_hidden, self.d_out)
+    print("d_in (n), d_hidden (d), d_out (p) are:")
+    print(self.n, self.d, self.p)
     print("A, B, C are: ")
     print(self.A, self.B, self.C)
     print("state is:")
-    print(self.state)
+    print(self.x)

@@ -85,7 +85,7 @@ class DSC(Agent):
         self.h = h
 
         self.t = 0
-        subkey_1, subkey2, subkey3, subkey4 = jax.random.split(key, 4)
+        subkey1, subkey2, subkey3, subkey4 = jax.random.split(key, 4)
         self.M_0 = init_scale*jax.random.normal(subkey1, shape=(self.n, self.p))
         self.M_1 = init_scale*jax.random.normal(subkey2, shape=(self.h, self.n, self.p))
         self.M_2 = init_scale*jax.random.normal(subkey3, shape=(self.h, self.n, self.p))
@@ -116,7 +116,7 @@ class DSC(Agent):
         self.last_ynat = last_ynat
 
         def slice_window(start):
-            return jax.lax.dynamic_slice(self.ynat_history, (start, 0, 0), (self.m, p, 1))
+            return jax.lax.dynamic_slice(self.ynat_history, (start, 0, 0), (self.m, self.p, 1))
 
         self.slice_window = slice_window
 
