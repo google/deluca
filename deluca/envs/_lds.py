@@ -49,9 +49,9 @@ class LDS(Env):
     self.A = jnp.array(A) if A is not None else jax.random.normal(subkey1, (d_hidden, d_hidden))
     self.B = jnp.array(B) if B is not None else jax.random.normal(subkey2, (d_hidden, d_in))
     self.C = jnp.array(C) if C is not None else jax.random.normal(subkey3, (d_out, d_hidden))
-    self.d = A.shape[0]
-    self.n = B.shape[1]
-    self.p = C.shape[0]
+    self.d = self.A.shape[0]
+    self.n = self.B.shape[1]
+    self.p = self.C.shape[0]
     self.x = jnp.zeros((self.d, 1)) if x0 is None else jnp.array(x0)
     self.t = 0
     if disturbance is None:
