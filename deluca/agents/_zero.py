@@ -28,7 +28,7 @@ class Zero(Agent):
         return None
 
     def __call__(self, obs):
-        return jnp.zeros(self.d_action)
+        return jnp.zeros((self.d_action,1))
 
     def update(self, state: jnp.ndarray, u: jnp.ndarray) -> None:
         return None
