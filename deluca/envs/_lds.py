@@ -40,6 +40,16 @@ class GaussianDisturbance(Disturbance):
     del t
     return jax.random.normal(key, (self.d, 1)) * self.std
 
+class SinusDisturbance(Disturbance):
+  def init(self, d, amplitude=0.5):
+    self.d = d
+    self.amplitude = amplitude
+    key = jax.random.PRNGKey(0)
+    self.phases = jax.random.normal(key, (self.d, 1))
+
+  def __call__(self, t, key):
+    return (jax.numpy.sin(   t * self.phases  )) * self.amplitude
+
 
 class LDS(Env):
   """LDS."""
@@ -56,9 +66,9 @@ class LDS(Env):
     self.t = 0
     if disturbance is None:
       self.disturbance = GaussianDisturbance()
-      self.disturbance.init(self.d)
     else:
       self.disturbance = disturbance
+    self.disturbance.init(self.d)
     self.key = key
 
   def __call__(self, u, key = None):
