@@ -21,8 +21,8 @@ import jax.numpy as jnp
 from jax import grad
 from jax import jit
 
-from deluca.agents.core import Agent
-from deluca.utils import Random
+from deluca.core import Agent
+#from deluca.utils import Random
 
 
 def quad_loss(x: jnp.ndarray, u: jnp.ndarray) -> Real:
@@ -75,8 +75,9 @@ class DRC(Agent):
 
         cost_fn = cost_fn or quad_loss
 
-        self.random = Random(seed)
-
+#        self.random = Random(seed)
+        key = jax.random.PRNGKey(0)
+  
         d_state, d_action = B.shape  # State & Action Dimensions
 
         C = jnp.identity(d_state) if C is None else C
@@ -102,9 +103,7 @@ class DRC(Agent):
         # initial linear policy / perturbation contributions / bias
         self.K = K if K is not None else jnp.zeros((d_action, d_obs))
 
-        self.M = lr_scale * jax.random.normal(
-            self.random.generate_key(), shape=(m, d_action, d_obs)
-        )
+        self.M = lr_scale * jax.random.normal(key, shape=(m, d_action, d_obs))
 
         # Past m nature y's such that y_nat[0] is the most recent
         self.y_nat = jnp.zeros((m, d_obs, 1))
