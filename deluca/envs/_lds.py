@@ -44,19 +44,29 @@ class GaussianDisturbance(Disturbance):
 class LDS(Env):
   """LDS."""
 
-  def init(self, A, B, C, x0=None, disturbance=None):
-    self.A = jnp.array(A)
-    self.B = jnp.array(B)
-    self.C = jnp.array(C)
+  def init(self, A = None, B = None, C = None, d_in = 1, d_hidden = 25, d_out = 1, key = jax.random.PRNGKey(0), x0=None, disturbance=None):
+    key, subkey1, subkey2, subkey3 = jax.random.split(key, 4)
+    self.A = jnp.array(A) if A is not None else jnp.random.normal(subkey1, (d_hidden, d_hidden))
+    self.B = jnp.array(B) if B is not None else jnp.random.normal(subkey2, (d_hidden, d_in))
+    self.C = jnp.array(C) if C is not None else jnp.random.normal(subkey3, (d_out, d_hidden))
     self.d = A.shape[0]
     self.n = B.shape[1]
     self.p = C.shape[0]
     self.x = jnp.zeros((self.d, 1)) if x0 is None else jnp.array(x0)
     self.t = 0
-    self.disturbance = disturbance or ZeroDisturbance(self.d)
+    if disturbance is None
+      self.disturbance = GaussianDisturbance()
+      self.disturbance.init(self.d)
+    else:
+      self.disturbance = disturbance
+    self.key = key
 
-  def __call__(self, u, key):
-    w_t = self.disturbance(self.t, key)
+  def __call__(self, u, key = None):
+    if key is None:
+      self.key, subkey = jax.random.split(self.key, 2)
+      w_t = self.disturbance(self.t, subkey)
+    else:
+      w_t = self.disturbance(self.t, key)
     self.x = self.A @ self.x + self.B @ u + w_t
     y = self.C @ self.x
     self.t += 1
