@@ -36,8 +36,8 @@ import jax.numpy as jnp
 
 class DeepControllerState(deluca.Obj):
   waveform: deluca.Obj  # waveform can change during training
-  errs: jnp.array
-  fwd_targets: jnp.array
+  errs: jnp.ndarray
+  fwd_targets: jnp.ndarray
   time: float = float("inf")
   steps: int = 0
   dt: float = DEFAULT_DT
@@ -134,7 +134,7 @@ class DeepMlp(Controller):
 
     # changed decay compare from None to float(inf) due to cond requirements
     u_in = jax.lax.cond(
-        jnp.isinf(decay), true_func, lambda x: jnp.array(decay), None)
+        jnp.isinf(decay), true_func, lambda x: jnp.ndarray(decay), None)
     u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float64), self.clip).squeeze()
     # update controller_state
     new_dt = jnp.max(

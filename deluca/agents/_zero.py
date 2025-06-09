@@ -20,7 +20,7 @@ from deluca.core import field
 
 class Zero(Agent):
     d_action: int = field(1, jaxed=False)
-    agent_state: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
+    agent_state: jnp.ndarray = field(default_factory=lambda: jnp.ndarray([[1.0]]), jaxed=False)
 
     def init(self,d_action):
         self.d_action = d_action

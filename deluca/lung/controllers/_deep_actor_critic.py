@@ -79,7 +79,7 @@ class ActorCritic(nn.Module):
 
 
 class DeepACControllerState(deluca.Obj):
-  errs: jnp.array
+  errs: jnp.ndarray
   key: int
   time: float = float('inf')
   steps: int = 0
@@ -92,7 +92,7 @@ class DeepAC(Controller):
 
   params: list = deluca.field(jaxed=True)
   model: nn.module = deluca.field(ActorCritic, jaxed=False)
-  featurizer: jnp.array = deluca.field(jaxed=False)
+  featurizer: jnp.ndarray = deluca.field(jaxed=False)
   H: int = deluca.field(100, jaxed=False)
   input_dim: int = deluca.field(1, jaxed=False)
   history_len: int = deluca.field(10, jaxed=False)

@@ -92,7 +92,7 @@ def false_func(state, u_in, model_idx, u_normalizer, update_history,
 class LearnedLung(LungEnv):
   """Learned lung."""
   params: list = deluca.field(jaxed=True)
-  init_rng: jnp.array = deluca.field(jaxed=False)
+  init_rng: jnp.ndarray = deluca.field(jaxed=False)
   u_window: int = deluca.field(5, jaxed=False)
   p_window: int = deluca.field(3, jaxed=False)
   u_history_len: int = deluca.field(5, jaxed=False)
