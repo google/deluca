@@ -118,7 +118,7 @@ def loop_over_loader(model_optimState_lrMult_loss, X_Y, optim, rollout_fn,
                                                           rollout_fn)
   updates, optim_state = optim.update(grad, optim_state, model)
   if scheduler == "ReduceLROnPlateau":
-    updates = jax.tree_map(lambda g: lr_mult * g, updates)
+    updates = jax.tree.map(lambda g: lr_mult * g, updates)
   model = optax.apply_updates(model, updates)
   return (model, optim_state, lr_mult, loss), None
 

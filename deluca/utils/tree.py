@@ -45,8 +45,8 @@ def tree_transpose_leaves(pytrees):
   tree_def = jax.tree_util.tree_structure(pytrees[0])
 
   pytree = jax.tree_util.tree_transpose(
-      outer_treedef=jax.tree_structure([0 for p in pytrees]),
-      inner_treedef=jax.tree_structure(pytrees[0]),
+      outer_treedef=jax.tree.structure([0 for p in pytrees]),
+      inner_treedef=jax.tree.structure(pytrees[0]),
       pytree_to_transpose=pytrees)
 
   leaves = tree_def.flatten_up_to(pytree)
