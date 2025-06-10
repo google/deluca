@@ -19,16 +19,16 @@ from deluca.core import field
 
 
 class Zero(Agent):
-    d_action: int = field(1, jaxed=False)
-    agent_state: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
+    d_action: int = 1
+#    agent_state: jnp.ndarray = field(default_factory=lambda: jnp.ndarray([[1.0]]), jaxed=False)
 
     def init(self,d_action):
         self.d_action = d_action
-        self.agent_state = None
+#        self.agent_state = None
         return None
 
     def __call__(self, obs):
-        return jnp.zeros(self.d_action)
+        return jnp.zeros((self.d_action,1))
 
-    def update(self, state: jnp.ndarray, u: jnp.ndarray) -> None:
+    def update(self, y:jnp.array, u: jnp.ndarray) -> None:
         return None

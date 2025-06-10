@@ -14,52 +14,76 @@
 
 """Linear dynamical system."""
 from deluca.core import Env
-from deluca.core import field
+from deluca.core import Disturbance
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 
 
+class ZeroDisturbance(Disturbance):
+  def init(self, d):
+    self.d = d
+
+  def __call__(self, t, key):
+    del t
+    del key
+    return jnp.zeros((self.d, 1))
+
+
+class GaussianDisturbance(Disturbance):
+  def init(self, d, std=0.5):
+    self.d = d
+    self.std = std
+
+  def __call__(self, t, key):
+    del t
+    return jax.random.normal(key, (self.d, 1)) * self.std
+
+class SinusDisturbance(Disturbance):
+  def init(self, d, amplitude=0.5):
+    self.d = d
+    self.amplitude = amplitude
+    key = jax.random.PRNGKey(0)
+    self.phases = jax.random.normal(key, (self.d, 1))
+
+  def __call__(self, t, key):
+    return (jax.numpy.sin(   t * self.phases  )) * self.amplitude
+
+
 class LDS(Env):
   """LDS."""
 
-  def init(self,A: jnp.array = None, B: jnp.array = None, C: jnp.array = None, d_in: int = 1, d_hidden: int = 1, d_out: int = 1, disturbance: str = "gaussian", disturbance_std: float = 0.04, key: jax.random.key = jax.random.PRNGKey(0)):
-    """init.
-    initialize internal state to be random
-
-    Returns:
-      obs:
-    """
-    self.A = A or jnp.diag( jnp.sign( jax.random.normal(key, shape=(d_hidden))) * 0.9  + jax.random.uniform(key, shape=(d_hidden) ) * 0.04  )
-    self.B = B or jax.random.normal(key, shape=(d_hidden, d_in))
-    self.C = C or jax.random.normal(key, shape=(d_out, d_hidden))
-    self.disturbance = disturbance
-    self.disturbance_std = disturbance_std
+  def init(self, d_in = 1, d_hidden = 25, d_out = 1, A = None, B = None, C = None, key = jax.random.PRNGKey(0), x0=None, disturbance=None):
+    key, subkey1, subkey2, subkey3 = jax.random.split(key, 4)
+    self.A = jnp.array(A) if A is not None else jnp.diag(jax.random.uniform(subkey1, (d_hidden,), minval=0.9, maxval=0.95))
+    self.B = jnp.array(B) if B is not None else jax.random.normal(subkey2, (d_hidden, d_in))
+    self.C = jnp.array(C) if C is not None else jax.random.normal(subkey3, (d_out, d_hidden))
     self.d = self.A.shape[0]
     self.n = self.B.shape[1]
     self.p = self.C.shape[0]
-    self.state = jnp.zeros((self.d, 1))
+    self.x = jnp.zeros((self.d, 1)) if x0 is None else jnp.array(x0)
+    self.t = 0
+    if disturbance is None:
+      self.disturbance = GaussianDisturbance()
+    else:
+      self.disturbance = disturbance
+    self.disturbance.init(self.d)
+    self.key = key
+
+  def __call__(self, u, key = None):
+    if key is None:
+      self.key, subkey = jax.random.split(self.key, 2)
+      w_t = self.disturbance(self.t, subkey)
+    else:
+      w_t = self.disturbance(self.t, key)
+    self.x = self.A @ self.x + self.B @ u + w_t
+    y = self.C @ self.x
+    self.t += 1
+    return y
 
 
-  def __call__(self, action, key):
-    """__call__.
-
-    Args:
-      action:
-
-    Returns:
-      observation signal:
-
-    """
-    assert action.shape == (self.n, 1), "dimension of action is wrong"
-    if self.disturbance == "gaussian":
-      disturbance = jax.random.normal(key, shape=(self.d, 1)) * self.disturbance_std
-    self.state = self.A @ self.state + self.B @ action + disturbance
-    return self.C @ self.state
-
-
-  def generate_random_trajectory(self, key, trajectory_length = 1000):
+  def generate_random_trajectory(self, trajectory_length = 1000, key=None):
     """generate_random_trajectory.
     generates a trajectory of the environment with random actions
 
@@ -69,24 +93,29 @@ class LDS(Env):
 
     """
     print("trajectory length =" , trajectory_length)
-    results = np.zeros(trajectory_length)
+
+    if key is None:
+      key = jax.random.PRNGKey(0)
+
+    results = jnp.zeros((trajectory_length,))
     for i in range(trajectory_length):
-      rand_action = np.random.normal(0, 1, size=(self.n, 1))
-      obs = self(rand_action,key)
-      results[i] = obs[0,0] # first coordinate of the observation
+      key, subkey1, subkey2 = jax.random.split(key, 3)
+      rand_action = jax.random.normal(subkey1, (self.n, 1))
+      obs = self(rand_action, subkey2)
+      results = results.at[i].set(obs[0, 0]) # first coordinate of the observation
+    
     return results
 
-  def show_me_the_signal(self,length = 1000):
-    key = jax.random.PRNGKey(0)
-    results = self.generate_random_trajectory(key,length)
-    plt.plot(results)
+  def show_me_the_signal(self,length = 1000, key=None):
+    results = self.generate_random_trajectory(length, key)
+    plt.plot(np.array(results))
     plt.show()
 
   def diagnostics(self):
     print("my parameters are")
-    print("d_in, d_hidden, d_out are:")
+    print("d_in (n), d_hidden (d), d_out (p) are:")
     print(self.n, self.d, self.p)
     print("A, B, C are: ")
     print(self.A, self.B, self.C)
     print("state is:")
-    print(self.state)
+    print(self.x)

@@ -26,8 +26,8 @@ class Observation(deluca.Obj):
 
 
 class SimulatorState(deluca.Obj):
-  in_history: jnp.array
-  out_history: jnp.array
+  in_history: jnp.ndarray
+  out_history: jnp.ndarray
   steps: int = 0
   time: float = 0.0
   volume: float = 0.0

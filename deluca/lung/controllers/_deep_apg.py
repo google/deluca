@@ -75,7 +75,7 @@ class CNN(nn.Module):
     return outputs
 
 class DeepControllerState(deluca.Obj):
-  errs: jnp.array
+  errs: jnp.ndarray
   key: int
   time: float = float('inf')
   steps: int = 0
@@ -88,7 +88,7 @@ class Deep(Controller):
 
   params: list = deluca.field(jaxed=True)
   model: nn.module = deluca.field(CNN, jaxed=False)
-  featurizer: jnp.array = deluca.field(jaxed=False)
+  featurizer: jnp.ndarray = deluca.field(jaxed=False)
   H: int = deluca.field(100, jaxed=False)
   input_dim: int = deluca.field(1, jaxed=False)
   history_len: int = deluca.field(10, jaxed=False)

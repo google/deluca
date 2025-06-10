@@ -55,9 +55,9 @@ class TestControllerParameterizedTest(chex.TestCase):
     target = jnp.abs(target + jax.random.normal(jax.random.PRNGKey(3), (88,)))
 
     timeseries = {
-        'timestamp': jnp.array([0.03 * i for i in range(88)]),
+        'timestamp': jnp.ndarray([0.03 * i for i in range(88)]),
         'pressure': pressure,
-        'flow': jnp.array([0 for i in range(88)]),
+        'flow': jnp.ndarray([0 for i in range(88)]),
         'target': target,
         'u_in': u_in,
         'u_out': u_out

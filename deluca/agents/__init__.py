@@ -14,7 +14,11 @@
 
 from deluca.agents._bang_bang import BangBang
 from deluca.agents._pid import PID
-from deluca.agents._random import Random, SimpleRandom
+from deluca.agents._random import Random
+from deluca.agents._random import SimpleRandom
 from deluca.agents._zero import Zero
+from deluca.agents._grc import GRC
+from deluca.agents._sfc import SFC
+from deluca.agents._lqg import LQG
 
-__all__ = ["BangBang", "PID", "Random", "SimpleRandom", "Zero"]
+__all__ = ["BangBang", "PID", "Random", "SimpleRandom", "Zero", "GRC", "SFC", "LQG"]

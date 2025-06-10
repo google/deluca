@@ -112,11 +112,11 @@ class Env(Obj):
 
   @abstractmethod
   def init(self):
-    """Return an initialized state"""
+    """Return an initial observation"""
 
   @abstractmethod
   def __call__(self, state, action, *args, **kwargs):
-    """Return an updated state"""
+    """Return an updated observation after taking input action"""
 
 
 class AgentState(Obj):
@@ -134,9 +134,21 @@ class Agent(Obj):
     return AgentState()
 
 
+class Disturbance(Obj):
+
+  @abstractmethod
+  def init(self, *args):
+    """Initializes disturbance class"""
+
+  @abstractmethod
+  def __call__(self, *args, **kwargs):
+    """Returns the next disturbance"""
+
+
 deluca.field = field
 deluca.Obj = Obj
 deluca.Env = Env
 deluca.Agent = Agent
 deluca.save = save
 deluca.load = load
+deluca.Disturbance = Disturbance

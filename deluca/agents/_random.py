@@ -38,18 +38,19 @@ class SimpleRandom(Agent):
   This agent return a normally distributed action.
   """
 #  d_action: int = field(1, jaxed=False)
-#  agent_state: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
+#  agent_state: jnp.ndarray = field(default_factory=lambda: jnp.ndarray([[1.0]]), jaxed=False)
 #  key: int = field(default_factory=lambda: jax.random.key(0), jaxed=False)
 
-  def __init__(self,d_action):
-    self.d_action = d_action
-    self.agent_state = None
-    self.key = jax.random.key(0)
-    return None
+  def __init__(self, n: int, key: jax.random.key = jax.random.PRNGKey(0)):
+    self.n = n
+    self.key = key
 
-  def __call__(self, obs):
-    self.key = jax.random.split(self.key)[0]
-    return jax.random.normal( self.key, shape = (self.d_action,1))
+  def __call__(self, obs: jnp.ndarray, key: jax.random.key = None):
+    if key is None:
+      self.key, subkey = jax.random.split(self.key, 2)
+      return jax.random.normal(subkey, shape = (self.n, 1))
+    else:
+      return jax.random.normal(key, shape = (self.n, 1))
 
-  def update(self, state: jnp.ndarray, u: jnp.ndarray) -> None:
-    return None
+  def update(self, obs: jnp.ndarray, action: jnp.ndarray) -> None:
+      return None

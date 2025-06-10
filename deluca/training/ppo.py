@@ -186,7 +186,7 @@ def train_step(optim, optim_state, agent, experiences, batch_size: int,
   @jax.jit
   def train_step_batch(carry, batched_exps):
     loss, agent, optim_state = carry
-    # batched_exps = jax.tree_map(lambda x: x[counter:counter + batch_size],
+    # batched_exps = jax.tree.map(lambda x: x[counter:counter + batch_size],
     #                             experiences)
     grad_fn = jax.value_and_grad(ppo_loss_fn)
     l, grads = grad_fn(agent, batched_exps, clip_param, vf_coeff, entropy_coeff)
@@ -197,7 +197,7 @@ def train_step(optim, optim_state, agent, experiences, batch_size: int,
 
   # TODO(dsuo): convert to jax.lax.scan.
   # for b in batch_inits:
-  #   batched_exps = jax.tree_map(lambda x: x[b:b + batch_size], experiences)
+  #   batched_exps = jax.tree.map(lambda x: x[b:b + batch_size], experiences)
   #   grad_fn = jax.value_and_grad(ppo_loss_fn)
   #   l, grads = grad_fn(agent, batched_exps, clip_param, vf_coeff, entropy_coeff)
   #   loss += l

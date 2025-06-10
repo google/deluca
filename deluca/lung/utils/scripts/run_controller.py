@@ -85,12 +85,12 @@ def run_controller(
     env.cleanup()
 
   timeseries = {
-      "timestamp": jnp.array(timestamps),
-      "pressure": jnp.array(pressures),
-      "flow": jnp.array(flows),
+      "timestamp": jnp.ndarray(timestamps),
+      "pressure": jnp.ndarray(pressures),
+      "flow": jnp.ndarray(flows),
       "target": waveform.at(timestamps),
-      "u_in": jnp.array(u_ins),
-      "u_out": jnp.array(u_outs),
+      "u_in": jnp.ndarray(u_ins),
+      "u_out": jnp.ndarray(u_outs),
   }
 
   for key, val in timeseries.items():
@@ -187,12 +187,12 @@ def run_controller_scan(
     env.cleanup()
 
   timeseries = {
-      "timestamp": jnp.array(timestamps),
-      "pressure": jnp.array(pressures),
-      "flow": jnp.array(flows),
+      "timestamp": jnp.ndarray(timestamps),
+      "pressure": jnp.ndarray(pressures),
+      "flow": jnp.ndarray(flows),
       "target": waveform.at(timestamps),
-      "u_in": jnp.array(u_ins),
-      "u_out": jnp.array(u_outs),
+      "u_in": jnp.ndarray(u_ins),
+      "u_out": jnp.ndarray(u_outs),
   }
 
   for key, val in timeseries.items():
