@@ -2,11 +2,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import jax
 import jax.numpy as jnp
-from tqdm import tqdm
 from jax import grad
 from jax import jit
 from functools import partial
+from typing import Callable
 import os # Added for directory creation
+import jax.tree_util as jtu
+import brax
+from brax import envs
+from brax import kinematics
+from brax.io import html
+import flax # Required by brax.physics.base.State
 
 # ---------- Noise Configuration ----------
 LDS_NOISE_TYPE = "gaussian"  # Options: "gaussian", "sinusoidal"
@@ -15,14 +21,41 @@ SINUSOIDAL_NOISE_AMPLITUDE = 0.5
 SINUSOIDAL_NOISE_FREQUENCY = 0.1 # Example frequency, adjust as needed
 
 # ---------- LDS Transition Configuration ----------
-LDS_TRANSITION_TYPE = "relu" # Options: "linear", "relu"
+LDS_TRANSITION_TYPE = "special" # Options: "linear", "relu", "special"
+
+# ---------- System Configuration ----------
+SYSTEM_TYPE = "brax" # Options: "lds", "pendulum", "brax"
+BRAX_ENV_NAME = "inverted_pendulum" # Used if SYSTEM_TYPE == "brax"
+MAX_TORQUE = 1.0
+M = 1.0
+L = 1.0
+G = 9.81
+DT = 0.02
+
+# ---------- Brax Environment Setup ----------
+brax_env, brax_template_state, jit_brax_env_step, brax_env_dt = (None, None, None, None)
+if SYSTEM_TYPE == "brax":
+    brax_env = envs.get_environment(env_name=BRAX_ENV_NAME, backend='spring')
+    # Get a template state from a reset, and the JITted step function
+    brax_template_state = jax.jit(brax_env.reset)(rng=jax.random.PRNGKey(seed=0))
+    jit_brax_env_step = jax.jit(brax_env.step)
+    brax_env_dt = brax_env.dt
+
 
 # ---------- Experiment & Hyperparameter Configuration ----------
 # System Parameters
-D = 25
-N = 1
-P = 1
-T = 5000      # Time horizon for simulations
+if SYSTEM_TYPE == "lds":
+    D, N, P = 25, 1, 1
+elif SYSTEM_TYPE == "pendulum":
+    D, N, P = 2, 1, 2
+elif SYSTEM_TYPE == "brax":
+    D = brax_env.sys.q_size() + brax_env.sys.qd_size()
+    N = brax_env.action_size
+    P = D  # Full state as output
+else:
+    raise ValueError(f"Unknown SYSTEM_TYPE: {SYSTEM_TYPE}")
+
+T = 50     # Time horizon for simulations
 LR_DECAY = True # Whether to apply learning rate decay
 
 # Controller Structure Parameters
@@ -33,10 +66,10 @@ DSC_M_HIST = 30 # Often same as SFC, but kept separate for flexibility
 DSC_H_FILT = 10 # Often same as SFC
 
 # Hyperparameter Ranges for Tuning (Grid Search)
-INIT_SCALES_TO_TEST = [2.0]
-LEARNING_RATES_TO_TEST = [5e-5, 1e-4, 5e-4]
-R_M_VALUES_TO_TEST = [0.005, 0.01, 0.1, 1.0, 5.0, 10.0]
-GAMMA_VALUES_TO_TEST = [0.05, 0.1, 0.3] # For SFC and DSC
+INIT_SCALES_TO_TEST = []
+LEARNING_RATES_TO_TEST = []
+R_M_VALUES_TO_TEST = []
+GAMMA_VALUES_TO_TEST = [] # For SFC and DSC
 
 # Master Key and Trial Setup
 SEED = 42
@@ -80,11 +113,105 @@ def plot_experiment_results(
     plt.savefig(save_filename)
     print(f"{controller_name} {experiment_label} plot saved to {save_filename}")
 
+def get_plot_dir(subdirectory: str | None = None) -> str:
+    """Constructs the path to the plots directory based on system configuration."""
+    base_path = "plots"
+    if SYSTEM_TYPE == "brax":
+        path = os.path.join(base_path, SYSTEM_TYPE.lower(), BRAX_ENV_NAME.lower())
+    elif SYSTEM_TYPE == "lds":
+        path = os.path.join(base_path, SYSTEM_TYPE.lower(), LDS_TRANSITION_TYPE.lower(), LDS_NOISE_TYPE.lower())
+    else:
+        path = os.path.join(base_path, SYSTEM_TYPE.lower())
+
+    if subdirectory:
+        path = os.path.join(path, subdirectory)
+
+    os.makedirs(path, exist_ok=True)
+    return path
+
 @jit
 def quadratic_cost_evaluate(y, u, Q, R):
     """A JIT-compatible version of quadratic cost evaluation."""
     return jnp.sum(y.T @ Q @ y + u.T @ R @ u)
 
+
+def gaussian_disturbance(d: int, dist_std: float, t: int, key: jax.random.PRNGKey) -> jax.Array:
+    return jax.random.normal(key, (d, 1)) * dist_std
+
+def zero_disturbance(d: int, dist_std: float, t: int, key: jax.random.PRNGKey) -> jax.Array:
+    return jnp.zeros((d, 1))
+
+@jit
+def lds_sim(x: jnp.ndarray, u: jnp.ndarray, A: jnp.ndarray, B:jnp.ndarray) -> jnp.ndarray:
+    return A @ x + B @ u
+
+@jit
+def lds_output(x: jnp.ndarray, C: jnp.ndarray) -> jnp.ndarray:
+    return C @ x
+
+@jit
+def pendulum_sim(x: jnp.ndarray, u: jnp.ndarray, max_torque: float, m: float, l: float, g: float, dt: float) -> jnp.ndarray:
+    theta, thdot = x
+    action = max_torque * jnp.tanh(u[0])
+    newthdot = theta + (
+        -3.0 * g /
+        (2.0 * l) * jnp.sin(theta + jnp.pi) + 3.0 /
+        (m * l**2) * action)
+    newth = theta + newthdot * dt
+    return jnp.array([newth, newthdot])
+
+@jit
+def pendulum_output(x: jnp.ndarray) -> jnp.ndarray:
+    return x
+    
+@partial(jit, static_argnames=['env', 'jit_step_fn'])
+def brax_sim(
+    x: jnp.ndarray, 
+    u: jnp.ndarray,
+    env: brax.envs.Env,
+    template_state: brax.base.State,
+    jit_step_fn: Callable
+) -> jnp.ndarray:
+    q_size = env.sys.q_size()
+
+    x_flat = x.flatten()
+    q = x_flat[:q_size]
+    qd = x_flat[q_size:]
+
+    current_pipeline_state = template_state.pipeline_state.replace(q=q, qd=qd)
+    input_brax_state = template_state.replace(pipeline_state=current_pipeline_state)
+
+    action = u.flatten()
+    next_brax_state = jit_step_fn(input_brax_state, action)
+
+    # --- 4. Pack the resulting state back into the controller's format ---
+    next_q = next_brax_state.pipeline_state.q
+    next_qd = next_brax_state.pipeline_state.qd
+    next_x_flat = jnp.concatenate([next_q, next_qd])
+
+    # Return as a (d, 1) column vector to match the controller's format
+    return next_x_flat[:, jnp.newaxis]
+
+@jit
+def brax_output(x: jnp.ndarray) -> jnp.ndarray:
+    """Output for brax is the full state."""
+    return x
+
+def step(
+    x: jnp.ndarray,
+    u: jnp.ndarray,
+    sim: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray],
+    output_map: Callable[[jnp.ndarray], jnp.ndarray],
+    dist_std: float,
+    t_sim_step: int,
+    disturbance: Callable[[int, float, int, jax.random.PRNGKey], jax.Array],
+    key: jax.random.PRNGKey
+) -> tuple[jnp.ndarray, jnp.ndarray]: # Returns (next_x, y_t)
+    d = x.shape[0]
+    w = disturbance(d, dist_std, t_sim_step, key)
+    x_next = sim(x, u) + w
+    y = output_map(x_next)
+    return x_next, y
 
 @jit
 def lds_gaussian_step_dynamic(
@@ -206,6 +333,14 @@ def generate_trial_params(key, d, n, p):
     R = M_R_gen.T @ M_R_gen
     
     x0 = jnp.zeros((d,1)) 
+    if SYSTEM_TYPE == "brax":
+        # For brax inverted_pendulum, state is [cart_pos, pole_angle, cart_vel, pole_ang_vel]
+        # Start with the pole tilted by 0.15 radians (~8.6 degrees)
+        x0 = x0.at[1].set(0.15)
+    elif SYSTEM_TYPE == "pendulum":
+        # For our custom pendulum, state is [theta, thdot]
+        x0 = x0.at[0].set(0.15)
+
     return A, B, C, Q, R, x0
 
 def gpc_init_controller_state(key, init_scale, m, n, p, d):
@@ -220,16 +355,16 @@ def _gpc_action_for_policy_loss(k, M_policy, ynat_history_buffer_policy, m_contr
     contribs = jnp.einsum("mnp,mp1->mn1", M_policy, window)
     return jnp.sum(contribs, axis=0)
 
-def gpc_policy_loss(M, ynat_history_for_loss, A, B, C, cost_evaluate_fn, Q_cost, R_cost, m_controller, d, p):    
+def gpc_policy_loss(M, ynat_history_for_loss, cost_evaluate_fn, Q_cost, R_cost, m_controller, d, p, sim, output_map):    
     
     def evolve_for_loss(delta, k):
         u = _gpc_action_for_policy_loss(k, M, ynat_history_for_loss, m_controller, p)
-        next_delta = A @ delta + B @ u
+        next_delta = sim(delta, u)
         return next_delta, None
 
     final_delta, _ = jax.lax.scan(evolve_for_loss, jnp.zeros((d, 1)), jnp.arange(m_controller))
     
-    y_final_predicted = C @ final_delta + ynat_history_for_loss[-1]
+    y_final_predicted = output_map(final_delta) + ynat_history_for_loss[-1]
     
     u_final_for_cost = _gpc_action_for_policy_loss(m_controller, M, ynat_history_for_loss, m_controller, p)
     return cost_evaluate_fn(y_final_predicted, u_final_for_cost, Q_cost, R_cost)
@@ -242,14 +377,13 @@ def gpc_get_action(M, ynat_history_buffer, m_controller, p):
 def gpc_update_controller(
     M, z, ynat_history_buffer, controller_t, # current controller state
     y_meas, u_taken, # inputs from current simulation step
-    A, B, C,
     lr_base, apply_lr_decay, R_M_clip, # controller hyperparameters
     gpc_grad_policy_loss_fn, # pre-defined grad function for policy loss
-    m_controller, p # controller structure params
+    m_controller, p, sim, output_map # controller structure params
 ):
     # Update z state for natural response
-    z_next = A @ z + B @ u_taken
-    y_nat_current = y_meas - C @ z_next
+    z_next = sim(z, u_taken)
+    y_nat_current = y_meas - output_map(z_next)
 
     # Update ynat_history: roll and add current y_nat at index 0
     ynat_history_updated = jnp.roll(ynat_history_buffer, shift=1, axis=0)
@@ -271,7 +405,7 @@ def gpc_update_controller(
     
 # ----------Simulation for GPC ----------
 def run_single_gpc_trial(
-    key_trial_run, A, B, C, Q_cost, R_cost, x0, 
+    key_trial_run, A, B, C, Q_cost, R_cost, x0, sim, output_map,
     T_sim_steps, 
     gpc_m, gpc_init_scale, gpc_lr, gpc_lr_decay, gpc_R_M
 ):
@@ -281,10 +415,9 @@ def run_single_gpc_trial(
     def _gpc_loss_for_grad_template(cost_eval_func_arg, M, ynat_hist):
         return gpc_policy_loss(
             M, ynat_hist, 
-            A, B, C, 
             cost_eval_func_arg, # Use the passed-in cost evaluation function
             Q_cost, R_cost, # Pass Q_cost and R_cost from the outer scope
-            gpc_m, d, p
+            gpc_m, d, p, sim, output_map
         )
     
     # Use functools.partial to bake in the quadratic_cost_evaluate function.
@@ -348,35 +481,60 @@ def run_single_gpc_trial(
                 )
             else:
                 raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'relu' transition")
+        elif LDS_TRANSITION_TYPE == "special":
+            next_lds_x, y_measured_t = step(
+                x=prev_lds_x,
+                u=u_control_t,
+                sim=sim,
+                output_map=output_map,
+                dist_std=GAUSSIAN_NOISE_STD,
+                t_sim_step=prev_sim_t_for_disturbance,
+                disturbance=gaussian_disturbance,
+                key=key_disturbance_for_step
+            )
         else:
             raise ValueError(f"Unknown LDS_TRANSITION_TYPE: {LDS_TRANSITION_TYPE}")
         
         next_M, next_z, next_ynat_hist, next_t = gpc_update_controller(
                                                                         prev_M, prev_z, prev_ynat_hist, prev_t,
                                                                         y_measured_t, u_control_t,
-                                                                        A, B, C,
                                                                         gpc_lr, gpc_lr_decay, gpc_R_M,
                                                                         gpc_grad_fn,
-                                                                        gpc_m, p
+                                                                        gpc_m, p, sim, output_map
                                                                     )
 
         cost_at_t = quadratic_cost_evaluate(y_measured_t, u_control_t, Q_cost, R_cost)
         
         next_sim_t_for_disturbance = prev_sim_t_for_disturbance + 1
-        return (next_lds_x, next_M, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance), cost_at_t
+        next_carry = (next_lds_x, next_M, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance)
+        outputs_to_collect = (cost_at_t, prev_lds_x)
+        return next_carry, outputs_to_collect
 
     initial_carry_gpc = (current_lds_x_state, M_controller, z_controller, ynat_history_controller, t_controller, initial_sim_time_step)
     keys_for_T_scan_steps = jax.random.split(key_sim_loop_main, T_sim_steps)
     
-    (_, costs_over_time) = jax.lax.scan(gpc_simulation_step, initial_carry_gpc, keys_for_T_scan_steps)
+    (_, (costs_over_time, trajectory)) = jax.lax.scan(gpc_simulation_step, initial_carry_gpc, keys_for_T_scan_steps)
     
-    return costs_over_time
+    return costs_over_time, trajectory
 
 @partial(jit, static_argnames=("d", "n", "p", "T", "gpc_m", "gpc_init_scale", "gpc_lr", "gpc_decay", "gpc_R_M"))
 def gpc_trial_runner_for_vmap(key_trial_specific,d,n,p,T,gpc_m,gpc_init_scale,gpc_lr,gpc_decay,gpc_R_M):
     key_params_gen, key_sim_run = jax.random.split(key_trial_specific)
     A,B,C,Q,R,x0 = generate_trial_params(key_params_gen,d,n,p) 
-    return run_single_gpc_trial(key_sim_run,A,B,C,Q,R,x0,T,gpc_m,gpc_init_scale,gpc_lr,gpc_decay,gpc_R_M)
+    if SYSTEM_TYPE == "lds":
+        sim = partial(lds_sim, A=A, B=B)
+        output_map = partial(lds_output, C=C)
+    elif SYSTEM_TYPE == "pendulum":
+        sim = partial(pendulum_sim, max_torque=MAX_TORQUE, m=M, l=L, g=G, dt=DT)
+        output_map = pendulum_output
+    elif SYSTEM_TYPE == "brax":
+        sim = partial(brax_sim, env=brax_env, template_state=brax_template_state, jit_step_fn=jit_brax_env_step)
+        output_map = brax_output
+    else:
+        raise ValueError(f"Unknown SYSTEM_TYPE: {SYSTEM_TYPE}")
+    
+    costs, trajectory = run_single_gpc_trial(key_sim_run,A,B,C,Q,R,x0,sim,output_map,T,gpc_m,gpc_init_scale,gpc_lr,gpc_decay,gpc_R_M)
+    return costs, trajectory
 
 
 # --- GPC Hyperparameter Tuning (Grid Search) ---
@@ -469,8 +627,7 @@ elif plt.gca().has_data():
 plt.ylim(bottom=0, top= (lowest_final_cost * 2 if lowest_final_cost != float('inf') and lowest_final_cost > 0 else (np.max(plt.ylim()) if plt.gca().has_data() else 100) ) ) 
 
 base_filename_gpc = "gpc_tuning_full_grid_search_plot.png"
-plots_dir_gpc = os.path.join("plots", LDS_TRANSITION_TYPE.lower(), LDS_NOISE_TYPE.lower())
-os.makedirs(plots_dir_gpc, exist_ok=True)
+plots_dir_gpc = get_plot_dir()
 full_save_path_gpc = os.path.join(plots_dir_gpc, base_filename_gpc)
 plt.savefig(full_save_path_gpc)
 print(f"GPC grid search tuning plot saved to {full_save_path_gpc}")
@@ -511,14 +668,14 @@ def _sfc_action_for_policy_loss(k, M0_policy, M_policy, ynat_hist_policy, filter
     spectral_term = jnp.einsum("hnp,hp1->n1", M_policy, proj)
     return M0_policy @ last_ynat_for_action + spectral_term
 
-def sfc_policy_loss(M0, M, ynat_history_for_loss, A, B, C, cost_evaluate_fn, Q_cost, R_cost, filters, h_filt, m_hist, d, p):
+def sfc_policy_loss(M0, M, ynat_history_for_loss, cost_evaluate_fn, Q_cost, R_cost, filters, h_filt, m_hist, d, p, sim, output_map):
     def evolve_for_loss(delta_state, m_idx_in_scan):
         u_for_evolve = _sfc_action_for_policy_loss(m_idx_in_scan, M0, M, ynat_history_for_loss, filters, h_filt, m_hist, p)
-        next_delta_state = A @ delta_state + B @ u_for_evolve
+        next_delta_state = sim(delta_state, u_for_evolve)
         return next_delta_state, None
     initial_delta_state = jnp.zeros((d, 1))
     final_delta, _ = jax.lax.scan(evolve_for_loss, initial_delta_state, jnp.arange(m_hist))
-    y_final_predicted = C @ final_delta + ynat_history_for_loss[-1]
+    y_final_predicted = output_map(final_delta) + ynat_history_for_loss[-1]
     u_final_for_cost = _sfc_action_for_policy_loss(m_hist, M0, M, ynat_history_for_loss, filters, h_filt, m_hist, p)
     return cost_evaluate_fn(y_final_predicted, u_final_for_cost, Q_cost, R_cost)
 
@@ -532,13 +689,12 @@ def sfc_get_action(M0, M, ynat_history_buffer, filters, h_filt, m_hist, p):
 def sfc_update_controller(
     M0, M, z, ynat_history_buffer, controller_t, 
     y_meas, u_taken, 
-    A, B, C, 
     lr_base, apply_lr_decay, R_M_clip, 
     sfc_grad_policy_loss_fn, 
-    h_filt, m_hist, p
+    h_filt, m_hist, p, sim, output_map
 ):
-    z_next = A @ z + B @ u_taken
-    y_nat_current = y_meas - C @ z_next
+    z_next = sim(z, u_taken)
+    y_nat_current = y_meas - output_map(z_next)
     ynat_history_updated = jnp.roll(ynat_history_buffer, shift=1, axis=0)
     ynat_history_updated = ynat_history_updated.at[0].set(y_nat_current)
     delta_M0, delta_M = sfc_grad_policy_loss_fn(M0, M, ynat_history_updated)
@@ -554,7 +710,7 @@ def sfc_update_controller(
 
 
 def run_single_sfc_trial(
-    key_trial_run, A, B, C, Q_cost, R_cost, x0, 
+    key_trial_run, A, B, C, Q_cost, R_cost, x0, sim, output_map,
     T_sim_steps, 
     sfc_m_hist, sfc_h_filt, sfc_init_scale, sfc_lr, sfc_lr_decay, sfc_R_M, 
     sfc_filters
@@ -564,10 +720,9 @@ def run_single_sfc_trial(
     def _sfc_loss_for_grad_template(filters_arg, M0, M, ynat_hist):
         return sfc_policy_loss(
             M0, M, ynat_hist, 
-            A, B, C, 
             quadratic_cost_evaluate, Q_cost, R_cost, 
             filters_arg, 
-            sfc_h_filt, sfc_m_hist, d, p
+            sfc_h_filt, sfc_m_hist, d, p, sim, output_map
         )
     final_sfc_loss_fn = partial(_sfc_loss_for_grad_template, sfc_filters)
     sfc_grad_fn = jit(grad(final_sfc_loss_fn, argnums=(0, 1)))
@@ -634,33 +789,58 @@ def run_single_sfc_trial(
                 )
             else:
                 raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'relu' transition")
+        elif LDS_TRANSITION_TYPE == "special":
+            next_lds_x, y_measured_t = step(
+                x=prev_lds_x,
+                u=u_control_t,
+                sim=sim,
+                output_map=output_map,
+                dist_std=GAUSSIAN_NOISE_STD,
+                t_sim_step=prev_sim_t_for_disturbance,
+                disturbance=gaussian_disturbance,
+                key=key_disturbance_for_step
+            )
         else:
             raise ValueError(f"Unknown LDS_TRANSITION_TYPE: {LDS_TRANSITION_TYPE}")
         
         next_M0, next_M, next_z, next_ynat_hist, next_t = sfc_update_controller(
             prev_M0, prev_M, prev_z, prev_ynat_hist, prev_t, 
             y_measured_t, u_control_t, 
-            A, B, C,
             sfc_lr, sfc_lr_decay, sfc_R_M, 
             sfc_grad_fn, 
-            sfc_h_filt, sfc_m_hist, p
+            sfc_h_filt, sfc_m_hist, p, sim, output_map
         )
             
         cost_at_t = quadratic_cost_evaluate(y_measured_t, u_control_t, Q_cost, R_cost)
         
         next_sim_t_for_disturbance = prev_sim_t_for_disturbance + 1 
-        return (next_lds_x, next_M0, next_M, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance), cost_at_t
+        next_carry = (next_lds_x, next_M0, next_M, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance)
+        outputs = (cost_at_t, prev_lds_x)
+        return next_carry, outputs
     
     initial_carry_sfc = (current_lds_x_state, M0, M, z, ynat_hist, t, initial_sim_time_step)
     keys_for_T_scan_steps = jax.random.split(key_sim_loop_main, T_sim_steps)
-    (_, costs_over_time) = jax.lax.scan(sfc_simulation_step, initial_carry_sfc, keys_for_T_scan_steps)
-    return costs_over_time
+    (_, (costs_over_time, trajectory)) = jax.lax.scan(sfc_simulation_step, initial_carry_sfc, keys_for_T_scan_steps)
+    return costs_over_time, trajectory
 
 @partial(jit, static_argnames=("d","n","p","T","sfc_m_hist","sfc_h_filt","sfc_init_sc","sfc_lr","sfc_decay","sfc_R_M"))
 def sfc_trial_runner_for_vmap(key_trial_specific,d,n,p,T,sfc_m_hist,sfc_h_filt,sfc_init_sc,sfc_lr,sfc_decay,sfc_R_M,sfc_filters):
     key_params_gen, key_sim_run = jax.random.split(key_trial_specific)
     A,B,C,Q,R,x0 = generate_trial_params(key_params_gen,d,n,p)
-    return run_single_sfc_trial(key_sim_run,A,B,C,Q,R,x0,T,sfc_m_hist,sfc_h_filt,sfc_init_sc,sfc_lr,sfc_decay,sfc_R_M,sfc_filters)
+    if SYSTEM_TYPE == "lds":
+        sim = partial(lds_sim, A=A, B=B)
+        output_map = partial(lds_output, C=C)
+    elif SYSTEM_TYPE == "pendulum":
+        sim = partial(pendulum_sim, max_torque=MAX_TORQUE, m=M, l=L, g=G, dt=DT)
+        output_map = pendulum_output
+    elif SYSTEM_TYPE == "brax":
+        sim = partial(brax_sim, env=brax_env, template_state=brax_template_state, jit_step_fn=jit_brax_env_step)
+        output_map = brax_output
+    else:
+        raise ValueError(f"Unknown SYSTEM_TYPE: {SYSTEM_TYPE}")
+
+    costs, trajectory = run_single_sfc_trial(key_sim_run,A,B,C,Q,R,x0,sim,output_map,T,sfc_m_hist,sfc_h_filt,sfc_init_sc,sfc_lr,sfc_decay,sfc_R_M,sfc_filters)
+    return costs, trajectory
 
 
 # --- SFC Hyperparameter Tuning (Grid Search) ---
@@ -750,8 +930,7 @@ elif plt.gca().has_data():
 plt.ylim(bottom=0, top= (lowest_sfc_final_cost * 5 if lowest_sfc_final_cost != float('inf') and lowest_sfc_final_cost > 0 else (np.max(plt.ylim()) if plt.gca().has_data() else 100) ) )
 
 base_filename_sfc = "sfc_tuning_full_grid_search_plot.png"
-plots_dir_sfc = os.path.join("plots", LDS_TRANSITION_TYPE.lower(), LDS_NOISE_TYPE.lower())
-os.makedirs(plots_dir_sfc, exist_ok=True)
+plots_dir_sfc = get_plot_dir()
 full_save_path_sfc = os.path.join(plots_dir_sfc, base_filename_sfc)
 plt.savefig(full_save_path_sfc)
 print(f"SFC grid search tuning plot saved to {full_save_path_sfc}")
@@ -807,30 +986,29 @@ def _dsc_action_terms_static(M0, M1, M2, M3, ynat_hist_buffer, filters_static, h
 
     return term_M0 + term_M1 + term_M2 + term_M3
 
-def dsc_policy_loss(M0, M1, M2, M3, ynat_history_for_loss, A, B, C, cost_evaluate_fn, Q_cost, R_cost, filters, h_filt, m_hist, d, p):
+def dsc_policy_loss(M0, M1, M2, M3, ynat_history_for_loss, cost_evaluate_fn, Q_cost, R_cost, filters, h_filt, m_hist, d, p, sim, output_map):
     # ynat_history_for_loss: newest is at index 0. Oldest relevant for prediction base is ynat_history_for_loss[2*m_hist + m_hist] = ynat_history_for_loss[3*m_hist]
     def evolve_for_loss(delta_state, m_idx_in_scan): 
         u_for_evolve = _dsc_action_terms_static(M0, M1, M2, M3, ynat_history_for_loss, filters, h_filt, m_hist, p, k_action_offset=m_idx_in_scan)
-        next_delta_state = A @ delta_state + B @ u_for_evolve
+        next_delta_state = sim(delta_state, u_for_evolve)
         return next_delta_state, None
 
     initial_delta_state = jnp.zeros((d, 1))
     final_delta, _ = jax.lax.scan(evolve_for_loss, initial_delta_state, jnp.arange(m_hist)) # Evolve m steps
     
-    y_final_predicted = C @ final_delta + ynat_history_for_loss[-1] 
+    y_final_predicted = output_map(final_delta) + ynat_history_for_loss[-1]
     u_final_for_cost = _dsc_action_terms_static(M0, M1, M2, M3, ynat_history_for_loss, filters, h_filt, m_hist, p, k_action_offset=m_hist)
     return cost_evaluate_fn(y_final_predicted, u_final_for_cost, Q_cost, R_cost)
 
 def dsc_update_controller(
     M0, M1, M2, M3, z, ynat_history_buffer, controller_t,
     y_meas, u_taken,
-    A, B, C,
     lr_base, apply_lr_decay, R_M_clip,
-    dsc_grad_policy_loss_fn, 
-    h_filt, m_hist, p 
+    dsc_grad_policy_loss_fn,
+    h_filt, m_hist, p, sim, output_map
 ):
-    z_next = A @ z + B @ u_taken
-    y_nat_current = y_meas - C @ z_next
+    z_next = sim(z, u_taken)
+    y_nat_current = y_meas - output_map(z_next)
     ynat_history_updated = jnp.roll(ynat_history_buffer, shift=1, axis=0) # newest at [0]
     ynat_history_updated = ynat_history_updated.at[0].set(y_nat_current)
     
@@ -854,7 +1032,7 @@ def dsc_update_controller(
 
 # ---------- DSC Simulation ----------
 def run_single_dsc_trial(
-    key_trial_run, A, B, C, Q_cost, R_cost, x0,
+    key_trial_run, A, B, C, Q_cost, R_cost, x0, sim, output_map,
     T_sim_steps,
     dsc_m_hist, dsc_h_filt, dsc_init_scale, 
     dsc_lr, dsc_lr_decay, dsc_R_M,
@@ -865,8 +1043,8 @@ def run_single_dsc_trial(
     def _dsc_loss_for_grad_template(filters_arg, M0_c, M1_c, M2_c, M3_c, ynat_hist_c):
         return dsc_policy_loss(
             M0_c, M1_c, M2_c, M3_c, ynat_hist_c,
-            A, B, C, quadratic_cost_evaluate, Q_cost, R_cost,
-            filters_arg, dsc_h_filt, dsc_m_hist, d, p
+            quadratic_cost_evaluate, Q_cost, R_cost,
+            filters_arg, dsc_h_filt, dsc_m_hist, d, p, sim, output_map
         )
     
     final_dsc_loss_fn = partial(_dsc_loss_for_grad_template, dsc_filters)
@@ -933,28 +1111,40 @@ def run_single_dsc_trial(
                 )
             else:
                 raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'relu' transition")
+        elif LDS_TRANSITION_TYPE == "special":
+            next_lds_x, y_measured_t = step(
+                x=prev_lds_x,
+                u=u_control_t,
+                sim=sim,
+                output_map=output_map,
+                dist_std=GAUSSIAN_NOISE_STD,
+                t_sim_step=prev_sim_t_for_disturbance,
+                disturbance=gaussian_disturbance,
+                key=key_disturbance_for_step
+            )
         else:
             raise ValueError(f"Unknown LDS_TRANSITION_TYPE: {LDS_TRANSITION_TYPE}")
 
         next_M0, next_M1, next_M2, next_M3, next_z, next_ynat_hist, next_t = dsc_update_controller(
                                                                                 prev_M0, prev_M1, prev_M2, prev_M3, prev_z, prev_ynat_hist, prev_t,
                                                                                 y_measured_t, u_control_t,
-                                                                                A, B, C,
                                                                                 dsc_lr, dsc_lr_decay, dsc_R_M,
                                                                                 dsc_grad_fn,
-                                                                                dsc_h_filt, dsc_m_hist, p
+                                                                                dsc_h_filt, dsc_m_hist, p, sim, output_map
                                                                             )
             
         cost_at_t = quadratic_cost_evaluate(y_measured_t, u_control_t, Q_cost, R_cost)
         
         next_sim_t_for_disturbance = prev_sim_t_for_disturbance + 1
-        return (next_lds_x, next_M0, next_M1, next_M2, next_M3, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance), cost_at_t
+        next_carry = (next_lds_x, next_M0, next_M1, next_M2, next_M3, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance)
+        outputs = (cost_at_t, prev_lds_x)
+        return next_carry, outputs
 
     initial_carry_dsc = (current_lds_x_state, M0, M1, M2, M3, z, ynat_hist, t, initial_sim_time_step)
     keys_for_T_scan_steps = jax.random.split(key_sim_loop_main, T_sim_steps)
     
-    (_, costs_over_time) = jax.lax.scan(dsc_simulation_step, initial_carry_dsc, keys_for_T_scan_steps)
-    return costs_over_time
+    (_, (costs_over_time, trajectory)) = jax.lax.scan(dsc_simulation_step, initial_carry_dsc, keys_for_T_scan_steps)
+    return costs_over_time, trajectory
 
 @partial(jit, static_argnames=(
     "d","n","p","T",
@@ -970,11 +1160,24 @@ def dsc_trial_runner_for_vmap(
 ):
     key_params_gen, key_sim_run = jax.random.split(key_trial_specific)
     A,B,C,Q,R,x0 = generate_trial_params(key_params_gen,d,n,p)
-    return run_single_dsc_trial(
-        key_sim_run,A,B,C,Q,R,x0,T,
+    if SYSTEM_TYPE == "lds":
+        sim = partial(lds_sim, A=A, B=B)
+        output_map = partial(lds_output, C=C)
+    elif SYSTEM_TYPE == "pendulum":
+        sim = partial(pendulum_sim, max_torque=MAX_TORQUE, m=M, l=L, g=G, dt=DT)
+        output_map = pendulum_output
+    elif SYSTEM_TYPE == "brax":
+        sim = partial(brax_sim, env=brax_env, template_state=brax_template_state, jit_step_fn=jit_brax_env_step)
+        output_map = brax_output
+    else:
+        raise ValueError(f"Unknown SYSTEM_TYPE: {SYSTEM_TYPE}")
+
+    costs, trajectory = run_single_dsc_trial(
+        key_sim_run,A,B,C,Q,R,x0,sim,output_map,T,
         dsc_m_hist,dsc_h_filt,dsc_init_sc,dsc_lr,dsc_decay,dsc_R_M,
         dsc_filters
     )
+    return costs, trajectory
 
 
 # --- DSC Hyperparameter Tuning (Grid Search) ---
@@ -1062,8 +1265,7 @@ elif plt.gca().has_data():
 plt.ylim(bottom=0, top= (lowest_dsc_final_cost * 5 if lowest_dsc_final_cost != float('inf') and lowest_dsc_final_cost > 0 else (np.max(plt.ylim()) if plt.gca().has_data() else 100) ) )
 
 base_filename_dsc = "dsc_tuning_full_grid_search_plot.png"
-plots_dir_dsc = os.path.join("plots", LDS_TRANSITION_TYPE.lower(), LDS_NOISE_TYPE.lower())
-os.makedirs(plots_dir_dsc, exist_ok=True)
+plots_dir_dsc = get_plot_dir()
 full_save_path_dsc = os.path.join(plots_dir_dsc, base_filename_dsc)
 plt.savefig(full_save_path_dsc)
 print(f"DSC grid search tuning plot saved to {full_save_path_dsc}")
@@ -1075,6 +1277,93 @@ else:
     print("\nCould not determine a best set of DSC hyperparameters from the tested values.")
 
 print("\n--- DSC Hyperparameter Tuning (Grid Search) Complete ---")
+
+
+def save_brax_rollout(trajectory, controller_name, trial_idx=0):
+    """Generates and saves a brax HTML rollout from a state trajectory."""
+    if SYSTEM_TYPE != "brax":
+        print(f"Skipping rollout for {controller_name} as SYSTEM_TYPE is not 'brax'.")
+        return
+
+    # Select the trajectory for the specified trial index
+    # The incoming trajectory is batched: (num_trials, T, D, 1)
+    trajectory_to_vis = jtu.tree_map(lambda x: x[trial_idx], trajectory)
+
+    rollout_for_html = []
+    q_size = brax_env.sys.q_size()
+    num_steps = trajectory_to_vis.shape[0]
+
+    for t_step in range(num_steps):
+        x_at_t = trajectory_to_vis[t_step]
+        q_at_t = x_at_t[:q_size].flatten()
+        qd_at_t = x_at_t[q_size:].flatten()
+        # Call kinematics.forward to compute the full kinematic state (x, xd, etc.)
+        # from the minimal state (q, qd). This is essential for rendering.
+        x, xd = kinematics.forward(brax_env.sys, q_at_t, qd_at_t)
+        # Re-create the pipeline state with all fields populated for rendering
+        complete_ps_at_t = brax_template_state.pipeline_state.replace(q=q_at_t, qd=qd_at_t, x=x, xd=xd)
+        rollout_for_html.append(complete_ps_at_t)
+
+    # Define a directory to save the rollouts
+    rollout_dir = get_plot_dir("rollouts")
+    rollout_filename = os.path.join(rollout_dir, f"rollout_{controller_name}_brax_trial_{trial_idx}.html")
+    
+    # Render and save the HTML
+    with open(rollout_filename, 'w') as f:
+        f.write(html.render(brax_env.sys.tree_replace({'opt.timestep': brax_env_dt}), rollout_for_html))
+    print(f"{controller_name.upper()} brax rollout saved to {rollout_filename}")
+
+
+def plot_brax_trajectory(trajectory, controller_name, trial_idx=0):
+    """Generates and saves a plot of q and qd evolution for a brax trajectory."""
+    if SYSTEM_TYPE != "brax":
+        print(f"Skipping trajectory plot for {controller_name} as SYSTEM_TYPE is not 'brax'.")
+        return
+
+    # Select the trajectory for the specified trial index and clean it up
+    trajectory_to_plot = jtu.tree_map(lambda x: x[trial_idx], trajectory)
+    trajectory_to_plot = trajectory_to_plot.squeeze(axis=-1)
+
+    q_size = brax_env.sys.q_size()
+    qd_size = brax_env.sys.qd_size()
+    
+    # Extract q and qd data
+    q_data = trajectory_to_plot[:, :q_size]
+    qd_data = trajectory_to_plot[:, q_size:]
+
+    # Create time axis for plotting
+    num_steps = trajectory_to_plot.shape[0]
+    times_plot = np.arange(num_steps) * brax_env_dt
+
+    # Create figure with subplots for each state variable
+    num_subplots = q_size + qd_size
+    fig, axs = plt.subplots(num_subplots, 1, figsize=(10, 2 * num_subplots), sharex=True)
+
+    # Plot q components
+    for i in range(q_size):
+        axs[i].plot(times_plot, q_data[:, i], label=f'q[{i}] (Position)')
+        axs[i].set_ylabel('Position')
+        axs[i].legend()
+        axs[i].grid(True)
+
+    # Plot qd components
+    for i in range(qd_size):
+        ax_idx = q_size + i
+        axs[ax_idx].plot(times_plot, qd_data[:, i], label=f'qd[{i}] (Velocity)', color='orange')
+        axs[ax_idx].set_ylabel('Velocity')
+        axs[ax_idx].legend()
+        axs[ax_idx].grid(True)
+
+    axs[-1].set_xlabel('Time (s)')
+    fig.suptitle(f'State Trajectory for {controller_name.upper()} (Trial {trial_idx})', fontsize=14)
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+
+    # Save the plot to a dedicated directory
+    plot_dir = get_plot_dir("trajectories")
+    plot_filename = os.path.join(plot_dir, f"trajectory_{controller_name}_brax_trial_{trial_idx}.png")
+    plt.savefig(plot_filename)
+    plt.close(fig)
+    print(f"{controller_name.upper()} brax trajectory plot saved to {plot_filename}")
 
 
 # Store best hyperparameters for comparison plots, with fallbacks
@@ -1128,7 +1417,7 @@ if best_gpc_hyperparams:
 gpc_label_suffix = f" ({gpc_params_source_message}{gpc_hyperparam_details_str})"
 
 print(f"GPC for Comparison ({gpc_params_source_message}): {comp_num_trials} trials, {T} steps, m={GPC_M}, init_scale={gpc_init_scale_for_comp:.3f}, lr={gpc_lr_for_comp:.1e}, R_M={gpc_R_M_for_comp:.3f}")
-comp_costs_gpc = vmap_gpc(
+comp_costs_gpc, comp_trajectories_gpc = vmap_gpc(
     comp_trial_keys, 
     D, N, P, 
     T, 
@@ -1140,6 +1429,10 @@ comp_costs_gpc = vmap_gpc(
 )
 comp_costs_gpc_np = np.array(comp_costs_gpc)
 print("GPC for Comparison complete.")
+# Save rollout if applicable
+save_brax_rollout(np.array(comp_trajectories_gpc), "gpc")
+plot_brax_trajectory(np.array(comp_trajectories_gpc), "gpc")
+
 cum_gpc_comp = np.cumsum(comp_costs_gpc_np, axis=1)
 mask_gpc_comp = cum_gpc_comp[:,-1] < comp_threshold
 rem_gpc_comp = np.sum(~mask_gpc_comp)
@@ -1166,7 +1459,7 @@ sfc_label_suffix = f" ({sfc_params_source_message}{sfc_hyperparam_details_str})"
 comp_sfc_filters = sfc_compute_filters(SFC_M_HIST, SFC_H_FILT, sfc_gamma_for_comp)
 
 print(f"SFC for Comparison ({sfc_params_source_message}): {comp_num_trials} trials, {T} steps, m_hist={SFC_M_HIST}, h_filt={SFC_H_FILT}, init_scale={sfc_init_scale_for_comp:.3f}, lr={sfc_lr_for_comp:.1e}, R_M={sfc_R_M_for_comp:.3f}, gamma={sfc_gamma_for_comp:.3f}")
-comp_costs_sfc = vmapped_sfc_runner(
+comp_costs_sfc, comp_trajectories_sfc = vmapped_sfc_runner(
     comp_trial_keys, D, N, P, 
     T, 
     SFC_M_HIST, SFC_H_FILT, 
@@ -1175,6 +1468,10 @@ comp_costs_sfc = vmapped_sfc_runner(
 )
 comp_costs_sfc_np = np.array(comp_costs_sfc)
 print("SFC for Comparison complete.")
+# Save rollout if applicable
+save_brax_rollout(np.array(comp_trajectories_sfc), "sfc")
+plot_brax_trajectory(np.array(comp_trajectories_sfc), "sfc")
+
 cum_sfc_comp = np.cumsum(comp_costs_sfc_np, axis=1)
 mask_sfc_comp = cum_sfc_comp[:,-1] < comp_threshold
 rem_sfc_comp = np.sum(~mask_sfc_comp)
@@ -1201,7 +1498,7 @@ dsc_label_suffix = f" ({dsc_params_source_message}{dsc_hyperparam_details_str})"
 comp_dsc_filters = sfc_compute_filters(DSC_M_HIST, DSC_H_FILT, dsc_gamma_for_comp) 
 
 print(f"DSC for Comparison ({dsc_params_source_message}): {comp_num_trials} trials, {T} steps, m_hist={DSC_M_HIST}, h_filt={DSC_H_FILT}, init_scale={dsc_init_scale_for_comp:.3f}, lr={dsc_lr_for_comp:.1e}, R_M={dsc_R_M_for_comp:.4f}, gamma={dsc_gamma_for_comp:.3f}")
-comp_costs_dsc = vmapped_dsc_runner(
+comp_costs_dsc, comp_trajectories_dsc = vmapped_dsc_runner(
     comp_trial_keys, D, N, P, 
     T,
     DSC_M_HIST, DSC_H_FILT,
@@ -1210,6 +1507,10 @@ comp_costs_dsc = vmapped_dsc_runner(
 )
 comp_costs_dsc_np = np.array(comp_costs_dsc)
 print("DSC for Comparison complete.")
+# Save rollout if applicable
+save_brax_rollout(np.array(comp_trajectories_dsc), "dsc")
+plot_brax_trajectory(np.array(comp_trajectories_dsc), "dsc")
+
 cum_dsc_comp = np.cumsum(comp_costs_dsc_np, axis=1)
 mask_dsc_comp = cum_dsc_comp[:,-1] < comp_threshold
 rem_dsc_comp = np.sum(~mask_dsc_comp)
@@ -1279,8 +1580,7 @@ plt.ylim(bottom=0, top=max_y * 1.1 + 1)
 plt.tight_layout()
 
 base_filename_comp = "comparison_cumulative_average_costs_tuned.png"
-plots_dir_comp = os.path.join("plots", LDS_TRANSITION_TYPE.lower(), LDS_NOISE_TYPE.lower())
-os.makedirs(plots_dir_comp, exist_ok=True)
+plots_dir_comp = get_plot_dir()
 full_save_path_comp = os.path.join(plots_dir_comp, base_filename_comp)
 plt.savefig(full_save_path_comp)
 print(f"Comparison plot saved to {full_save_path_comp}")

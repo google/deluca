@@ -1,5 +1,9 @@
+import sys
+sys.path.append("../../")
+
 from deluca.core import Agent
-from deluca.agents._gpc import GPC
+from deluca.envs import _lds as lds
+from deluca.envs._lds import SinusDisturbance
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -12,8 +16,10 @@ import numpy as np
 from jax import grad
 from jax import jit
 
+
 from deluca.core import Agent
 from deluca.core import Env
+
 
 
 def quad_loss(x: jnp.ndarray, u: jnp.ndarray) -> Real:
@@ -99,7 +105,16 @@ class GPC(Agent):
 
             def evolve(state, h):
                 """Evolve function"""
-                return self.Simulator( action(state,h) )  + w[h + H], None
+                u = action(state,h)
+                # The state of the scan is observation y. To get x, we need C^-1.
+                # This assumes C is invertible, which is true in the script settings.
+                C_inv = jnp.linalg.inv(self.Simulator.C)
+                x = C_inv @ state
+                # Evolve state x, with process noise from history
+                x_next = self.Simulator.A @ x + self.Simulator.B @ u + w[h + H]
+                # Get next observation y
+                y_next = self.Simulator.C @ x_next
+                return y_next, None
 
             final_state, _ = jax.lax.scan(evolve, np.zeros((d_state, 1)), np.arange(H - 1))
             return cost_fn(final_state, action(final_state, HH - 1))

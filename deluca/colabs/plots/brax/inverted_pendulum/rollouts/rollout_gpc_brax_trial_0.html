@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+    <title>Brax visualizer</title>
+    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
+  </head>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+    }
+
+    #brax-viewer {
+      height: 480px;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+  <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.150.1/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.150.1/examples/jsm/",
+        "lilgui": "https://cdn.jsdelivr.net/npm/lil-gui@0.18.0/+esm",
+        "viewer": "https://cdn.jsdelivr.net/gh/google/brax@v0.12.3/brax/visualizer/js/viewer.js"
+      }
+    }
+  </script>
+
+  <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
+
+  <script type="application/javascript">
+  var system = "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";
+  // decode base64 (convert ascii to binary)
+  system = atob(system);
+  // convert binary string to character-number array
+  system = system.split('').map(function(x){return x.charCodeAt(0);});
+  // decompress
+  system = pako.inflate(system);
+  // convert gunzipped byteArray back to ascii string
+  system = new TextDecoder("utf-8").decode(system);
+  // and load json
+  system = JSON.parse(system);
+  </script>
+
+  <body>
+
+    <div id="brax-viewer"></div>
+
+    <script type="module">
+      import {Viewer} from 'viewer';
+      const domElement = document.getElementById("brax-viewer");
+      var viewer = new Viewer(domElement, system);
+    </script>
+
+  </body>
+
+</html>
