@@ -59,11 +59,11 @@ T = 50     # Time horizon for simulations
 LR_DECAY = True # Whether to apply learning rate decay
 
 # Controller Structure Parameters
-GPC_M = 10
-SFC_M_HIST = 30
-SFC_H_FILT = 10
-DSC_M_HIST = 30 # Often same as SFC, but kept separate for flexibility
-DSC_H_FILT = 10 # Often same as SFC
+GPC_M = 5
+SFC_M_HIST = 10
+SFC_H_FILT = 5
+DSC_M_HIST = 10 # Often same as SFC, but kept separate for flexibility
+DSC_H_FILT = 5 # Often same as SFC
 
 # Hyperparameter Ranges for Tuning (Grid Search)
 INIT_SCALES_TO_TEST = []
@@ -327,10 +327,20 @@ def generate_trial_params(key, d, n, p):
     B = jax.random.normal(key_B, (d, n))
     C = jax.random.normal(key_C, (p, d))
     
-    M_Q_gen = jax.random.normal(key_Q_M, (p, p))
-    Q = M_Q_gen.T @ M_Q_gen
-    M_R_gen = jax.random.normal(key_R_M, (n, n))
-    R = M_R_gen.T @ M_R_gen
+    if SYSTEM_TYPE == "brax" and BRAX_ENV_NAME == "inverted_pendulum":
+        # For inverted_pendulum, the state is [cart_pos, pole_angle, cart_vel, pole_ang_vel].
+        # We want to keep the pole upright (angle=0) and cart at origin (pos=0).
+        # We penalize pole angle deviation most, then cart position, then velocities.
+        Q = jnp.diag(jnp.array([1.0, 10.0, 0.1, 0.1]))
+        # We also penalize the control effort.
+        R = jnp.diag(jnp.array([0.01]))
+    else:
+        # For other systems like LDS, or as a fallback for unhandled brax envs, use random matrices.
+        # Note: A random cost matrix is unlikely to be meaningful for a specific brax environment.
+        M_Q_gen = jax.random.normal(key_Q_M, (p, p))
+        Q = M_Q_gen.T @ M_Q_gen
+        M_R_gen = jax.random.normal(key_R_M, (n, n))
+        R = M_R_gen.T @ M_R_gen
     
     x0 = jnp.zeros((d,1)) 
     if SYSTEM_TYPE == "brax":
