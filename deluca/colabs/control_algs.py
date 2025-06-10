@@ -1,0 +1,1286 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import jax
+import jax.numpy as jnp
+from tqdm import tqdm
+from jax import grad
+from jax import jit
+from functools import partial
+import os # Added for directory creation
+
+# ---------- Noise Configuration ----------
+LDS_NOISE_TYPE = "gaussian"  # Options: "gaussian", "sinusoidal"
+GAUSSIAN_NOISE_STD = 0.5
+SINUSOIDAL_NOISE_AMPLITUDE = 0.5
+SINUSOIDAL_NOISE_FREQUENCY = 0.1 # Example frequency, adjust as needed
+
+# ---------- LDS Transition Configuration ----------
+LDS_TRANSITION_TYPE = "relu" # Options: "linear", "relu"
+
+# ---------- Experiment & Hyperparameter Configuration ----------
+# System Parameters
+D = 25
+N = 1
+P = 1
+T = 5000      # Time horizon for simulations
+LR_DECAY = True # Whether to apply learning rate decay
+
+# Controller Structure Parameters
+GPC_M = 10
+SFC_M_HIST = 30
+SFC_H_FILT = 10
+DSC_M_HIST = 30 # Often same as SFC, but kept separate for flexibility
+DSC_H_FILT = 10 # Often same as SFC
+
+# Hyperparameter Ranges for Tuning (Grid Search)
+INIT_SCALES_TO_TEST = [2.0]
+LEARNING_RATES_TO_TEST = [5e-5, 1e-4, 5e-4]
+R_M_VALUES_TO_TEST = [0.005, 0.01, 0.1, 1.0, 5.0, 10.0]
+GAMMA_VALUES_TO_TEST = [0.05, 0.1, 0.3] # For SFC and DSC
+
+# Master Key and Trial Setup
+SEED = 42
+NUM_TRIALS = 50 # Number of common environments for all tuning and comparison
+TRIAL_KEYS = jax.random.split(jax.random.PRNGKey(SEED), NUM_TRIALS)
+
+
+
+# ---------- Plotting Helper Function ----------
+def plot_experiment_results(
+    time_steps: np.ndarray,
+    mean_avg_costs: np.ndarray,
+    stderr_avg_costs: np.ndarray,
+    controller_name: str,
+    experiment_label: str,
+    plot_title: str,
+    save_filename: str,
+    gamma: float | None = None
+):
+    """Helper function to plot and save cumulative average cost results."""
+    plt.figure(figsize=(8, 5))
+    
+    label_main = f"Mean {controller_name}"
+    label_se = f"{controller_name} ±1 SE"
+    if gamma is not None:
+        label_main = f"Mean {controller_name} (gamma={gamma})"
+        
+    plt.plot(time_steps, mean_avg_costs, label=label_main)
+    plt.fill_between(
+        time_steps,
+        mean_avg_costs - stderr_avg_costs,
+        mean_avg_costs + stderr_avg_costs,
+        alpha=0.3,
+        label=label_se
+    )
+    plt.xlabel("Time Step (T)")
+    plt.ylabel("Cumulative Average Cost")
+    plt.title(plot_title)
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(save_filename)
+    print(f"{controller_name} {experiment_label} plot saved to {save_filename}")
+
+@jit
+def quadratic_cost_evaluate(y, u, Q, R):
+    """A JIT-compatible version of quadratic cost evaluation."""
+    return jnp.sum(y.T @ Q @ y + u.T @ R @ u)
+
+
+@jit
+def lds_gaussian_step_dynamic(
+    current_x: jnp.ndarray,
+    A: jnp.ndarray,
+    B: jnp.ndarray,
+    C: jnp.ndarray,
+    u_t: jnp.ndarray,
+    dist_std: float,
+    t_sim_step: int,
+    key_disturbance: jax.random.PRNGKey
+) -> tuple[jnp.ndarray, jnp.ndarray]: # Returns (next_x, y_t)
+    d = A.shape[0]
+
+    w_t = jax.random.normal(key_disturbance, (d, 1)) * dist_std
+
+    x_next = A @ current_x + B @ u_t + w_t
+
+    y_t = C @ current_x
+
+    return x_next, y_t
+
+@jit
+def lds_sinusoidal_step_dynamic(
+    current_x: jnp.ndarray,
+    A: jnp.ndarray,
+    B: jnp.ndarray,
+    C: jnp.ndarray,
+    u_t: jnp.ndarray,
+    noise_amplitude: float,
+    noise_frequency: float,
+    t_sim_step: int,
+    key_disturbance: jax.random.PRNGKey
+) -> tuple[jnp.ndarray, jnp.ndarray]: # Returns (next_x, y_t)
+    """Performs one step of the LDS evolution with sinusoidal noise."""
+    d = A.shape[0] # Dimension of the system state (and disturbance)
+
+    # Generate sinusoidal noise for each dimension
+    # For simplicity, using the same amplitude and frequency for all dimensions.
+    # The phase is driven by t_sim_step.
+    # Create a (d, 1) noise vector.
+    time_scaled = noise_frequency * t_sim_step.astype(jnp.float32)
+    
+    # For now, all dimensions will be in phase.
+    sin_values = jnp.sin(time_scaled)
+    w_t = noise_amplitude * jnp.full((d, 1), sin_values)
+
+    x_next = A @ current_x + B @ u_t + w_t
+
+    y_t = C @ current_x
+
+    return x_next, y_t
+
+@jit
+def lds_relu_gaussian_step_dynamic(
+    current_x: jnp.ndarray,
+    A: jnp.ndarray,
+    B: jnp.ndarray,
+    C: jnp.ndarray,
+    u_t: jnp.ndarray,
+    dist_std: float,
+    t_sim_step: int,
+    key_disturbance: jax.random.PRNGKey
+) -> tuple[jnp.ndarray, jnp.ndarray]: # Returns (next_x, y_t)
+    """Performs one step of the LDS evolution with ReLU transition and Gaussian noise."""
+    d = A.shape[0]
+
+    # Gaussian noise
+    w_t = jax.random.normal(key_disturbance, (d, 1)) * dist_std
+
+    # State update with ReLU applied to the deterministic part
+    deterministic_next_state = A @ current_x + B @ u_t
+    x_next = jax.nn.relu(deterministic_next_state) + w_t
+
+    y_t = C @ current_x
+
+    return x_next, y_t
+
+@jit
+def lds_relu_sinusoidal_step_dynamic(
+    current_x: jnp.ndarray,
+    A: jnp.ndarray,
+    B: jnp.ndarray,
+    C: jnp.ndarray,
+    u_t: jnp.ndarray,
+    noise_amplitude: float,
+    noise_frequency: float,
+    t_sim_step: int,
+    key_disturbance: jax.random.PRNGKey
+) -> tuple[jnp.ndarray, jnp.ndarray]: # Returns (next_x, y_t)
+    """Performs one step of the LDS evolution with ReLU transition and sinusoidal noise."""
+    d = A.shape[0]
+
+    # Sinusoidal noise
+    time_scaled = noise_frequency * t_sim_step.astype(jnp.float32)
+    sin_values = jnp.sin(time_scaled)
+    w_t = noise_amplitude * jnp.full((d, 1), sin_values)
+
+    # State update with ReLU applied to the deterministic part
+    deterministic_next_state = A @ current_x + B @ u_t
+    x_next = jax.nn.relu(deterministic_next_state) + w_t
+    
+    y_t = C @ current_x
+
+    return x_next, y_t
+
+# ---------- System and Cost Generation ----------
+def generate_trial_params(key, d, n, p):
+    """Generates random system (A, B, C) and cost (Q, R) matrices, and initial state x0."""
+    key_A, key_B, key_C, key_Q_M, key_R_M, _ = jax.random.split(key, 6)
+    eigvals = jax.random.uniform(key_A, (d,), minval=0.3, maxval=0.7)
+    A = jnp.diag(eigvals)
+    B = jax.random.normal(key_B, (d, n))
+    C = jax.random.normal(key_C, (p, d))
+    
+    M_Q_gen = jax.random.normal(key_Q_M, (p, p))
+    Q = M_Q_gen.T @ M_Q_gen
+    M_R_gen = jax.random.normal(key_R_M, (n, n))
+    R = M_R_gen.T @ M_R_gen
+    
+    x0 = jnp.zeros((d,1)) 
+    return A, B, C, Q, R, x0
+
+def gpc_init_controller_state(key, init_scale, m, n, p, d):
+    M = init_scale * jax.random.normal(key, shape=(m, n, p))
+    z = jnp.zeros((d, 1))
+    ynat_history = jnp.zeros((2 * m, p, 1)) # GPC uses 2*m history
+    controller_t = 0
+    return M, z, ynat_history, controller_t
+
+def _gpc_action_for_policy_loss(k, M_policy, ynat_history_buffer_policy, m_controller_policy, p_policy):
+    window = jax.lax.dynamic_slice(ynat_history_buffer_policy, (k, 0, 0), (m_controller_policy, p_policy, 1))
+    contribs = jnp.einsum("mnp,mp1->mn1", M_policy, window)
+    return jnp.sum(contribs, axis=0)
+
+def gpc_policy_loss(M, ynat_history_for_loss, A, B, C, cost_evaluate_fn, Q_cost, R_cost, m_controller, d, p):    
+    
+    def evolve_for_loss(delta, k):
+        u = _gpc_action_for_policy_loss(k, M, ynat_history_for_loss, m_controller, p)
+        next_delta = A @ delta + B @ u
+        return next_delta, None
+
+    final_delta, _ = jax.lax.scan(evolve_for_loss, jnp.zeros((d, 1)), jnp.arange(m_controller))
+    
+    y_final_predicted = C @ final_delta + ynat_history_for_loss[-1]
+    
+    u_final_for_cost = _gpc_action_for_policy_loss(m_controller, M, ynat_history_for_loss, m_controller, p)
+    return cost_evaluate_fn(y_final_predicted, u_final_for_cost, Q_cost, R_cost)
+
+def gpc_get_action(M, ynat_history_buffer, m_controller, p):
+    window_for_action = jax.lax.dynamic_slice(ynat_history_buffer, (m_controller, 0, 0), (m_controller, p, 1))
+    contribs = jnp.einsum('mnp,mp1->mn1', M, window_for_action)
+    return jnp.sum(contribs, axis=0)
+
+def gpc_update_controller(
+    M, z, ynat_history_buffer, controller_t, # current controller state
+    y_meas, u_taken, # inputs from current simulation step
+    A, B, C,
+    lr_base, apply_lr_decay, R_M_clip, # controller hyperparameters
+    gpc_grad_policy_loss_fn, # pre-defined grad function for policy loss
+    m_controller, p # controller structure params
+):
+    # Update z state for natural response
+    z_next = A @ z + B @ u_taken
+    y_nat_current = y_meas - C @ z_next
+
+    # Update ynat_history: roll and add current y_nat at index 0
+    ynat_history_updated = jnp.roll(ynat_history_buffer, shift=1, axis=0)
+    ynat_history_updated = ynat_history_updated.at[0].set(y_nat_current)
+
+    delta_M = gpc_grad_policy_loss_fn(M, ynat_history_updated)
+    
+    lr_current = lr_base * (1.0 / (controller_t + 1.0) if apply_lr_decay else 1.0)
+    M_next_pre_clip = M - lr_current * delta_M
+
+    # Clip M to ensure its norm is bounded by R_M_clip
+    norm_M = jnp.linalg.norm(M_next_pre_clip)
+    scale = jnp.minimum(1.0, R_M_clip / (norm_M + 1e-8))
+    M_next = scale * M_next_pre_clip
+
+    controller_t_next = controller_t + 1
+    return M_next, z_next, ynat_history_updated, controller_t_next
+    
+    
+# ----------Simulation for GPC ----------
+def run_single_gpc_trial(
+    key_trial_run, A, B, C, Q_cost, R_cost, x0, 
+    T_sim_steps, 
+    gpc_m, gpc_init_scale, gpc_lr, gpc_lr_decay, gpc_R_M
+):
+    d, n, p = A.shape[0], B.shape[1], C.shape[0]
+
+    # Define a template for the GPC loss function that accepts the cost_eval_fn as an argument.
+    def _gpc_loss_for_grad_template(cost_eval_func_arg, M, ynat_hist):
+        return gpc_policy_loss(
+            M, ynat_hist, 
+            A, B, C, 
+            cost_eval_func_arg, # Use the passed-in cost evaluation function
+            Q_cost, R_cost, # Pass Q_cost and R_cost from the outer scope
+            gpc_m, d, p
+        )
+    
+    # Use functools.partial to bake in the quadratic_cost_evaluate function.
+    # The gradient will be taken with respect to M (now arg 0 of final_gpc_loss_fn).
+    final_gpc_loss_fn = partial(_gpc_loss_for_grad_template, quadratic_cost_evaluate)
+    gpc_grad_fn = jit(grad(final_gpc_loss_fn, argnums=0))
+
+    key_gpc_init, key_sim_loop_main = jax.random.split(key_trial_run)
+    M_controller, z_controller, ynat_history_controller, t_controller = gpc_init_controller_state(key_gpc_init, gpc_init_scale, gpc_m, n, p, d)
+
+    current_lds_x_state = x0 # Initial LDS state
+    initial_sim_time_step = 0
+
+    def gpc_simulation_step(carry, key_step_specific_randomness):
+        prev_lds_x, prev_M, prev_z, prev_ynat_hist, prev_t, prev_sim_t_for_disturbance = carry
+        key_disturbance_for_step = key_step_specific_randomness
+
+        u_control_t = gpc_get_action(prev_M, prev_ynat_hist, gpc_m, p)
+        
+        if LDS_TRANSITION_TYPE == "linear":
+            if LDS_NOISE_TYPE == "gaussian":
+                next_lds_x, y_measured_t = lds_gaussian_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    dist_std=GAUSSIAN_NOISE_STD,
+                    t_sim_step=prev_sim_t_for_disturbance, 
+                    key_disturbance=key_disturbance_for_step
+                )
+            elif LDS_NOISE_TYPE == "sinusoidal":
+                next_lds_x, y_measured_t = lds_sinusoidal_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    noise_amplitude=SINUSOIDAL_NOISE_AMPLITUDE, 
+                    noise_frequency=SINUSOIDAL_NOISE_FREQUENCY, 
+                    t_sim_step=prev_sim_t_for_disturbance, 
+                    key_disturbance=key_disturbance_for_step
+                )
+            else:
+                raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'linear' transition")
+        elif LDS_TRANSITION_TYPE == "relu":
+            if LDS_NOISE_TYPE == "gaussian":
+                next_lds_x, y_measured_t = lds_relu_gaussian_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    dist_std=GAUSSIAN_NOISE_STD,
+                    t_sim_step=prev_sim_t_for_disturbance, 
+                    key_disturbance=key_disturbance_for_step
+                )
+            elif LDS_NOISE_TYPE == "sinusoidal":
+                next_lds_x, y_measured_t = lds_relu_sinusoidal_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    noise_amplitude=SINUSOIDAL_NOISE_AMPLITUDE,
+                    noise_frequency=SINUSOIDAL_NOISE_FREQUENCY,
+                    t_sim_step=prev_sim_t_for_disturbance, 
+                    key_disturbance=key_disturbance_for_step
+                )
+            else:
+                raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'relu' transition")
+        else:
+            raise ValueError(f"Unknown LDS_TRANSITION_TYPE: {LDS_TRANSITION_TYPE}")
+        
+        next_M, next_z, next_ynat_hist, next_t = gpc_update_controller(
+                                                                        prev_M, prev_z, prev_ynat_hist, prev_t,
+                                                                        y_measured_t, u_control_t,
+                                                                        A, B, C,
+                                                                        gpc_lr, gpc_lr_decay, gpc_R_M,
+                                                                        gpc_grad_fn,
+                                                                        gpc_m, p
+                                                                    )
+
+        cost_at_t = quadratic_cost_evaluate(y_measured_t, u_control_t, Q_cost, R_cost)
+        
+        next_sim_t_for_disturbance = prev_sim_t_for_disturbance + 1
+        return (next_lds_x, next_M, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance), cost_at_t
+
+    initial_carry_gpc = (current_lds_x_state, M_controller, z_controller, ynat_history_controller, t_controller, initial_sim_time_step)
+    keys_for_T_scan_steps = jax.random.split(key_sim_loop_main, T_sim_steps)
+    
+    (_, costs_over_time) = jax.lax.scan(gpc_simulation_step, initial_carry_gpc, keys_for_T_scan_steps)
+    
+    return costs_over_time
+
+@partial(jit, static_argnames=("d", "n", "p", "T", "gpc_m", "gpc_init_scale", "gpc_lr", "gpc_decay", "gpc_R_M"))
+def gpc_trial_runner_for_vmap(key_trial_specific,d,n,p,T,gpc_m,gpc_init_scale,gpc_lr,gpc_decay,gpc_R_M):
+    key_params_gen, key_sim_run = jax.random.split(key_trial_specific)
+    A,B,C,Q,R,x0 = generate_trial_params(key_params_gen,d,n,p) 
+    return run_single_gpc_trial(key_sim_run,A,B,C,Q,R,x0,T,gpc_m,gpc_init_scale,gpc_lr,gpc_decay,gpc_R_M)
+
+
+# --- GPC Hyperparameter Tuning (Grid Search) ---
+print("\n--- GPC Hyperparameter Tuning (Grid Search) ---")
+
+# Define common hyperparameter ranges for tuning
+common_init_scales = [2.0]
+common_learning_rates = [5e-5, 1e-4, 5e-4]
+common_R_M_values = [0.005, 0.01, 0.1, 1.0, 5.0, 10.0]
+common_gamma_values = [0.05, 0.1, 0.3] # For SFC and DSC
+
+
+print(f"Tuning GPC with fixed params: d={D}, n={N}, p={P}, m={GPC_M}, T={T}, trials={NUM_TRIALS}, LR decay={LR_DECAY}")
+
+
+plt.figure(figsize=(15, 10)) # Larger figure for potentially many lines
+plt.title(f"GPC Hyperparameter Tuning (d={D}, m={GPC_M}, Transition={LDS_TRANSITION_TYPE}, Noise={LDS_NOISE_TYPE})")
+plt.xlabel("Time Step")
+plt.ylabel("Mean Cumulative Average Cost")
+plt.grid(True)
+
+best_gpc_hyperparams = None
+lowest_final_cost = float('inf')
+
+color_idx = 0
+num_param_combinations = len(INIT_SCALES_TO_TEST) * len(R_M_VALUES_TO_TEST) * len(LEARNING_RATES_TO_TEST)
+colors = plt.cm.viridis(np.linspace(0, 1, num_param_combinations if num_param_combinations > 0 else 1))
+
+# gpc_trial_runner_for_vmap expects: key, d, n, p, T, gpc_m, init_scale, lr, decay, R_M (10 args)
+vmap_gpc = jax.vmap(gpc_trial_runner_for_vmap, 
+                               in_axes=(0,None,None,None,None,None,None,None,None,None), # 10 entries
+                               out_axes=0)
+
+for init_scale in INIT_SCALES_TO_TEST:
+    for R_M in R_M_VALUES_TO_TEST:
+        for lr in LEARNING_RATES_TO_TEST:
+            current_params = {"init_scale": init_scale, "R_M": R_M, "lr": lr}
+            print(f"Testing GPC with: init_scale={init_scale}, R_M={R_M}, lr={lr}...")
+        
+
+            costs_current_params = np.array(vmap_gpc(
+                TRIAL_KEYS,
+                D,
+                N,
+                P,
+                T,
+                GPC_M, 
+                init_scale,
+                lr,
+                LR_DECAY,
+                R_M
+            ))
+
+            cum_costs_current = np.cumsum(costs_current_params, axis=1)
+
+            if np.any(np.isnan(cum_costs_current)) or np.any(np.isinf(cum_costs_current)):
+                print(f"  Params {current_params} resulted in NaN/Inf costs. Skipping.")
+                color_idx += 1
+                continue
+
+            stability_threshold_tune = 1e7 
+            stable_mask_current = cum_costs_current[:, -1] < stability_threshold_tune
+            num_stable_trials = np.sum(stable_mask_current)
+
+            print(f"  Params {current_params}: {num_stable_trials}/{NUM_TRIALS} stable trials.")
+
+            if num_stable_trials > NUM_TRIALS // 2: 
+                avg_costs_stable = cum_costs_current[stable_mask_current] / (np.arange(1, T + 1)[None, :])
+                mean_avg_cost_current = np.mean(avg_costs_stable, axis=0)
+                
+                label_str = f"is={init_scale}, rm={R_M}, lr={lr:.0e}"
+                # Ensure color_idx is within bounds for colors array
+                current_color = colors[color_idx % len(colors)] if len(colors) > 0 else 'blue'
+                plt.plot(mean_avg_cost_current, label=label_str, color=current_color, alpha=0.7)
+                
+                final_avg_cost = mean_avg_cost_current[-1]
+                if final_avg_cost < lowest_final_cost:
+                    lowest_final_cost = final_avg_cost
+                    best_gpc_hyperparams = current_params
+                    print(f"    New best params: {best_gpc_hyperparams} with final avg cost: {final_avg_cost:.4f}")
+            else:
+                print(f"  Params {current_params}: Not enough stable trials. Skipping plot.")
+            color_idx += 1
+
+if plt.gca().has_data() and len(plt.gca().lines) > 20 : 
+    print("Many lines on the plot, omitting legend for clarity. See console for parameters.")
+elif plt.gca().has_data():
+    plt.legend(loc='upper right', fontsize='small')
+    
+plt.ylim(bottom=0, top= (lowest_final_cost * 2 if lowest_final_cost != float('inf') and lowest_final_cost > 0 else (np.max(plt.ylim()) if plt.gca().has_data() else 100) ) ) 
+
+base_filename_gpc = "gpc_tuning_full_grid_search_plot.png"
+plots_dir_gpc = os.path.join("plots", LDS_TRANSITION_TYPE.lower(), LDS_NOISE_TYPE.lower())
+os.makedirs(plots_dir_gpc, exist_ok=True)
+full_save_path_gpc = os.path.join(plots_dir_gpc, base_filename_gpc)
+plt.savefig(full_save_path_gpc)
+print(f"GPC grid search tuning plot saved to {full_save_path_gpc}")
+
+if best_gpc_hyperparams:
+    print(f"\nSelected best GPC hyperparameters from grid search: {best_gpc_hyperparams}")
+    print(f"Corresponding lowest final mean cumulative average cost: {lowest_final_cost:.4f}")
+else:
+    print("\nCould not determine a best set of GPC hyperparameters from the tested values. All may have diverged or were unstable.")
+
+print("\n--- GPC Hyperparameter Tuning (Grid Search) Complete ---")
+
+
+# ---------- SFC Controller ----------
+def sfc_compute_filters(m_hist, h_filt, gamma):
+    indices = np.arange(1, m_hist + 1)
+    I, J = np.meshgrid(indices, indices, indexing='ij')
+    H_matrix = ((1 - gamma) ** (I + J - 1)) / (I + J - 1)
+    eigvals, eigvecs = np.linalg.eigh(H_matrix)
+    top_eigvals = eigvals[-h_filt:]
+    top_eigvecs = eigvecs[:, -h_filt:]
+    scaling = top_eigvals**0.25
+    return jnp.array(np.flip((scaling[:, None] * top_eigvecs.T), axis=1))
+
+def sfc_init_controller_state(key, init_scale, h_filt, n, p, d, m_hist):
+    key_M0, key_M = jax.random.split(key)
+    M0 = init_scale * jax.random.normal(key_M0, shape=(n, p))
+    M = init_scale * jax.random.normal(key_M, shape=(h_filt, n, p))
+    z = jnp.zeros((d, 1))
+    ynat_history = jnp.zeros((2 * m_hist + 1, p, 1))
+    controller_t = 0
+    return M0, M, z, ynat_history, controller_t
+
+def _sfc_action_for_policy_loss(k, M0_policy, M_policy, ynat_hist_policy, filters_policy, h_filt_policy, m_hist_policy, p_policy):
+    window = jax.lax.dynamic_slice(ynat_hist_policy, (k, 0, 0), (m_hist_policy, p_policy, 1))
+    last_ynat_for_action = jnp.squeeze(jax.lax.dynamic_slice(ynat_hist_policy, (k + m_hist_policy, 0, 0), (1, p_policy, 1)), axis=0)
+    proj = jnp.einsum("hm,mp1->hp1", filters_policy, window)
+    spectral_term = jnp.einsum("hnp,hp1->n1", M_policy, proj)
+    return M0_policy @ last_ynat_for_action + spectral_term
+
+def sfc_policy_loss(M0, M, ynat_history_for_loss, A, B, C, cost_evaluate_fn, Q_cost, R_cost, filters, h_filt, m_hist, d, p):
+    def evolve_for_loss(delta_state, m_idx_in_scan):
+        u_for_evolve = _sfc_action_for_policy_loss(m_idx_in_scan, M0, M, ynat_history_for_loss, filters, h_filt, m_hist, p)
+        next_delta_state = A @ delta_state + B @ u_for_evolve
+        return next_delta_state, None
+    initial_delta_state = jnp.zeros((d, 1))
+    final_delta, _ = jax.lax.scan(evolve_for_loss, initial_delta_state, jnp.arange(m_hist))
+    y_final_predicted = C @ final_delta + ynat_history_for_loss[-1]
+    u_final_for_cost = _sfc_action_for_policy_loss(m_hist, M0, M, ynat_history_for_loss, filters, h_filt, m_hist, p)
+    return cost_evaluate_fn(y_final_predicted, u_final_for_cost, Q_cost, R_cost)
+
+def sfc_get_action(M0, M, ynat_history_buffer, filters, h_filt, m_hist, p):
+    window_for_action = jax.lax.dynamic_slice(ynat_history_buffer, (m_hist, 0, 0), (m_hist, p, 1))
+    last_ynat_for_action = jnp.squeeze(jax.lax.dynamic_slice(ynat_history_buffer, (2 * m_hist, 0, 0), (1, p, 1)), axis=0)
+    proj = jnp.einsum("hm,mp1->hp1", filters, window_for_action)
+    spectral_term = jnp.einsum("hnp,hp1->n1", M, proj)
+    return M0 @ last_ynat_for_action + spectral_term
+
+def sfc_update_controller(
+    M0, M, z, ynat_history_buffer, controller_t, 
+    y_meas, u_taken, 
+    A, B, C, 
+    lr_base, apply_lr_decay, R_M_clip, 
+    sfc_grad_policy_loss_fn, 
+    h_filt, m_hist, p
+):
+    z_next = A @ z + B @ u_taken
+    y_nat_current = y_meas - C @ z_next
+    ynat_history_updated = jnp.roll(ynat_history_buffer, shift=1, axis=0)
+    ynat_history_updated = ynat_history_updated.at[0].set(y_nat_current)
+    delta_M0, delta_M = sfc_grad_policy_loss_fn(M0, M, ynat_history_updated)
+    lr_current = lr_base * (1.0 / (controller_t + 1.0) if apply_lr_decay else 1.0)
+    M0_next_pre_clip = M0 - lr_current * delta_M0
+    M_next_pre_clip = M - lr_current * delta_M
+    norm_params = jnp.sqrt(jnp.sum(M0_next_pre_clip**2) + jnp.sum(M_next_pre_clip**2))
+    scale = jnp.minimum(1.0, R_M_clip / (norm_params + 1e-8)) # Add epsilon for stability
+    M0_next = scale * M0_next_pre_clip
+    M_next = scale * M_next_pre_clip
+    controller_t_next = controller_t + 1
+    return M0_next, M_next, z_next, ynat_history_updated, controller_t_next
+
+
+def run_single_sfc_trial(
+    key_trial_run, A, B, C, Q_cost, R_cost, x0, 
+    T_sim_steps, 
+    sfc_m_hist, sfc_h_filt, sfc_init_scale, sfc_lr, sfc_lr_decay, sfc_R_M, 
+    sfc_filters
+):
+    d, n, p = A.shape[0], B.shape[1], C.shape[0]
+
+    def _sfc_loss_for_grad_template(filters_arg, M0, M, ynat_hist):
+        return sfc_policy_loss(
+            M0, M, ynat_hist, 
+            A, B, C, 
+            quadratic_cost_evaluate, Q_cost, R_cost, 
+            filters_arg, 
+            sfc_h_filt, sfc_m_hist, d, p
+        )
+    final_sfc_loss_fn = partial(_sfc_loss_for_grad_template, sfc_filters)
+    sfc_grad_fn = jit(grad(final_sfc_loss_fn, argnums=(0, 1)))
+    
+    key_sfc_init, key_sim_loop_main = jax.random.split(key_trial_run)
+    M0, M, z, ynat_hist, t = sfc_init_controller_state(
+        key_sfc_init, sfc_init_scale, sfc_h_filt, n, p, d, sfc_m_hist
+    )
+    current_lds_x_state = x0
+    initial_sim_time_step = 0
+
+    def sfc_simulation_step(carry, key_step_specific_randomness):
+        prev_lds_x, prev_M0, prev_M, prev_z, prev_ynat_hist, prev_t, prev_sim_t_for_disturbance = carry
+        key_disturbance_for_step = key_step_specific_randomness
+
+        u_control_t = sfc_get_action(
+            prev_M0, prev_M, prev_ynat_hist, 
+            sfc_filters, 
+            sfc_h_filt, sfc_m_hist, p
+        )
+
+        # Determine which LDS step function to use based on global configuration
+        if LDS_TRANSITION_TYPE == "linear":
+            if LDS_NOISE_TYPE == "gaussian":
+                next_lds_x, y_measured_t = lds_gaussian_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    dist_std=GAUSSIAN_NOISE_STD, 
+                    t_sim_step=prev_sim_t_for_disturbance,
+                    key_disturbance=key_disturbance_for_step
+                )
+            elif LDS_NOISE_TYPE == "sinusoidal":
+                next_lds_x, y_measured_t = lds_sinusoidal_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    noise_amplitude=SINUSOIDAL_NOISE_AMPLITUDE, 
+                    noise_frequency=SINUSOIDAL_NOISE_FREQUENCY, 
+                    t_sim_step=prev_sim_t_for_disturbance,
+                    key_disturbance=key_disturbance_for_step
+                )
+            else: 
+                raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'linear' transition")
+        elif LDS_TRANSITION_TYPE == "relu":
+            if LDS_NOISE_TYPE == "gaussian":
+                next_lds_x, y_measured_t = lds_relu_gaussian_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    dist_std=GAUSSIAN_NOISE_STD, 
+                    t_sim_step=prev_sim_t_for_disturbance,
+                    key_disturbance=key_disturbance_for_step
+                )
+            elif LDS_NOISE_TYPE == "sinusoidal":
+                next_lds_x, y_measured_t = lds_relu_sinusoidal_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    noise_amplitude=SINUSOIDAL_NOISE_AMPLITUDE,
+                    noise_frequency=SINUSOIDAL_NOISE_FREQUENCY,
+                    t_sim_step=prev_sim_t_for_disturbance,
+                    key_disturbance=key_disturbance_for_step
+                )
+            else:
+                raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'relu' transition")
+        else:
+            raise ValueError(f"Unknown LDS_TRANSITION_TYPE: {LDS_TRANSITION_TYPE}")
+        
+        next_M0, next_M, next_z, next_ynat_hist, next_t = sfc_update_controller(
+            prev_M0, prev_M, prev_z, prev_ynat_hist, prev_t, 
+            y_measured_t, u_control_t, 
+            A, B, C,
+            sfc_lr, sfc_lr_decay, sfc_R_M, 
+            sfc_grad_fn, 
+            sfc_h_filt, sfc_m_hist, p
+        )
+            
+        cost_at_t = quadratic_cost_evaluate(y_measured_t, u_control_t, Q_cost, R_cost)
+        
+        next_sim_t_for_disturbance = prev_sim_t_for_disturbance + 1 
+        return (next_lds_x, next_M0, next_M, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance), cost_at_t
+    
+    initial_carry_sfc = (current_lds_x_state, M0, M, z, ynat_hist, t, initial_sim_time_step)
+    keys_for_T_scan_steps = jax.random.split(key_sim_loop_main, T_sim_steps)
+    (_, costs_over_time) = jax.lax.scan(sfc_simulation_step, initial_carry_sfc, keys_for_T_scan_steps)
+    return costs_over_time
+
+@partial(jit, static_argnames=("d","n","p","T","sfc_m_hist","sfc_h_filt","sfc_init_sc","sfc_lr","sfc_decay","sfc_R_M"))
+def sfc_trial_runner_for_vmap(key_trial_specific,d,n,p,T,sfc_m_hist,sfc_h_filt,sfc_init_sc,sfc_lr,sfc_decay,sfc_R_M,sfc_filters):
+    key_params_gen, key_sim_run = jax.random.split(key_trial_specific)
+    A,B,C,Q,R,x0 = generate_trial_params(key_params_gen,d,n,p)
+    return run_single_sfc_trial(key_sim_run,A,B,C,Q,R,x0,T,sfc_m_hist,sfc_h_filt,sfc_init_sc,sfc_lr,sfc_decay,sfc_R_M,sfc_filters)
+
+
+# --- SFC Hyperparameter Tuning (Grid Search) ---
+print("\n--- SFC Hyperparameter Tuning (Grid Search) ---")
+
+
+print(f"Tuning SFC with fixed params: d={D}, n={N}, p={P}, m_hist={SFC_M_HIST}, h_filt={SFC_H_FILT}, T={T}, trials={NUM_TRIALS}, LR decay={LR_DECAY}")
+
+plt.figure(figsize=(15, 10))
+plt.title(f"SFC Hyperparameter Tuning (d={D}, m_hist={SFC_M_HIST}, h_filt={SFC_H_FILT}, Transition={LDS_TRANSITION_TYPE}, Noise={LDS_NOISE_TYPE})")
+plt.xlabel("Time Step")
+plt.ylabel("Mean Cumulative Average Cost")
+plt.grid(True)
+
+best_sfc_hyperparams = None
+lowest_sfc_final_cost = float('inf')
+
+sfc_color_idx = 0
+sfc_num_param_combinations = len(INIT_SCALES_TO_TEST) * len(R_M_VALUES_TO_TEST) * len(LEARNING_RATES_TO_TEST) * len(GAMMA_VALUES_TO_TEST)
+sfc_colors = plt.cm.cool(np.linspace(0, 1, sfc_num_param_combinations if sfc_num_param_combinations > 0 else 1))
+
+# sfc_trial_runner_for_vmap expects: key, d,n,p,T,sfc_m_hist,sfc_h_filt,sfc_init_sc,sfc_lr,sfc_decay,sfc_R_M,sfc_filters (12 args)
+vmapped_sfc_runner = jax.vmap(
+    sfc_trial_runner_for_vmap, 
+    in_axes=(0, None, None, None, None, None, None, None, None, None, None, None), # Should be 12 entries
+    out_axes=0
+)
+
+for sfc_init_scale in INIT_SCALES_TO_TEST:
+    for sfc_R_M in R_M_VALUES_TO_TEST:
+        for sfc_lr in LEARNING_RATES_TO_TEST:
+            for sfc_gamma in GAMMA_VALUES_TO_TEST:
+                current_sfc_params = {
+                    "init_scale": sfc_init_scale, 
+                    "R_M": sfc_R_M, 
+                    "lr": sfc_lr,
+                    "gamma": sfc_gamma
+                }
+                print(f"Testing SFC with: {current_sfc_params}...")
+                
+                current_sfc_filters = sfc_compute_filters(SFC_M_HIST, SFC_H_FILT, sfc_gamma)
+
+                costs_current_sfc_params = np.array(vmapped_sfc_runner(
+                    TRIAL_KEYS, # Use common master keys
+                    D, N, P, 
+                    T,
+                    SFC_M_HIST, SFC_H_FILT, 
+                    sfc_init_scale, sfc_lr, LR_DECAY, sfc_R_M,
+                    current_sfc_filters
+                ))
+
+                cum_costs_current_sfc = np.cumsum(costs_current_sfc_params, axis=1)
+
+                if np.any(np.isnan(cum_costs_current_sfc)) or np.any(np.isinf(cum_costs_current_sfc)):
+                    print(f"  SFC Params {current_sfc_params} resulted in NaN/Inf costs. Skipping.")
+                    sfc_color_idx += 1
+                    continue
+
+                stability_threshold_sfc_tune = 1e7 
+                stable_mask_current_sfc = cum_costs_current_sfc[:, -1] < stability_threshold_sfc_tune
+                num_stable_sfc_trials = np.sum(stable_mask_current_sfc)
+
+                print(f"  SFC Params {current_sfc_params}: {num_stable_sfc_trials}/{NUM_TRIALS} stable trials.")
+
+                if num_stable_sfc_trials > NUM_TRIALS // 2: 
+                    avg_costs_stable_sfc = cum_costs_current_sfc[stable_mask_current_sfc] / (np.arange(1, T + 1)[None, :])
+                    mean_avg_cost_current_sfc = np.mean(avg_costs_stable_sfc, axis=0)
+                    
+                    sfc_label_str = f"is={sfc_init_scale}, rm={sfc_R_M}, lr={sfc_lr:.0e}, g={sfc_gamma}"
+                    current_sfc_color = sfc_colors[sfc_color_idx % len(sfc_colors)] if len(sfc_colors) > 0 else 'green'
+                    plt.plot(mean_avg_cost_current_sfc, label=sfc_label_str, color=current_sfc_color, alpha=0.6)
+                    
+                    final_avg_sfc_cost = mean_avg_cost_current_sfc[-1]
+                    if final_avg_sfc_cost < lowest_sfc_final_cost:
+                        lowest_sfc_final_cost = final_avg_sfc_cost
+                        best_sfc_hyperparams = current_sfc_params
+                        print(f"    New best SFC params: {best_sfc_hyperparams} with final avg cost: {lowest_sfc_final_cost:.4f}")
+                else:
+                    print(f"  SFC Params {current_sfc_params}: Not enough stable trials. Skipping plot.")
+                sfc_color_idx += 1
+
+if plt.gca().has_data() and len(plt.gca().lines) > 20: 
+    print("Many lines on the SFC tuning plot, omitting legend for clarity. See console for parameters.")
+elif plt.gca().has_data():
+    plt.legend(loc='upper right', fontsize='x-small')
+    
+plt.ylim(bottom=0, top= (lowest_sfc_final_cost * 5 if lowest_sfc_final_cost != float('inf') and lowest_sfc_final_cost > 0 else (np.max(plt.ylim()) if plt.gca().has_data() else 100) ) )
+
+base_filename_sfc = "sfc_tuning_full_grid_search_plot.png"
+plots_dir_sfc = os.path.join("plots", LDS_TRANSITION_TYPE.lower(), LDS_NOISE_TYPE.lower())
+os.makedirs(plots_dir_sfc, exist_ok=True)
+full_save_path_sfc = os.path.join(plots_dir_sfc, base_filename_sfc)
+plt.savefig(full_save_path_sfc)
+print(f"SFC grid search tuning plot saved to {full_save_path_sfc}")
+
+if best_sfc_hyperparams:
+    print(f"\nSelected best SFC hyperparameters from grid search: {best_sfc_hyperparams}")
+    print(f"Corresponding lowest final mean cumulative average cost for SFC: {lowest_sfc_final_cost:.4f}")
+else:
+    print("\nCould not determine a best set of SFC hyperparameters from the tested values.")
+
+print("\n--- SFC Hyperparameter Tuning (Grid Search) Complete ---")
+
+
+# ---------- DSC Controller Functions ----------
+def dsc_init_controller_state(key, init_scale, h_filt, m_hist, n, p, d):
+    key_M0, key_M1, key_M2, key_M3 = jax.random.split(key, 4)
+    M0 = init_scale * jax.random.normal(key_M0, shape=(n, p))
+    M1 = init_scale * jax.random.normal(key_M1, shape=(h_filt, n, p))
+    M2 = init_scale * jax.random.normal(key_M2, shape=(h_filt, n, p))
+    M3 = init_scale * jax.random.normal(key_M3, shape=(h_filt, h_filt, n, p)) # M3 is (h,h,n,p)
+    z = jnp.zeros((d, 1))
+    ynat_history = jnp.zeros((3 * m_hist + 1, p, 1)) # DSC uses 3*m+1 history, newest at index 0
+    controller_t = 0
+    return M0, M1, M2, M3, z, ynat_history, controller_t
+
+def _dsc_get_last_ynat_matrix_static(ynat_history_buffer, base_k_offset, m_hist, p):
+    def extract_window(i_vmap_offset): # i_vmap_offset from 0 to m_hist-1
+        start_idx_for_dynamic_slice = base_k_offset + 1 + i_vmap_offset
+        return jax.lax.dynamic_slice(ynat_history_buffer, (start_idx_for_dynamic_slice, 0, 0), (m_hist, p, 1))
+    return jax.vmap(extract_window)(jnp.arange(m_hist))
+
+
+def _dsc_action_terms_static(M0, M1, M2, M3, ynat_hist_buffer, filters_static, h_filt, m_hist, p, k_action_offset):
+    idx_current_last_ynat = k_action_offset + 2 * m_hist 
+    current_last_ynat = jnp.squeeze(jax.lax.dynamic_slice(ynat_hist_buffer, (idx_current_last_ynat, 0, 0), (1, p, 1)), axis=0)
+    term_M0 = M0 @ current_last_ynat
+
+    idx_prev_m_start = k_action_offset + m_hist
+    prev_m_ynats = jax.lax.dynamic_slice(ynat_hist_buffer, (idx_prev_m_start, 0, 0), (m_hist, p, 1))
+    proj1 = jnp.einsum("hm,mp1->hp1", filters_static, prev_m_ynats)
+    term_M1 = jnp.einsum("hnp,hp1->n1", M1, proj1)
+
+    idx_curr_m_start = k_action_offset + m_hist + 1
+    current_last_m_ynats = jax.lax.dynamic_slice(ynat_hist_buffer, (idx_curr_m_start, 0, 0), (m_hist, p, 1))
+    proj2 = jnp.einsum("hm,mp1->hp1", filters_static, current_last_m_ynats) 
+    term_M2 = jnp.einsum("hnp,hp1->n1", M2, proj2)
+    
+    current_last_ynat_matrix = _dsc_get_last_ynat_matrix_static(ynat_hist_buffer, k_action_offset, m_hist, p)
+    temp = jnp.einsum("hi,imp1->hmp1", filters_static, current_last_ynat_matrix)
+    filtered = jnp.einsum("jm,hmp1->hjp1", filters_static, temp)
+    term_M3_contrib = jnp.einsum("hjnp,hjp1->hjn1", M3, filtered)
+    term_M3 = jnp.sum(term_M3_contrib, axis=(0, 1))
+
+    return term_M0 + term_M1 + term_M2 + term_M3
+
+def dsc_policy_loss(M0, M1, M2, M3, ynat_history_for_loss, A, B, C, cost_evaluate_fn, Q_cost, R_cost, filters, h_filt, m_hist, d, p):
+    # ynat_history_for_loss: newest is at index 0. Oldest relevant for prediction base is ynat_history_for_loss[2*m_hist + m_hist] = ynat_history_for_loss[3*m_hist]
+    def evolve_for_loss(delta_state, m_idx_in_scan): 
+        u_for_evolve = _dsc_action_terms_static(M0, M1, M2, M3, ynat_history_for_loss, filters, h_filt, m_hist, p, k_action_offset=m_idx_in_scan)
+        next_delta_state = A @ delta_state + B @ u_for_evolve
+        return next_delta_state, None
+
+    initial_delta_state = jnp.zeros((d, 1))
+    final_delta, _ = jax.lax.scan(evolve_for_loss, initial_delta_state, jnp.arange(m_hist)) # Evolve m steps
+    
+    y_final_predicted = C @ final_delta + ynat_history_for_loss[-1] 
+    u_final_for_cost = _dsc_action_terms_static(M0, M1, M2, M3, ynat_history_for_loss, filters, h_filt, m_hist, p, k_action_offset=m_hist)
+    return cost_evaluate_fn(y_final_predicted, u_final_for_cost, Q_cost, R_cost)
+
+def dsc_update_controller(
+    M0, M1, M2, M3, z, ynat_history_buffer, controller_t,
+    y_meas, u_taken,
+    A, B, C,
+    lr_base, apply_lr_decay, R_M_clip,
+    dsc_grad_policy_loss_fn, 
+    h_filt, m_hist, p 
+):
+    z_next = A @ z + B @ u_taken
+    y_nat_current = y_meas - C @ z_next
+    ynat_history_updated = jnp.roll(ynat_history_buffer, shift=1, axis=0) # newest at [0]
+    ynat_history_updated = ynat_history_updated.at[0].set(y_nat_current)
+    
+    delta_M0, delta_M1, delta_M2, delta_M3 = dsc_grad_policy_loss_fn(M0, M1, M2, M3, ynat_history_updated)
+    
+    lr_current = lr_base * (1.0 / (controller_t + 1.0) if apply_lr_decay else 1.0)
+    M0_n = M0 - lr_current * delta_M0
+    M1_n = M1 - lr_current * delta_M1
+    M2_n = M2 - lr_current * delta_M2
+    M3_n = M3 - lr_current * delta_M3
+
+    norm_params = jnp.sqrt(jnp.sum(M0_n**2) + jnp.sum(M1_n**2) + jnp.sum(M2_n**2) + jnp.sum(M3_n**2))
+    scale = jnp.minimum(1.0, R_M_clip / (norm_params + 1e-8)) # Add epsilon for stability
+    M0_next = scale * M0_n
+    M1_next = scale * M1_n
+    M2_next = scale * M2_n
+    M3_next = scale * M3_n
+    
+    controller_t_next = controller_t + 1
+    return M0_next, M1_next, M2_next, M3_next, z_next, ynat_history_updated, controller_t_next
+
+# ---------- DSC Simulation ----------
+def run_single_dsc_trial(
+    key_trial_run, A, B, C, Q_cost, R_cost, x0,
+    T_sim_steps,
+    dsc_m_hist, dsc_h_filt, dsc_init_scale, 
+    dsc_lr, dsc_lr_decay, dsc_R_M,
+    dsc_filters # Precomputed filters
+):
+    d, n, p = A.shape[0], B.shape[1], C.shape[0]
+
+    def _dsc_loss_for_grad_template(filters_arg, M0_c, M1_c, M2_c, M3_c, ynat_hist_c):
+        return dsc_policy_loss(
+            M0_c, M1_c, M2_c, M3_c, ynat_hist_c,
+            A, B, C, quadratic_cost_evaluate, Q_cost, R_cost,
+            filters_arg, dsc_h_filt, dsc_m_hist, d, p
+        )
+    
+    final_dsc_loss_fn = partial(_dsc_loss_for_grad_template, dsc_filters)
+    dsc_grad_fn = jit(grad(final_dsc_loss_fn, argnums=(0, 1, 2, 3)))
+
+    key_dsc_init, key_sim_loop_main = jax.random.split(key_trial_run)
+    M0, M1, M2, M3, z, ynat_hist, t = dsc_init_controller_state(key_dsc_init, dsc_init_scale, dsc_h_filt, dsc_m_hist, n, p, d)
+
+    current_lds_x_state = x0
+    initial_sim_time_step = 0
+
+    def dsc_simulation_step(carry, key_step_specific_randomness):
+        prev_lds_x, prev_M0, prev_M1, prev_M2, prev_M3, prev_z, prev_ynat_hist, prev_t, prev_sim_t_for_disturbance = carry
+        key_disturbance_for_step = key_step_specific_randomness
+
+        u_control_t = _dsc_action_terms_static(
+            prev_M0, prev_M1, prev_M2, prev_M3, prev_ynat_hist,
+            dsc_filters, dsc_h_filt, dsc_m_hist, p,
+            k_action_offset=0
+        )
+        
+        # Determine which LDS step function to use based on global configuration
+        if LDS_TRANSITION_TYPE == "linear":
+            if LDS_NOISE_TYPE == "gaussian":
+                next_lds_x, y_measured_t = lds_gaussian_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    dist_std=GAUSSIAN_NOISE_STD, 
+                    t_sim_step=prev_sim_t_for_disturbance,
+                    key_disturbance=key_disturbance_for_step
+                )
+            elif LDS_NOISE_TYPE == "sinusoidal":
+                next_lds_x, y_measured_t = lds_sinusoidal_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    noise_amplitude=SINUSOIDAL_NOISE_AMPLITUDE, 
+                    noise_frequency=SINUSOIDAL_NOISE_FREQUENCY, 
+                    t_sim_step=prev_sim_t_for_disturbance,
+                    key_disturbance=key_disturbance_for_step
+                )
+            else: 
+                raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'linear' transition")
+        elif LDS_TRANSITION_TYPE == "relu":
+            if LDS_NOISE_TYPE == "gaussian":
+                next_lds_x, y_measured_t = lds_relu_gaussian_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    dist_std=GAUSSIAN_NOISE_STD, 
+                    t_sim_step=prev_sim_t_for_disturbance,
+                    key_disturbance=key_disturbance_for_step
+                )
+            elif LDS_NOISE_TYPE == "sinusoidal":
+                next_lds_x, y_measured_t = lds_relu_sinusoidal_step_dynamic(
+                    current_x=prev_lds_x,
+                    A=A, B=B, C=C,
+                    u_t=u_control_t,
+                    noise_amplitude=SINUSOIDAL_NOISE_AMPLITUDE,
+                    noise_frequency=SINUSOIDAL_NOISE_FREQUENCY,
+                    t_sim_step=prev_sim_t_for_disturbance,
+                    key_disturbance=key_disturbance_for_step
+                )
+            else:
+                raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'relu' transition")
+        else:
+            raise ValueError(f"Unknown LDS_TRANSITION_TYPE: {LDS_TRANSITION_TYPE}")
+
+        next_M0, next_M1, next_M2, next_M3, next_z, next_ynat_hist, next_t = dsc_update_controller(
+                                                                                prev_M0, prev_M1, prev_M2, prev_M3, prev_z, prev_ynat_hist, prev_t,
+                                                                                y_measured_t, u_control_t,
+                                                                                A, B, C,
+                                                                                dsc_lr, dsc_lr_decay, dsc_R_M,
+                                                                                dsc_grad_fn,
+                                                                                dsc_h_filt, dsc_m_hist, p
+                                                                            )
+            
+        cost_at_t = quadratic_cost_evaluate(y_measured_t, u_control_t, Q_cost, R_cost)
+        
+        next_sim_t_for_disturbance = prev_sim_t_for_disturbance + 1
+        return (next_lds_x, next_M0, next_M1, next_M2, next_M3, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance), cost_at_t
+
+    initial_carry_dsc = (current_lds_x_state, M0, M1, M2, M3, z, ynat_hist, t, initial_sim_time_step)
+    keys_for_T_scan_steps = jax.random.split(key_sim_loop_main, T_sim_steps)
+    
+    (_, costs_over_time) = jax.lax.scan(dsc_simulation_step, initial_carry_dsc, keys_for_T_scan_steps)
+    return costs_over_time
+
+@partial(jit, static_argnames=(
+    "d","n","p","T",
+    "dsc_m_hist","dsc_h_filt","dsc_init_sc", 
+    "dsc_lr","dsc_decay","dsc_R_M"
+))
+def dsc_trial_runner_for_vmap(
+    key_trial_specific,
+    d,n,p,T, 
+    dsc_m_hist,dsc_h_filt,dsc_init_sc,
+    dsc_lr,dsc_decay,dsc_R_M,
+    dsc_filters # broadcasted by vmap
+):
+    key_params_gen, key_sim_run = jax.random.split(key_trial_specific)
+    A,B,C,Q,R,x0 = generate_trial_params(key_params_gen,d,n,p)
+    return run_single_dsc_trial(
+        key_sim_run,A,B,C,Q,R,x0,T,
+        dsc_m_hist,dsc_h_filt,dsc_init_sc,dsc_lr,dsc_decay,dsc_R_M,
+        dsc_filters
+    )
+
+
+# --- DSC Hyperparameter Tuning (Grid Search) ---
+print("\n--- DSC Hyperparameter Tuning (Grid Search) ---")
+print(f"Tuning DSC with fixed params: d={D}, n={N}, p={P}, m_hist={DSC_M_HIST}, h_filt={DSC_H_FILT}, T={T}, trials={NUM_TRIALS}, LR decay={LR_DECAY}")
+
+plt.figure(figsize=(15, 10))
+plt.title(f"DSC Hyperparameter Tuning (d={D}, m_hist={DSC_M_HIST}, h_filt={DSC_H_FILT}, Transition={LDS_TRANSITION_TYPE}, Noise={LDS_NOISE_TYPE})")
+plt.xlabel("Time Step")
+plt.ylabel("Mean Cumulative Average Cost")
+plt.grid(True)
+
+best_dsc_hyperparams = None
+lowest_dsc_final_cost = float('inf')
+
+dsc_color_idx = 0
+dsc_num_param_combinations = len(INIT_SCALES_TO_TEST) * len(R_M_VALUES_TO_TEST) * len(LEARNING_RATES_TO_TEST) * len(GAMMA_VALUES_TO_TEST)
+dsc_colors = plt.cm.plasma(np.linspace(0, 1, dsc_num_param_combinations if dsc_num_param_combinations > 0 else 1))
+
+# dsc_trial_runner_for_vmap expects: key,d,n,p,T,dsc_m_hist,dsc_h_filt,dsc_init_sc,dsc_lr,dsc_decay,dsc_R_M,dsc_filters (12 args)
+vmapped_dsc_runner = jax.vmap(
+    dsc_trial_runner_for_vmap, 
+    in_axes=(0, None, None, None, None, None, None, None, None, None, None, None), # 12 entries
+    out_axes=0
+)
+
+for dsc_init_scale in INIT_SCALES_TO_TEST:
+    for dsc_R_M in R_M_VALUES_TO_TEST:
+        for dsc_lr in LEARNING_RATES_TO_TEST:
+            for dsc_gamma in GAMMA_VALUES_TO_TEST:
+                current_dsc_params = {
+                    "init_scale": dsc_init_scale, 
+                    "R_M": dsc_R_M, 
+                    "lr": dsc_lr,
+                    "gamma": dsc_gamma
+                }
+                print(f"Testing DSC with: {current_dsc_params}...")
+                
+                current_dsc_filters = sfc_compute_filters(DSC_M_HIST, DSC_H_FILT, dsc_gamma)
+
+                costs_current_dsc_params = np.array(vmapped_dsc_runner(
+                    TRIAL_KEYS, # Use common master keys
+                    D, N, P, 
+                    T,
+                    DSC_M_HIST, DSC_H_FILT, 
+                    dsc_init_scale, dsc_lr, LR_DECAY, dsc_R_M,
+                    current_dsc_filters
+                ))
+
+                cum_costs_current_dsc = np.cumsum(costs_current_dsc_params, axis=1)
+
+                if np.any(np.isnan(cum_costs_current_dsc)) or np.any(np.isinf(cum_costs_current_dsc)):
+                    print(f"  DSC Params {current_dsc_params} resulted in NaN/Inf costs. Skipping.")
+                    dsc_color_idx += 1
+                    continue
+
+                stability_threshold_dsc_tune = 1e7 
+                stable_mask_current_dsc = cum_costs_current_dsc[:, -1] < stability_threshold_dsc_tune
+                num_stable_dsc_trials = np.sum(stable_mask_current_dsc)
+
+                print(f"  DSC Params {current_dsc_params}: {num_stable_dsc_trials}/{NUM_TRIALS} stable trials.")
+
+                if num_stable_dsc_trials > NUM_TRIALS // 2: 
+                    avg_costs_stable_dsc = cum_costs_current_dsc[stable_mask_current_dsc] / (np.arange(1, T + 1)[None, :])
+                    mean_avg_cost_current_dsc = np.mean(avg_costs_stable_dsc, axis=0)
+                    
+                    dsc_label_str = f"is={dsc_init_scale}, rm={dsc_R_M:.1e}, lr={dsc_lr:.0e}, g={dsc_gamma}"
+                    current_dsc_color = dsc_colors[dsc_color_idx % len(dsc_colors)] if len(dsc_colors) > 0 else 'red'
+                    plt.plot(mean_avg_cost_current_dsc, label=dsc_label_str, color=current_dsc_color, alpha=0.6)
+                    
+                    final_avg_dsc_cost = mean_avg_cost_current_dsc[-1]
+                    if final_avg_dsc_cost < lowest_dsc_final_cost:
+                        lowest_dsc_final_cost = final_avg_dsc_cost
+                        best_dsc_hyperparams = current_dsc_params
+                        print(f"    New best DSC params: {best_dsc_hyperparams} with final avg cost: {lowest_dsc_final_cost:.4f}")
+                else:
+                    print(f"  DSC Params {current_dsc_params}: Not enough stable trials. Skipping plot.")
+                dsc_color_idx += 1
+
+if plt.gca().has_data() and len(plt.gca().lines) > 20: 
+    print("Many lines on the DSC tuning plot, omitting legend for clarity. See console for parameters.")
+elif plt.gca().has_data():
+    plt.legend(loc='upper right', fontsize='x-small')
+    
+plt.ylim(bottom=0, top= (lowest_dsc_final_cost * 5 if lowest_dsc_final_cost != float('inf') and lowest_dsc_final_cost > 0 else (np.max(plt.ylim()) if plt.gca().has_data() else 100) ) )
+
+base_filename_dsc = "dsc_tuning_full_grid_search_plot.png"
+plots_dir_dsc = os.path.join("plots", LDS_TRANSITION_TYPE.lower(), LDS_NOISE_TYPE.lower())
+os.makedirs(plots_dir_dsc, exist_ok=True)
+full_save_path_dsc = os.path.join(plots_dir_dsc, base_filename_dsc)
+plt.savefig(full_save_path_dsc)
+print(f"DSC grid search tuning plot saved to {full_save_path_dsc}")
+
+if best_dsc_hyperparams:
+    print(f"\nSelected best DSC hyperparameters from grid search: {best_dsc_hyperparams}")
+    print(f"Corresponding lowest final mean cumulative average cost for DSC: {lowest_dsc_final_cost:.4f}")
+else:
+    print("\nCould not determine a best set of DSC hyperparameters from the tested values.")
+
+print("\n--- DSC Hyperparameter Tuning (Grid Search) Complete ---")
+
+
+# Store best hyperparameters for comparison plots, with fallbacks
+# GPC
+tuned_gpc_init_scale_comp = best_gpc_hyperparams['init_scale'] if best_gpc_hyperparams else 0.1 
+tuned_gpc_lr_comp = best_gpc_hyperparams['lr'] if best_gpc_hyperparams else 1e-4       
+tuned_gpc_R_M_comp = best_gpc_hyperparams['R_M'] if best_gpc_hyperparams else 10.0     
+gpc_params_source_message = "using tuned params" if best_gpc_hyperparams else "using default GPC params (tuning failed)"
+
+# SFC
+default_sfc_init_scale = 0.1
+default_sfc_lr = 1e-4
+default_sfc_R_M = 10.0
+default_sfc_gamma = 0.2
+
+tuned_sfc_init_scale_comp = best_sfc_hyperparams['init_scale'] if best_sfc_hyperparams else default_sfc_init_scale
+tuned_sfc_lr_comp = best_sfc_hyperparams['lr'] if best_sfc_hyperparams else default_sfc_lr
+tuned_sfc_R_M_comp = best_sfc_hyperparams['R_M'] if best_sfc_hyperparams else default_sfc_R_M
+tuned_sfc_gamma_comp = best_sfc_hyperparams['gamma'] if best_sfc_hyperparams else default_sfc_gamma
+sfc_params_source_message = "using tuned params" if best_sfc_hyperparams else "using default SFC params (tuning failed)"
+
+# DSC
+default_dsc_init_scale = 0.1
+default_dsc_lr = 1e-4
+default_dsc_R_M = 0.001
+default_dsc_gamma = 0.2
+
+tuned_dsc_init_scale_comp = best_dsc_hyperparams['init_scale'] if best_dsc_hyperparams else default_dsc_init_scale
+tuned_dsc_lr_comp = best_dsc_hyperparams['lr'] if best_dsc_hyperparams else default_dsc_lr
+tuned_dsc_R_M_comp = best_dsc_hyperparams['R_M'] if best_dsc_hyperparams else default_dsc_R_M
+tuned_dsc_gamma_comp = best_dsc_hyperparams['gamma'] if best_dsc_hyperparams else default_dsc_gamma
+dsc_params_source_message = "using tuned params" if best_dsc_hyperparams else "using default DSC params (tuning failed)"
+
+
+# --- Comparison Plots---
+print("\n--- Running Comparison Experiments (Optimized GPC, SFC, DSC) ---")
+
+
+comp_num_trials = NUM_TRIALS 
+comp_threshold = 1e7 
+
+comp_trial_keys = TRIAL_KEYS # Use the master keys for comparison as well
+
+# GPC for Comparison 
+gpc_init_scale_for_comp = tuned_gpc_init_scale_comp
+gpc_lr_for_comp = tuned_gpc_lr_comp
+gpc_R_M_for_comp = tuned_gpc_R_M_comp
+gpc_hyperparam_details_str = ""
+if best_gpc_hyperparams:
+    gpc_hyperparam_details_str = f": is={best_gpc_hyperparams['init_scale']:.3f}, lr={best_gpc_hyperparams['lr']:.1e}, R_M={best_gpc_hyperparams['R_M']:.3f}"
+gpc_label_suffix = f" ({gpc_params_source_message}{gpc_hyperparam_details_str})"
+
+print(f"GPC for Comparison ({gpc_params_source_message}): {comp_num_trials} trials, {T} steps, m={GPC_M}, init_scale={gpc_init_scale_for_comp:.3f}, lr={gpc_lr_for_comp:.1e}, R_M={gpc_R_M_for_comp:.3f}")
+comp_costs_gpc = vmap_gpc(
+    comp_trial_keys, 
+    D, N, P, 
+    T, 
+    GPC_M,
+    gpc_init_scale_for_comp, 
+    gpc_lr_for_comp, 
+    LR_DECAY,
+    gpc_R_M_for_comp
+)
+comp_costs_gpc_np = np.array(comp_costs_gpc)
+print("GPC for Comparison complete.")
+cum_gpc_comp = np.cumsum(comp_costs_gpc_np, axis=1)
+mask_gpc_comp = cum_gpc_comp[:,-1] < comp_threshold
+rem_gpc_comp = np.sum(~mask_gpc_comp)
+print(f"Removed {rem_gpc_comp} GPC comparison trial(s)")
+mean_avg_cost_gpc_comp = np.zeros(T)
+stderr_avg_cost_gpc_comp = np.zeros(T)
+if mask_gpc_comp.sum() > 0:
+    c_st_gpc_comp = cum_gpc_comp[mask_gpc_comp]
+    n_st_gpc_comp = c_st_gpc_comp.shape[0]
+    avg_gpc_comp = c_st_gpc_comp / (np.arange(1, T + 1)[None, :])
+    mean_avg_cost_gpc_comp = np.mean(avg_gpc_comp, axis=0)
+    stderr_avg_cost_gpc_comp = np.std(avg_gpc_comp, axis=0) / np.sqrt(n_st_gpc_comp)
+
+# SFC for Comparison 
+sfc_init_scale_for_comp = tuned_sfc_init_scale_comp
+sfc_lr_for_comp = tuned_sfc_lr_comp
+sfc_R_M_for_comp = tuned_sfc_R_M_comp
+sfc_gamma_for_comp = tuned_sfc_gamma_comp
+sfc_hyperparam_details_str = ""
+if best_sfc_hyperparams:
+    sfc_hyperparam_details_str = f": is={best_sfc_hyperparams['init_scale']:.3f}, lr={best_sfc_hyperparams['lr']:.1e}, R_M={best_sfc_hyperparams['R_M']:.3f}, g={best_sfc_hyperparams['gamma']:.3f}"
+sfc_label_suffix = f" ({sfc_params_source_message}{sfc_hyperparam_details_str})"
+
+comp_sfc_filters = sfc_compute_filters(SFC_M_HIST, SFC_H_FILT, sfc_gamma_for_comp)
+
+print(f"SFC for Comparison ({sfc_params_source_message}): {comp_num_trials} trials, {T} steps, m_hist={SFC_M_HIST}, h_filt={SFC_H_FILT}, init_scale={sfc_init_scale_for_comp:.3f}, lr={sfc_lr_for_comp:.1e}, R_M={sfc_R_M_for_comp:.3f}, gamma={sfc_gamma_for_comp:.3f}")
+comp_costs_sfc = vmapped_sfc_runner(
+    comp_trial_keys, D, N, P, 
+    T, 
+    SFC_M_HIST, SFC_H_FILT, 
+    sfc_init_scale_for_comp, sfc_lr_for_comp, LR_DECAY, sfc_R_M_for_comp, # Use global LR_DECAY
+    comp_sfc_filters
+)
+comp_costs_sfc_np = np.array(comp_costs_sfc)
+print("SFC for Comparison complete.")
+cum_sfc_comp = np.cumsum(comp_costs_sfc_np, axis=1)
+mask_sfc_comp = cum_sfc_comp[:,-1] < comp_threshold
+rem_sfc_comp = np.sum(~mask_sfc_comp)
+print(f"Removed {rem_sfc_comp} SFC comparison trial(s)")
+mean_avg_cost_sfc_comp = np.zeros(T)
+stderr_avg_cost_sfc_comp = np.zeros(T)
+if mask_sfc_comp.sum() > 0:
+    c_st_sfc_comp = cum_sfc_comp[mask_sfc_comp]
+    n_st_sfc_comp = c_st_sfc_comp.shape[0]
+    avg_sfc_comp = c_st_sfc_comp / (np.arange(1, T + 1)[None, :])
+    mean_avg_cost_sfc_comp = np.mean(avg_sfc_comp, axis=0)
+    stderr_avg_cost_sfc_comp = np.std(avg_sfc_comp, axis=0) / np.sqrt(n_st_sfc_comp)
+
+# DSC for Comparison 
+dsc_init_scale_for_comp = tuned_dsc_init_scale_comp
+dsc_lr_for_comp = tuned_dsc_lr_comp
+dsc_R_M_for_comp = tuned_dsc_R_M_comp
+dsc_gamma_for_comp = tuned_dsc_gamma_comp
+dsc_hyperparam_details_str = ""
+if best_dsc_hyperparams:
+    dsc_hyperparam_details_str = f": is={best_dsc_hyperparams['init_scale']:.3f}, lr={best_dsc_hyperparams['lr']:.1e}, R_M={best_dsc_hyperparams['R_M']:.4f}, g={best_dsc_hyperparams['gamma']:.3f}"
+dsc_label_suffix = f" ({dsc_params_source_message}{dsc_hyperparam_details_str})"
+
+comp_dsc_filters = sfc_compute_filters(DSC_M_HIST, DSC_H_FILT, dsc_gamma_for_comp) 
+
+print(f"DSC for Comparison ({dsc_params_source_message}): {comp_num_trials} trials, {T} steps, m_hist={DSC_M_HIST}, h_filt={DSC_H_FILT}, init_scale={dsc_init_scale_for_comp:.3f}, lr={dsc_lr_for_comp:.1e}, R_M={dsc_R_M_for_comp:.4f}, gamma={dsc_gamma_for_comp:.3f}")
+comp_costs_dsc = vmapped_dsc_runner(
+    comp_trial_keys, D, N, P, 
+    T,
+    DSC_M_HIST, DSC_H_FILT,
+    dsc_init_scale_for_comp, dsc_lr_for_comp, LR_DECAY, dsc_R_M_for_comp, # Use global LR_DECAY
+    comp_dsc_filters
+)
+comp_costs_dsc_np = np.array(comp_costs_dsc)
+print("DSC for Comparison complete.")
+cum_dsc_comp = np.cumsum(comp_costs_dsc_np, axis=1)
+mask_dsc_comp = cum_dsc_comp[:,-1] < comp_threshold
+rem_dsc_comp = np.sum(~mask_dsc_comp)
+print(f"Removed {rem_dsc_comp} DSC comparison trial(s)")
+
+mean_avg_cost_dsc_comp = np.zeros(T)
+stderr_avg_cost_dsc_comp = np.zeros(T)
+if mask_dsc_comp.sum() > 0:
+    c_st_dsc_comp = cum_dsc_comp[mask_dsc_comp]
+    n_st_dsc_comp = c_st_dsc_comp.shape[0]
+    avg_dsc_comp = c_st_dsc_comp / (np.arange(1, T + 1)[None, :])
+    mean_avg_cost_dsc_comp = np.mean(avg_dsc_comp, axis=0)
+    stderr_avg_cost_dsc_comp = np.std(avg_dsc_comp, axis=0) / np.sqrt(n_st_dsc_comp)
+else: 
+    print("No stable DSC trials for comparison plot.")
+
+
+# Final Comparison Plot
+plt.figure(figsize=(12, 7))
+# GPC 
+plt.plot(mean_avg_cost_gpc_comp, label=f"GPC {gpc_label_suffix}", color="blue")
+plt.fill_between(np.arange(T), 
+                mean_avg_cost_gpc_comp - stderr_avg_cost_gpc_comp,
+                mean_avg_cost_gpc_comp + stderr_avg_cost_gpc_comp,
+                alpha=0.2, color="blue")
+# SFC 
+plt.plot(mean_avg_cost_sfc_comp, label=f"SFC {sfc_label_suffix}", color="green")
+plt.fill_between(np.arange(T), 
+                mean_avg_cost_sfc_comp - stderr_avg_cost_sfc_comp,
+                mean_avg_cost_sfc_comp + stderr_avg_cost_sfc_comp,
+                alpha=0.2, color="green")
+# DSC 
+plt.plot(mean_avg_cost_dsc_comp, label=f"DSC {dsc_label_suffix}", color="red")
+plt.fill_between(np.arange(T), 
+                mean_avg_cost_dsc_comp - stderr_avg_cost_dsc_comp,
+                mean_avg_cost_dsc_comp + stderr_avg_cost_dsc_comp,
+                alpha=0.2, color="red")
+
+plt.xlabel("Time Step")
+plt.ylabel("Cumulative Average Cost")
+
+title_parts = []
+if best_gpc_hyperparams: title_parts.append("Tuned GPC")
+else: title_parts.append("Default GPC")
+if best_sfc_hyperparams: title_parts.append("Tuned SFC")
+else: title_parts.append("Default SFC")
+if best_dsc_hyperparams: title_parts.append("Tuned DSC")
+else: title_parts.append("Default DSC")
+comparison_plot_title = f"Comparison: {', '.join(title_parts)} (Transition={LDS_TRANSITION_TYPE}, Noise={LDS_NOISE_TYPE})"
+
+plt.title(comparison_plot_title)
+plt.legend(fontsize='small')
+plt.grid(True)
+
+# Determine a reasonable y-limit based on all plotted data
+all_means_for_ylim = [mean_avg_cost_gpc_comp, mean_avg_cost_sfc_comp, mean_avg_cost_dsc_comp]
+all_stderr_for_ylim = [stderr_avg_cost_gpc_comp, stderr_avg_cost_sfc_comp, stderr_avg_cost_dsc_comp]
+max_y = 0
+for mean_data, stderr_data in zip(all_means_for_ylim, all_stderr_for_ylim):
+    if mean_data.size > 0 and stderr_data.size > 0: # Check if array is not empty
+        current_max = np.max(mean_data + stderr_data)
+        if not np.isnan(current_max) and not np.isinf(current_max) : # Check for valid numbers
+            max_y = max(max_y, current_max)
+if max_y == 0: max_y = 100 # Default if no valid data
+
+plt.ylim(bottom=0, top=max_y * 1.1 + 1) 
+plt.tight_layout()
+
+base_filename_comp = "comparison_cumulative_average_costs_tuned.png"
+plots_dir_comp = os.path.join("plots", LDS_TRANSITION_TYPE.lower(), LDS_NOISE_TYPE.lower())
+os.makedirs(plots_dir_comp, exist_ok=True)
+full_save_path_comp = os.path.join(plots_dir_comp, base_filename_comp)
+plt.savefig(full_save_path_comp)
+print(f"Comparison plot saved to {full_save_path_comp}")

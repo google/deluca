@@ -23,38 +23,26 @@ import numpy as np
 
 class LDS(Env):
   """LDS."""
-  key: int = field(default_factory=lambda: jax.random.key(0), jaxed=False)
-  A: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
-  B: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
-  C: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
-  state: jnp.array = field(default_factory=lambda: jnp.array([[1.0]]), jaxed=False)
-  d_hidden: int = field(1, jaxed=False)
-  d_in: int = field(1, jaxed=False)
-  d_out: int = field(1, jaxed=False)
 
-
-  def init(self,d_in = 1,d_hidden  = 1, d_out = 1):
+  def init(self,A: jnp.array = None, B: jnp.array = None, C: jnp.array = None, d_in: int = 1, d_hidden: int = 1, d_out: int = 1, disturbance: str = "gaussian", disturbance_std: float = 0.04, key: jax.random.key = jax.random.PRNGKey(0)):
     """init.
     initialize internal state to be random
 
     Returns:
       obs:
     """
-    self.d_in = d_in
-    self.d_hidden = d_hidden
-    self.d_out = d_out
-    A = jnp.diag( jnp.sign( jax.random.normal(self.key, shape=(self.d_hidden))) * 0.9  + jax.random.uniform(self.key, self.d_hidden ) * 0.04  )
-    print("the eigenvalues of our system:",jnp.diag(A))
-    B = jax.random.normal(self.key, shape=(self.d_hidden, self.d_in))
-    C = jax.random.normal(self.key, shape=(d_out, d_hidden)) # jax.numpy.identity(self.d_hidden) #
-    self.A = A
-    self.B = B
-    self.C = C
-    self.state = jax.random.normal(self.key, shape=(self.d_hidden, 1))
-    return self.C @ self.state
+    self.A = A or jnp.diag( jnp.sign( jax.random.normal(key, shape=(d_hidden))) * 0.9  + jax.random.uniform(key, shape=(d_hidden) ) * 0.04  )
+    self.B = B or jax.random.normal(key, shape=(d_hidden, d_in))
+    self.C = C or jax.random.normal(key, shape=(d_out, d_hidden))
+    self.disturbance = disturbance
+    self.disturbance_std = disturbance_std
+    self.d = self.A.shape[0]
+    self.n = self.B.shape[1]
+    self.p = self.C.shape[0]
+    self.state = jnp.zeros((self.d, 1))
 
 
-  def __call__(self, action):
+  def __call__(self, action, key):
     """__call__.
 
     Args:
@@ -64,12 +52,14 @@ class LDS(Env):
       observation signal:
 
     """
-    assert action.shape[0] == self.d_in , "dimension of action is wrong"
-    self.state = self.A @ self.state + self.B @ action
+    assert action.shape == (self.n, 1), "dimension of action is wrong"
+    if self.disturbance == "gaussian":
+      disturbance = jax.random.normal(key, shape=(self.d, 1)) * self.disturbance_std
+    self.state = self.A @ self.state + self.B @ action + disturbance
     return self.C @ self.state
 
 
-  def generate_random_trajectory(self, trajectory_length = 1000):
+  def generate_random_trajectory(self, key, trajectory_length = 1000):
     """generate_random_trajectory.
     generates a trajectory of the environment with random actions
 
@@ -81,21 +71,21 @@ class LDS(Env):
     print("trajectory length =" , trajectory_length)
     results = np.zeros(trajectory_length)
     for i in range(trajectory_length):
-      # rand_action = jax.random.normal(self.key, shape = (self.d_in,1))
-      rand_action = np.random.normal(0,1,size=(self.d_in,1))
-      obs = self( rand_action )
+      rand_action = np.random.normal(0, 1, size=(self.n, 1))
+      obs = self(rand_action,key)
       results[i] = obs[0,0] # first coordinate of the observation
     return results
 
   def show_me_the_signal(self,length = 1000):
-    results = self.generate_random_trajectory(length)
+    key = jax.random.PRNGKey(0)
+    results = self.generate_random_trajectory(key,length)
     plt.plot(results)
     plt.show()
 
   def diagnostics(self):
     print("my parameters are")
     print("d_in, d_hidden, d_out are:")
-    print(self.d_in, self.d_hidden, self.d_out)
+    print(self.n, self.d, self.p)
     print("A, B, C are: ")
     print(self.A, self.B, self.C)
     print("state is:")

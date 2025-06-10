@@ -14,7 +14,7 @@
 
 from deluca.agents._bang_bang import BangBang
 from deluca.agents._pid import PID
-from deluca.agents._random import Random
+from deluca.agents._random import Random, SimpleRandom
 from deluca.agents._zero import Zero
 
-__all__ = ["BangBang", "PID", "Random", "Zero"]
+__all__ = ["BangBang", "PID", "Random", "SimpleRandom", "Zero"]
