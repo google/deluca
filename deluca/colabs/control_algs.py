@@ -12,25 +12,24 @@ import brax
 from brax import envs
 from brax import kinematics
 from brax.io import html
-import flax # Required by brax.physics.base.State
-
-# ---------- Noise Configuration ----------
-LDS_NOISE_TYPE = "gaussian"  # Options: "gaussian", "sinusoidal"
-GAUSSIAN_NOISE_STD = 0.5
-SINUSOIDAL_NOISE_AMPLITUDE = 0.5
-SINUSOIDAL_NOISE_FREQUENCY = 0.1 # Example frequency, adjust as needed
-
-# ---------- LDS Transition Configuration ----------
-LDS_TRANSITION_TYPE = "special" # Options: "linear", "relu", "special"
 
 # ---------- System Configuration ----------
-SYSTEM_TYPE = "brax" # Options: "lds", "pendulum", "brax"
+SYSTEM_TYPE = "pendulum" # Options: "lds", "pendulum", "brax"
 BRAX_ENV_NAME = "inverted_pendulum" # Used if SYSTEM_TYPE == "brax"
 MAX_TORQUE = 1.0
 M = 1.0
 L = 1.0
 G = 9.81
 DT = 0.02
+
+# ---------- LDS Transition Configuration ----------
+LDS_TRANSITION_TYPE = "special" # Options: "linear", "relu", "special"
+
+# ---------- Noise Configuration ----------
+LDS_NOISE_TYPE = "gaussian"  # Options: "gaussian", "sinusoidal"
+GAUSSIAN_NOISE_STD = 0.5
+SINUSOIDAL_NOISE_AMPLITUDE = 0.5
+SINUSOIDAL_NOISE_FREQUENCY = 0.1 # Example frequency, adjust as needed
 
 # ---------- Brax Environment Setup ----------
 brax_env, brax_template_state, jit_brax_env_step, brax_env_dt = (None, None, None, None)
@@ -42,34 +41,57 @@ if SYSTEM_TYPE == "brax":
     brax_env_dt = brax_env.dt
 
 
+# Hyperparameter Ranges for Tuning (Grid Search)
+# INIT_SCALES_TO_TEST = []
+# LEARNING_RATES_TO_TEST = []
+# R_M_VALUES_TO_TEST = []
+# GAMMA_VALUES_TO_TEST = [] # For SFC and DSC
+
+INIT_SCALES_TO_TEST = [2.0]
+LEARNING_RATES_TO_TEST = [5e-5, 1e-4, 5e-4]
+R_M_VALUES_TO_TEST = [0.005, 0.01, 0.1, 1.0, 5.0, 10.0]
+GAMMA_VALUES_TO_TEST = [0.05, 0.1, 0.3] # For SFC and DSC
+
 # ---------- Experiment & Hyperparameter Configuration ----------
 # System Parameters
 if SYSTEM_TYPE == "lds":
+    NUM_STABLE_TRIALS_THRESHOLD = 2 # 50%
     D, N, P = 25, 1, 1
+    T = 5000     # Time horizon for simulations
+    GPC_M = 10
+    SFC_M_HIST = 30
+    SFC_H_FILT = 10
+    DSC_M_HIST = 30 # Often same as SFC, but kept separate for flexibility
+    DSC_H_FILT = 10 # Often same as SFC
 elif SYSTEM_TYPE == "pendulum":
+    NUM_STABLE_TRIALS_THRESHOLD = 10 # 10%
+    INIT_SCALES_TO_TEST = [0.01]
+    LEARNING_RATES_TO_TEST = [1e-8, 1e-7, 1e-6, 1e-5]
     D, N, P = 2, 1, 2
+    T = 5000     # Time horizon for simulations
+    GPC_M = 3
+    SFC_M_HIST = 5
+    SFC_H_FILT = 3
+    DSC_M_HIST = 5
+    DSC_H_FILT = 3
+    GAUSSIAN_NOISE_STD = 0.001
 elif SYSTEM_TYPE == "brax":
+    NUM_STABLE_TRIALS_THRESHOLD = 10 # 10%
     D = brax_env.sys.q_size() + brax_env.sys.qd_size()
     N = brax_env.action_size
     P = D  # Full state as output
+    T = 50     # Time horizon for simulations
+    # Controller Structure Parameters
+    GPC_M = 5
+    SFC_M_HIST = 10
+    SFC_H_FILT = 5
+    DSC_M_HIST = 10 # Often same as SFC, but kept separate for flexibility
+    DSC_H_FILT = 5 # Often same as SFC
+    GAUSSIAN_NOISE_STD = 0
 else:
     raise ValueError(f"Unknown SYSTEM_TYPE: {SYSTEM_TYPE}")
 
-T = 50     # Time horizon for simulations
 LR_DECAY = True # Whether to apply learning rate decay
-
-# Controller Structure Parameters
-GPC_M = 5
-SFC_M_HIST = 10
-SFC_H_FILT = 5
-DSC_M_HIST = 10 # Often same as SFC, but kept separate for flexibility
-DSC_H_FILT = 5 # Often same as SFC
-
-# Hyperparameter Ranges for Tuning (Grid Search)
-INIT_SCALES_TO_TEST = []
-LEARNING_RATES_TO_TEST = []
-R_M_VALUES_TO_TEST = []
-GAMMA_VALUES_TO_TEST = [] # For SFC and DSC
 
 # Master Key and Trial Setup
 SEED = 42
@@ -153,10 +175,10 @@ def lds_output(x: jnp.ndarray, C: jnp.ndarray) -> jnp.ndarray:
 def pendulum_sim(x: jnp.ndarray, u: jnp.ndarray, max_torque: float, m: float, l: float, g: float, dt: float) -> jnp.ndarray:
     theta, thdot = x
     action = max_torque * jnp.tanh(u[0])
-    newthdot = theta + (
+    newthdot = thdot + (
         -3.0 * g /
         (2.0 * l) * jnp.sin(theta + jnp.pi) + 3.0 /
-        (m * l**2) * action)
+        (m * l**2) * action) * dt
     newth = theta + newthdot * dt
     return jnp.array([newth, newthdot])
 
@@ -318,6 +340,7 @@ def lds_relu_sinusoidal_step_dynamic(
 
     return x_next, y_t
 
+
 # ---------- System and Cost Generation ----------
 def generate_trial_params(key, d, n, p):
     """Generates random system (A, B, C) and cost (Q, R) matrices, and initial state x0."""
@@ -326,7 +349,7 @@ def generate_trial_params(key, d, n, p):
     A = jnp.diag(eigvals)
     B = jax.random.normal(key_B, (d, n))
     C = jax.random.normal(key_C, (p, d))
-    
+
     if SYSTEM_TYPE == "brax" and BRAX_ENV_NAME == "inverted_pendulum":
         # For inverted_pendulum, the state is [cart_pos, pole_angle, cart_vel, pole_ang_vel].
         # We want to keep the pole upright (angle=0) and cart at origin (pos=0).
@@ -334,6 +357,12 @@ def generate_trial_params(key, d, n, p):
         Q = jnp.diag(jnp.array([1.0, 10.0, 0.1, 0.1]))
         # We also penalize the control effort.
         R = jnp.diag(jnp.array([0.01]))
+    elif SYSTEM_TYPE == "pendulum":
+        # For our custom pendulum, state is [theta, thdot]. We want to keep it upright.
+        # Penalize angle deviation and angular velocity.
+        Q = jnp.diag(jnp.array([1.0, 0.1]))
+        # Also penalize control effort.
+        R = jnp.diag(jnp.array([0.001]))
     else:
         # For other systems like LDS, or as a fallback for unhandled brax envs, use random matrices.
         # Note: A random cost matrix is unlikely to be meaningful for a specific brax environment.
@@ -343,15 +372,149 @@ def generate_trial_params(key, d, n, p):
         R = M_R_gen.T @ M_R_gen
     
     x0 = jnp.zeros((d,1)) 
-    if SYSTEM_TYPE == "brax":
-        # For brax inverted_pendulum, state is [cart_pos, pole_angle, cart_vel, pole_ang_vel]
-        # Start with the pole tilted by 0.15 radians (~8.6 degrees)
-        x0 = x0.at[1].set(0.15)
-    elif SYSTEM_TYPE == "pendulum":
-        # For our custom pendulum, state is [theta, thdot]
-        x0 = x0.at[0].set(0.15)
 
     return A, B, C, Q, R, x0
+
+def save_brax_rollout(trajectory, controller_name, trial_idx=0):
+    """Generates and saves a brax HTML rollout from a state trajectory."""
+    if SYSTEM_TYPE != "brax":
+        print(f"Skipping rollout for {controller_name} as SYSTEM_TYPE is not 'brax'.")
+        return
+
+    # Select the trajectory for the specified trial index
+    # The incoming trajectory is batched: (num_trials, T, D, 1)
+    trajectory_to_vis = jtu.tree_map(lambda x: x[trial_idx], trajectory)
+
+    rollout_for_html = []
+    q_size = brax_env.sys.q_size()
+    num_steps = trajectory_to_vis.shape[0]
+
+    for t_step in range(num_steps):
+        x_at_t = trajectory_to_vis[t_step]
+        q_at_t = x_at_t[:q_size].flatten()
+        qd_at_t = x_at_t[q_size:].flatten()
+        # Call kinematics.forward to compute the full kinematic state (x, xd, etc.)
+        # from the minimal state (q, qd). This is essential for rendering.
+        x, xd = kinematics.forward(brax_env.sys, q_at_t, qd_at_t)
+        # Re-create the pipeline state with all fields populated for rendering
+        complete_ps_at_t = brax_template_state.pipeline_state.replace(q=q_at_t, qd=qd_at_t, x=x, xd=xd)
+        rollout_for_html.append(complete_ps_at_t)
+
+    # Define a directory to save the rollouts
+    rollout_dir = get_plot_dir("rollouts")
+    rollout_filename = os.path.join(rollout_dir, f"rollout_{controller_name}_brax_trial_{trial_idx}.html")
+    
+    # Render and save the HTML
+    with open(rollout_filename, 'w') as f:
+        f.write(html.render(brax_env.sys.tree_replace({'opt.timestep': brax_env_dt}), rollout_for_html))
+    print(f"{controller_name.upper()} brax rollout saved to {rollout_filename}")
+
+
+def plot_state_trajectory(trajectory, u_history, controller_name, dt, trial_to_plot_idx=0, plot_title_suffix=""):
+    """Generates and saves a plot of state evolution for a selected trial."""
+
+    # Select the trajectory for the specified trial index and clean it up
+    trajectory_to_plot = jtu.tree_map(lambda x: x[trial_to_plot_idx], trajectory)
+    trajectory_to_plot = trajectory_to_plot.squeeze(axis=-1)
+    
+    u_history_to_plot = jtu.tree_map(lambda x: x[trial_to_plot_idx], u_history)
+    u_history_to_plot = u_history_to_plot.squeeze(axis=-1)
+
+
+    num_steps, num_states = trajectory_to_plot.shape
+    num_actions = u_history_to_plot.shape[-1] if u_history_to_plot.ndim > 1 else 1
+
+    # Create time axis for plotting
+    times_plot = np.arange(num_steps) * dt
+
+    # Create figure with subplots for each state variable + action
+    fig, axs = plt.subplots(num_states + num_actions, 1, figsize=(10, 2 * (num_states + num_actions)), sharex=True)
+    if num_states + num_actions == 1: # Handle case where there is only one subplot
+        axs = [axs]
+
+    # Plot each state variable component
+    for i in range(num_states):
+        # Specific labels for known systems
+        label_text = f'State[{i}]'
+        if SYSTEM_TYPE == "brax":
+            q_size = brax_env.sys.q_size()
+            if i < q_size:
+                label_text = f'q[{i}] (Position)'
+            else:
+                label_text = f'qd[{i-q_size}] (Velocity)'
+        elif SYSTEM_TYPE == "pendulum":
+            if i == 0:
+                label_text = 'theta (Angle)'
+            elif i == 1:
+                label_text = 'thetadot (Angular Velocity)'
+
+        axs[i].plot(times_plot, trajectory_to_plot[:, i], label=label_text)
+        axs[i].set_ylabel('Value')
+        axs[i].legend()
+        axs[i].grid(True)
+    
+    # Plot each action component
+    for i in range(num_actions):
+        axs[num_states + i].plot(times_plot, u_history_to_plot, label=f'u[{i}] (Control Input)')
+        axs[num_states + i].set_ylabel('Value')
+        axs[num_states + i].legend()
+        axs[num_states + i].grid(True)
+
+
+    axs[-1].set_xlabel('Time (s)')
+    full_plot_title = f'State Trajectory for {controller_name.upper()} ({SYSTEM_TYPE.upper()}) {plot_title_suffix}'
+    fig.suptitle(full_plot_title.strip(), fontsize=14)
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+
+    # Save the plot to a dedicated directory
+    plot_dir = get_plot_dir("trajectories")
+    plot_filename = os.path.join(plot_dir, f"trajectory_{controller_name}_{SYSTEM_TYPE}_trial_{trial_to_plot_idx}.png")
+    plt.savefig(plot_filename)
+    plt.close(fig)
+    print(f"{controller_name.upper()} {SYSTEM_TYPE.upper()} trajectory plot saved to {plot_filename}")
+    
+    
+# # --- Brax Simulation Sanity Check with Hardcoded Policy for Inverted Pendulum---
+# if SYSTEM_TYPE == "brax":
+#     print("\n--- Running Brax Simulation Sanity Check ---")
+
+#     # Define a simple policy to stabilize the inverted pendulum
+#     @jit
+#     def verification_policy(x, gain=-5.0):
+#         # State: [cart_pos, pole_angle, cart_vel, pole_ang_vel]
+#         pole_angle = x[1]
+#         action = gain * pole_angle
+#         # Ensure action has shape (N, 1) for brax_sim
+#         return jnp.array([action]).reshape((N, 1))
+
+#     # Get a starting state (e.g., pole slightly tilted)
+#     # We use a fixed key for reproducibility of the check
+#     _, _, _, _, _, x0_verify = generate_trial_params(jax.random.PRNGKey(0), D, N, P)
+
+#     # Partial function for our specific brax environment
+#     sim_fn = partial(brax_sim, env=brax_env, template_state=brax_template_state, jit_step_fn=jit_brax_env_step)
+
+#     # Simulation loop using the verification policy
+#     @jit
+#     def verification_step(x_t, _):
+#         u_t = verification_policy(x_t)
+#         x_t_plus_1 = sim_fn(x_t, u_t)
+#         return x_t_plus_1, x_t
+
+#     # Run the simulation for T steps
+#     _, trajectory_verify = jax.lax.scan(verification_step, x0_verify, xs=None, length=T)
+
+#     # The visualization functions expect a batch dimension (num_trials, ...)
+#     # Add a batch dimension to our single trajectory.
+#     trajectory_verify_batched = trajectory_verify[jnp.newaxis, ...]
+
+#     print("Verification simulation complete. Generating rollout and trajectory plot...")
+#     # Generate visualization of the rollout
+#     save_brax_rollout(np.array(trajectory_verify_batched), "verification_policy", trial_idx=0)
+#     plot_state_trajectory(np.array(trajectory_verify_batched), "verification_policy", brax_env_dt, trial_idx=0)
+
+#     print("--- Brax Sanity Check Complete ---")
+    
 
 def gpc_init_controller_state(key, init_scale, m, n, p, d):
     M = init_scale * jax.random.normal(key, shape=(m, n, p))
@@ -495,7 +658,7 @@ def run_single_gpc_trial(
             next_lds_x, y_measured_t = step(
                 x=prev_lds_x,
                 u=u_control_t,
-                sim=sim,
+                    sim=sim,
                 output_map=output_map,
                 dist_std=GAUSSIAN_NOISE_STD,
                 t_sim_step=prev_sim_t_for_disturbance,
@@ -517,15 +680,15 @@ def run_single_gpc_trial(
         
         next_sim_t_for_disturbance = prev_sim_t_for_disturbance + 1
         next_carry = (next_lds_x, next_M, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance)
-        outputs_to_collect = (cost_at_t, prev_lds_x)
+        outputs_to_collect = (cost_at_t, prev_lds_x, u_control_t)
         return next_carry, outputs_to_collect
 
     initial_carry_gpc = (current_lds_x_state, M_controller, z_controller, ynat_history_controller, t_controller, initial_sim_time_step)
     keys_for_T_scan_steps = jax.random.split(key_sim_loop_main, T_sim_steps)
     
-    (_, (costs_over_time, trajectory)) = jax.lax.scan(gpc_simulation_step, initial_carry_gpc, keys_for_T_scan_steps)
+    (_, (costs_over_time, trajectory, u_history)) = jax.lax.scan(gpc_simulation_step, initial_carry_gpc, keys_for_T_scan_steps)
     
-    return costs_over_time, trajectory
+    return costs_over_time, trajectory, u_history
 
 @partial(jit, static_argnames=("d", "n", "p", "T", "gpc_m", "gpc_init_scale", "gpc_lr", "gpc_decay", "gpc_R_M"))
 def gpc_trial_runner_for_vmap(key_trial_specific,d,n,p,T,gpc_m,gpc_init_scale,gpc_lr,gpc_decay,gpc_R_M):
@@ -543,8 +706,8 @@ def gpc_trial_runner_for_vmap(key_trial_specific,d,n,p,T,gpc_m,gpc_init_scale,gp
     else:
         raise ValueError(f"Unknown SYSTEM_TYPE: {SYSTEM_TYPE}")
     
-    costs, trajectory = run_single_gpc_trial(key_sim_run,A,B,C,Q,R,x0,sim,output_map,T,gpc_m,gpc_init_scale,gpc_lr,gpc_decay,gpc_R_M)
-    return costs, trajectory
+    costs, trajectory, u_history = run_single_gpc_trial(key_sim_run,A,B,C,Q,R,x0,sim,output_map,T,gpc_m,gpc_init_scale,gpc_lr,gpc_decay,gpc_R_M)
+    return costs, trajectory, u_history
 
 
 # --- GPC Hyperparameter Tuning (Grid Search) ---
@@ -584,8 +747,7 @@ for init_scale in INIT_SCALES_TO_TEST:
             current_params = {"init_scale": init_scale, "R_M": R_M, "lr": lr}
             print(f"Testing GPC with: init_scale={init_scale}, R_M={R_M}, lr={lr}...")
         
-
-            costs_current_params = np.array(vmap_gpc(
+            costs, _, u_history = vmap_gpc(
                 TRIAL_KEYS,
                 D,
                 N,
@@ -596,7 +758,8 @@ for init_scale in INIT_SCALES_TO_TEST:
                 lr,
                 LR_DECAY,
                 R_M
-            ))
+            )
+            costs_current_params = np.array(costs)
 
             cum_costs_current = np.cumsum(costs_current_params, axis=1)
 
@@ -611,7 +774,7 @@ for init_scale in INIT_SCALES_TO_TEST:
 
             print(f"  Params {current_params}: {num_stable_trials}/{NUM_TRIALS} stable trials.")
 
-            if num_stable_trials > NUM_TRIALS // 2: 
+            if num_stable_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD: 
                 avg_costs_stable = cum_costs_current[stable_mask_current] / (np.arange(1, T + 1)[None, :])
                 mean_avg_cost_current = np.mean(avg_costs_stable, axis=0)
                 
@@ -755,51 +918,52 @@ def run_single_sfc_trial(
         )
 
         # Determine which LDS step function to use based on global configuration
-        if LDS_TRANSITION_TYPE == "linear":
-            if LDS_NOISE_TYPE == "gaussian":
-                next_lds_x, y_measured_t = lds_gaussian_step_dynamic(
-                    current_x=prev_lds_x,
-                    A=A, B=B, C=C,
-                    u_t=u_control_t,
-                    dist_std=GAUSSIAN_NOISE_STD, 
-                    t_sim_step=prev_sim_t_for_disturbance,
-                    key_disturbance=key_disturbance_for_step
-                )
-            elif LDS_NOISE_TYPE == "sinusoidal":
-                next_lds_x, y_measured_t = lds_sinusoidal_step_dynamic(
-                    current_x=prev_lds_x,
-                    A=A, B=B, C=C,
-                    u_t=u_control_t,
-                    noise_amplitude=SINUSOIDAL_NOISE_AMPLITUDE, 
-                    noise_frequency=SINUSOIDAL_NOISE_FREQUENCY, 
-                    t_sim_step=prev_sim_t_for_disturbance,
-                    key_disturbance=key_disturbance_for_step
-                )
-            else: 
-                raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'linear' transition")
-        elif LDS_TRANSITION_TYPE == "relu":
-            if LDS_NOISE_TYPE == "gaussian":
-                next_lds_x, y_measured_t = lds_relu_gaussian_step_dynamic(
-                    current_x=prev_lds_x,
-                    A=A, B=B, C=C,
-                    u_t=u_control_t,
-                    dist_std=GAUSSIAN_NOISE_STD, 
-                    t_sim_step=prev_sim_t_for_disturbance,
-                    key_disturbance=key_disturbance_for_step
-                )
-            elif LDS_NOISE_TYPE == "sinusoidal":
-                next_lds_x, y_measured_t = lds_relu_sinusoidal_step_dynamic(
-                    current_x=prev_lds_x,
-                    A=A, B=B, C=C,
-                    u_t=u_control_t,
-                    noise_amplitude=SINUSOIDAL_NOISE_AMPLITUDE,
-                    noise_frequency=SINUSOIDAL_NOISE_FREQUENCY,
-                    t_sim_step=prev_sim_t_for_disturbance,
-                    key_disturbance=key_disturbance_for_step
-                )
-            else:
-                raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'relu' transition")
-        elif LDS_TRANSITION_TYPE == "special":
+        if SYSTEM_TYPE == "lds" and LDS_TRANSITION_TYPE != "special":
+            if LDS_TRANSITION_TYPE == "linear":
+                if LDS_NOISE_TYPE == "gaussian":
+                    next_lds_x, y_measured_t = lds_gaussian_step_dynamic(
+                        current_x=prev_lds_x,
+                        A=A, B=B, C=C,
+                        u_t=u_control_t,
+                        dist_std=GAUSSIAN_NOISE_STD, 
+                        t_sim_step=prev_sim_t_for_disturbance,
+                        key_disturbance=key_disturbance_for_step
+                    )
+                elif LDS_NOISE_TYPE == "sinusoidal":
+                    next_lds_x, y_measured_t = lds_sinusoidal_step_dynamic(
+                        current_x=prev_lds_x,
+                        A=A, B=B, C=C,
+                        u_t=u_control_t,
+                        noise_amplitude=SINUSOIDAL_NOISE_AMPLITUDE, 
+                        noise_frequency=SINUSOIDAL_NOISE_FREQUENCY, 
+                        t_sim_step=prev_sim_t_for_disturbance,
+                        key_disturbance=key_disturbance_for_step
+                    )
+                else: 
+                    raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'linear' transition")
+            elif LDS_TRANSITION_TYPE == "relu":
+                if LDS_NOISE_TYPE == "gaussian":
+                    next_lds_x, y_measured_t = lds_relu_gaussian_step_dynamic(
+                        current_x=prev_lds_x,
+                        A=A, B=B, C=C,
+                        u_t=u_control_t,
+                        dist_std=GAUSSIAN_NOISE_STD, 
+                        t_sim_step=prev_sim_t_for_disturbance,
+                        key_disturbance=key_disturbance_for_step
+                    )
+                elif LDS_NOISE_TYPE == "sinusoidal":
+                    next_lds_x, y_measured_t = lds_relu_sinusoidal_step_dynamic(
+                        current_x=prev_lds_x,
+                        A=A, B=B, C=C,
+                        u_t=u_control_t,
+                        noise_amplitude=SINUSOIDAL_NOISE_AMPLITUDE,
+                        noise_frequency=SINUSOIDAL_NOISE_FREQUENCY,
+                        t_sim_step=prev_sim_t_for_disturbance,
+                        key_disturbance=key_disturbance_for_step
+                    )
+                else:
+                    raise ValueError(f"Unknown LDS_NOISE_TYPE: {LDS_NOISE_TYPE} for 'relu' transition")
+        else:
             next_lds_x, y_measured_t = step(
                 x=prev_lds_x,
                 u=u_control_t,
@@ -810,8 +974,6 @@ def run_single_sfc_trial(
                 disturbance=gaussian_disturbance,
                 key=key_disturbance_for_step
             )
-        else:
-            raise ValueError(f"Unknown LDS_TRANSITION_TYPE: {LDS_TRANSITION_TYPE}")
         
         next_M0, next_M, next_z, next_ynat_hist, next_t = sfc_update_controller(
             prev_M0, prev_M, prev_z, prev_ynat_hist, prev_t, 
@@ -825,13 +987,13 @@ def run_single_sfc_trial(
         
         next_sim_t_for_disturbance = prev_sim_t_for_disturbance + 1 
         next_carry = (next_lds_x, next_M0, next_M, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance)
-        outputs = (cost_at_t, prev_lds_x)
+        outputs = (cost_at_t, prev_lds_x, u_control_t)
         return next_carry, outputs
     
     initial_carry_sfc = (current_lds_x_state, M0, M, z, ynat_hist, t, initial_sim_time_step)
     keys_for_T_scan_steps = jax.random.split(key_sim_loop_main, T_sim_steps)
-    (_, (costs_over_time, trajectory)) = jax.lax.scan(sfc_simulation_step, initial_carry_sfc, keys_for_T_scan_steps)
-    return costs_over_time, trajectory
+    (_, (costs_over_time, trajectory, u_history)) = jax.lax.scan(sfc_simulation_step, initial_carry_sfc, keys_for_T_scan_steps)
+    return costs_over_time, trajectory, u_history
 
 @partial(jit, static_argnames=("d","n","p","T","sfc_m_hist","sfc_h_filt","sfc_init_sc","sfc_lr","sfc_decay","sfc_R_M"))
 def sfc_trial_runner_for_vmap(key_trial_specific,d,n,p,T,sfc_m_hist,sfc_h_filt,sfc_init_sc,sfc_lr,sfc_decay,sfc_R_M,sfc_filters):
@@ -848,9 +1010,9 @@ def sfc_trial_runner_for_vmap(key_trial_specific,d,n,p,T,sfc_m_hist,sfc_h_filt,s
         output_map = brax_output
     else:
         raise ValueError(f"Unknown SYSTEM_TYPE: {SYSTEM_TYPE}")
-
-    costs, trajectory = run_single_sfc_trial(key_sim_run,A,B,C,Q,R,x0,sim,output_map,T,sfc_m_hist,sfc_h_filt,sfc_init_sc,sfc_lr,sfc_decay,sfc_R_M,sfc_filters)
-    return costs, trajectory
+    
+    costs, trajectory, u_history = run_single_sfc_trial(key_sim_run,A,B,C,Q,R,x0,sim,output_map,T,sfc_m_hist,sfc_h_filt,sfc_init_sc,sfc_lr,sfc_decay,sfc_R_M,sfc_filters)
+    return costs, trajectory, u_history
 
 
 # --- SFC Hyperparameter Tuning (Grid Search) ---
@@ -893,14 +1055,15 @@ for sfc_init_scale in INIT_SCALES_TO_TEST:
                 
                 current_sfc_filters = sfc_compute_filters(SFC_M_HIST, SFC_H_FILT, sfc_gamma)
 
-                costs_current_sfc_params = np.array(vmapped_sfc_runner(
+                costs, _, u_history = vmapped_sfc_runner(
                     TRIAL_KEYS, # Use common master keys
                     D, N, P, 
                     T,
                     SFC_M_HIST, SFC_H_FILT, 
                     sfc_init_scale, sfc_lr, LR_DECAY, sfc_R_M,
                     current_sfc_filters
-                ))
+                )
+                costs_current_sfc_params = np.array(costs)
 
                 cum_costs_current_sfc = np.cumsum(costs_current_sfc_params, axis=1)
 
@@ -915,7 +1078,7 @@ for sfc_init_scale in INIT_SCALES_TO_TEST:
 
                 print(f"  SFC Params {current_sfc_params}: {num_stable_sfc_trials}/{NUM_TRIALS} stable trials.")
 
-                if num_stable_sfc_trials > NUM_TRIALS // 2: 
+                if num_stable_sfc_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD: 
                     avg_costs_stable_sfc = cum_costs_current_sfc[stable_mask_current_sfc] / (np.arange(1, T + 1)[None, :])
                     mean_avg_cost_current_sfc = np.mean(avg_costs_stable_sfc, axis=0)
                     
@@ -1147,14 +1310,14 @@ def run_single_dsc_trial(
         
         next_sim_t_for_disturbance = prev_sim_t_for_disturbance + 1
         next_carry = (next_lds_x, next_M0, next_M1, next_M2, next_M3, next_z, next_ynat_hist, next_t, next_sim_t_for_disturbance)
-        outputs = (cost_at_t, prev_lds_x)
+        outputs = (cost_at_t, prev_lds_x, u_control_t)
         return next_carry, outputs
 
     initial_carry_dsc = (current_lds_x_state, M0, M1, M2, M3, z, ynat_hist, t, initial_sim_time_step)
     keys_for_T_scan_steps = jax.random.split(key_sim_loop_main, T_sim_steps)
     
-    (_, (costs_over_time, trajectory)) = jax.lax.scan(dsc_simulation_step, initial_carry_dsc, keys_for_T_scan_steps)
-    return costs_over_time, trajectory
+    (_, (costs_over_time, trajectory, u_history)) = jax.lax.scan(dsc_simulation_step, initial_carry_dsc, keys_for_T_scan_steps)
+    return costs_over_time, trajectory, u_history
 
 @partial(jit, static_argnames=(
     "d","n","p","T",
@@ -1182,12 +1345,12 @@ def dsc_trial_runner_for_vmap(
     else:
         raise ValueError(f"Unknown SYSTEM_TYPE: {SYSTEM_TYPE}")
 
-    costs, trajectory = run_single_dsc_trial(
+    costs, trajectory, u_history = run_single_dsc_trial(
         key_sim_run,A,B,C,Q,R,x0,sim,output_map,T,
         dsc_m_hist,dsc_h_filt,dsc_init_sc,dsc_lr,dsc_decay,dsc_R_M,
         dsc_filters
     )
-    return costs, trajectory
+    return costs, trajectory, u_history
 
 
 # --- DSC Hyperparameter Tuning (Grid Search) ---
@@ -1228,14 +1391,15 @@ for dsc_init_scale in INIT_SCALES_TO_TEST:
                 
                 current_dsc_filters = sfc_compute_filters(DSC_M_HIST, DSC_H_FILT, dsc_gamma)
 
-                costs_current_dsc_params = np.array(vmapped_dsc_runner(
+                costs, _, u_history = vmapped_dsc_runner(
                     TRIAL_KEYS, # Use common master keys
                     D, N, P, 
                     T,
                     DSC_M_HIST, DSC_H_FILT, 
                     dsc_init_scale, dsc_lr, LR_DECAY, dsc_R_M,
                     current_dsc_filters
-                ))
+                )
+                costs_current_dsc_params = np.array(costs)
 
                 cum_costs_current_dsc = np.cumsum(costs_current_dsc_params, axis=1)
 
@@ -1250,7 +1414,7 @@ for dsc_init_scale in INIT_SCALES_TO_TEST:
 
                 print(f"  DSC Params {current_dsc_params}: {num_stable_dsc_trials}/{NUM_TRIALS} stable trials.")
 
-                if num_stable_dsc_trials > NUM_TRIALS // 2: 
+                if num_stable_dsc_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD: 
                     avg_costs_stable_dsc = cum_costs_current_dsc[stable_mask_current_dsc] / (np.arange(1, T + 1)[None, :])
                     mean_avg_cost_current_dsc = np.mean(avg_costs_stable_dsc, axis=0)
                     
@@ -1287,93 +1451,6 @@ else:
     print("\nCould not determine a best set of DSC hyperparameters from the tested values.")
 
 print("\n--- DSC Hyperparameter Tuning (Grid Search) Complete ---")
-
-
-def save_brax_rollout(trajectory, controller_name, trial_idx=0):
-    """Generates and saves a brax HTML rollout from a state trajectory."""
-    if SYSTEM_TYPE != "brax":
-        print(f"Skipping rollout for {controller_name} as SYSTEM_TYPE is not 'brax'.")
-        return
-
-    # Select the trajectory for the specified trial index
-    # The incoming trajectory is batched: (num_trials, T, D, 1)
-    trajectory_to_vis = jtu.tree_map(lambda x: x[trial_idx], trajectory)
-
-    rollout_for_html = []
-    q_size = brax_env.sys.q_size()
-    num_steps = trajectory_to_vis.shape[0]
-
-    for t_step in range(num_steps):
-        x_at_t = trajectory_to_vis[t_step]
-        q_at_t = x_at_t[:q_size].flatten()
-        qd_at_t = x_at_t[q_size:].flatten()
-        # Call kinematics.forward to compute the full kinematic state (x, xd, etc.)
-        # from the minimal state (q, qd). This is essential for rendering.
-        x, xd = kinematics.forward(brax_env.sys, q_at_t, qd_at_t)
-        # Re-create the pipeline state with all fields populated for rendering
-        complete_ps_at_t = brax_template_state.pipeline_state.replace(q=q_at_t, qd=qd_at_t, x=x, xd=xd)
-        rollout_for_html.append(complete_ps_at_t)
-
-    # Define a directory to save the rollouts
-    rollout_dir = get_plot_dir("rollouts")
-    rollout_filename = os.path.join(rollout_dir, f"rollout_{controller_name}_brax_trial_{trial_idx}.html")
-    
-    # Render and save the HTML
-    with open(rollout_filename, 'w') as f:
-        f.write(html.render(brax_env.sys.tree_replace({'opt.timestep': brax_env_dt}), rollout_for_html))
-    print(f"{controller_name.upper()} brax rollout saved to {rollout_filename}")
-
-
-def plot_brax_trajectory(trajectory, controller_name, trial_idx=0):
-    """Generates and saves a plot of q and qd evolution for a brax trajectory."""
-    if SYSTEM_TYPE != "brax":
-        print(f"Skipping trajectory plot for {controller_name} as SYSTEM_TYPE is not 'brax'.")
-        return
-
-    # Select the trajectory for the specified trial index and clean it up
-    trajectory_to_plot = jtu.tree_map(lambda x: x[trial_idx], trajectory)
-    trajectory_to_plot = trajectory_to_plot.squeeze(axis=-1)
-
-    q_size = brax_env.sys.q_size()
-    qd_size = brax_env.sys.qd_size()
-    
-    # Extract q and qd data
-    q_data = trajectory_to_plot[:, :q_size]
-    qd_data = trajectory_to_plot[:, q_size:]
-
-    # Create time axis for plotting
-    num_steps = trajectory_to_plot.shape[0]
-    times_plot = np.arange(num_steps) * brax_env_dt
-
-    # Create figure with subplots for each state variable
-    num_subplots = q_size + qd_size
-    fig, axs = plt.subplots(num_subplots, 1, figsize=(10, 2 * num_subplots), sharex=True)
-
-    # Plot q components
-    for i in range(q_size):
-        axs[i].plot(times_plot, q_data[:, i], label=f'q[{i}] (Position)')
-        axs[i].set_ylabel('Position')
-        axs[i].legend()
-        axs[i].grid(True)
-
-    # Plot qd components
-    for i in range(qd_size):
-        ax_idx = q_size + i
-        axs[ax_idx].plot(times_plot, qd_data[:, i], label=f'qd[{i}] (Velocity)', color='orange')
-        axs[ax_idx].set_ylabel('Velocity')
-        axs[ax_idx].legend()
-        axs[ax_idx].grid(True)
-
-    axs[-1].set_xlabel('Time (s)')
-    fig.suptitle(f'State Trajectory for {controller_name.upper()} (Trial {trial_idx})', fontsize=14)
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
-
-    # Save the plot to a dedicated directory
-    plot_dir = get_plot_dir("trajectories")
-    plot_filename = os.path.join(plot_dir, f"trajectory_{controller_name}_brax_trial_{trial_idx}.png")
-    plt.savefig(plot_filename)
-    plt.close(fig)
-    print(f"{controller_name.upper()} brax trajectory plot saved to {plot_filename}")
 
 
 # Store best hyperparameters for comparison plots, with fallbacks
@@ -1427,7 +1504,7 @@ if best_gpc_hyperparams:
 gpc_label_suffix = f" ({gpc_params_source_message}{gpc_hyperparam_details_str})"
 
 print(f"GPC for Comparison ({gpc_params_source_message}): {comp_num_trials} trials, {T} steps, m={GPC_M}, init_scale={gpc_init_scale_for_comp:.3f}, lr={gpc_lr_for_comp:.1e}, R_M={gpc_R_M_for_comp:.3f}")
-comp_costs_gpc, comp_trajectories_gpc = vmap_gpc(
+comp_costs_gpc, comp_trajectories_gpc, gpc_u_history = vmap_gpc(
     comp_trial_keys, 
     D, N, P, 
     T, 
@@ -1439,12 +1516,24 @@ comp_costs_gpc, comp_trajectories_gpc = vmap_gpc(
 )
 comp_costs_gpc_np = np.array(comp_costs_gpc)
 print("GPC for Comparison complete.")
-# Save rollout if applicable
-save_brax_rollout(np.array(comp_trajectories_gpc), "gpc")
-plot_brax_trajectory(np.array(comp_trajectories_gpc), "gpc")
-
+# Determine dt for plotting and save visualizations
+dt_for_plot = brax_env_dt if SYSTEM_TYPE == "brax" else DT
 cum_gpc_comp = np.cumsum(comp_costs_gpc_np, axis=1)
 mask_gpc_comp = cum_gpc_comp[:,-1] < comp_threshold
+
+# Logic to select the best stable trial for plotting
+plot_idx_gpc = 0
+plot_title_gpc = f"(Trial {plot_idx_gpc} - All Unstable)"
+if np.any(mask_gpc_comp):
+    final_costs_gpc = cum_gpc_comp[:, -1]
+    costs_for_min_finding = np.where(mask_gpc_comp, final_costs_gpc, np.inf)
+    best_stable_idx = np.argmin(costs_for_min_finding)
+    plot_idx_gpc = best_stable_idx
+    plot_title_gpc = f"(Best Stable Trial #{plot_idx_gpc})"
+
+save_brax_rollout(np.array(comp_trajectories_gpc), "gpc", trial_idx=plot_idx_gpc)
+plot_state_trajectory(np.array(comp_trajectories_gpc), np.array(gpc_u_history), "gpc", dt_for_plot, trial_to_plot_idx=plot_idx_gpc, plot_title_suffix=plot_title_gpc)
+
 rem_gpc_comp = np.sum(~mask_gpc_comp)
 print(f"Removed {rem_gpc_comp} GPC comparison trial(s)")
 mean_avg_cost_gpc_comp = np.zeros(T)
@@ -1469,7 +1558,7 @@ sfc_label_suffix = f" ({sfc_params_source_message}{sfc_hyperparam_details_str})"
 comp_sfc_filters = sfc_compute_filters(SFC_M_HIST, SFC_H_FILT, sfc_gamma_for_comp)
 
 print(f"SFC for Comparison ({sfc_params_source_message}): {comp_num_trials} trials, {T} steps, m_hist={SFC_M_HIST}, h_filt={SFC_H_FILT}, init_scale={sfc_init_scale_for_comp:.3f}, lr={sfc_lr_for_comp:.1e}, R_M={sfc_R_M_for_comp:.3f}, gamma={sfc_gamma_for_comp:.3f}")
-comp_costs_sfc, comp_trajectories_sfc = vmapped_sfc_runner(
+comp_costs_sfc, comp_trajectories_sfc, sfc_u_history = vmapped_sfc_runner(
     comp_trial_keys, D, N, P, 
     T, 
     SFC_M_HIST, SFC_H_FILT, 
@@ -1478,12 +1567,24 @@ comp_costs_sfc, comp_trajectories_sfc = vmapped_sfc_runner(
 )
 comp_costs_sfc_np = np.array(comp_costs_sfc)
 print("SFC for Comparison complete.")
-# Save rollout if applicable
-save_brax_rollout(np.array(comp_trajectories_sfc), "sfc")
-plot_brax_trajectory(np.array(comp_trajectories_sfc), "sfc")
-
+# Determine dt for plotting and save visualizations
+dt_for_plot = brax_env_dt if SYSTEM_TYPE == "brax" else DT
 cum_sfc_comp = np.cumsum(comp_costs_sfc_np, axis=1)
 mask_sfc_comp = cum_sfc_comp[:,-1] < comp_threshold
+
+# Logic to select the best stable trial for plotting
+plot_idx_sfc = 0
+plot_title_sfc = f"(Trial {plot_idx_sfc} - All Unstable)"
+if np.any(mask_sfc_comp):
+    final_costs_sfc = cum_sfc_comp[:, -1]
+    costs_for_min_finding = np.where(mask_sfc_comp, final_costs_sfc, np.inf)
+    best_stable_idx = np.argmin(costs_for_min_finding)
+    plot_idx_sfc = best_stable_idx
+    plot_title_sfc = f"(Best Stable Trial #{plot_idx_sfc})"
+
+save_brax_rollout(np.array(comp_trajectories_sfc), "sfc", trial_idx=plot_idx_sfc)
+plot_state_trajectory(np.array(comp_trajectories_sfc), np.array(sfc_u_history), "sfc", dt_for_plot, trial_to_plot_idx=plot_idx_sfc, plot_title_suffix=plot_title_sfc)
+
 rem_sfc_comp = np.sum(~mask_sfc_comp)
 print(f"Removed {rem_sfc_comp} SFC comparison trial(s)")
 mean_avg_cost_sfc_comp = np.zeros(T)
@@ -1508,7 +1609,7 @@ dsc_label_suffix = f" ({dsc_params_source_message}{dsc_hyperparam_details_str})"
 comp_dsc_filters = sfc_compute_filters(DSC_M_HIST, DSC_H_FILT, dsc_gamma_for_comp) 
 
 print(f"DSC for Comparison ({dsc_params_source_message}): {comp_num_trials} trials, {T} steps, m_hist={DSC_M_HIST}, h_filt={DSC_H_FILT}, init_scale={dsc_init_scale_for_comp:.3f}, lr={dsc_lr_for_comp:.1e}, R_M={dsc_R_M_for_comp:.4f}, gamma={dsc_gamma_for_comp:.3f}")
-comp_costs_dsc, comp_trajectories_dsc = vmapped_dsc_runner(
+comp_costs_dsc, comp_trajectories_dsc, dsc_u_history = vmapped_dsc_runner(
     comp_trial_keys, D, N, P, 
     T,
     DSC_M_HIST, DSC_H_FILT,
@@ -1517,12 +1618,24 @@ comp_costs_dsc, comp_trajectories_dsc = vmapped_dsc_runner(
 )
 comp_costs_dsc_np = np.array(comp_costs_dsc)
 print("DSC for Comparison complete.")
-# Save rollout if applicable
-save_brax_rollout(np.array(comp_trajectories_dsc), "dsc")
-plot_brax_trajectory(np.array(comp_trajectories_dsc), "dsc")
-
+# Determine dt for plotting and save visualizations
+dt_for_plot = brax_env_dt if SYSTEM_TYPE == "brax" else DT
 cum_dsc_comp = np.cumsum(comp_costs_dsc_np, axis=1)
 mask_dsc_comp = cum_dsc_comp[:,-1] < comp_threshold
+
+# Logic to select the best stable trial for plotting
+plot_idx_dsc = 0
+plot_title_dsc = f"(Trial {plot_idx_dsc} - All Unstable)"
+if np.any(mask_dsc_comp):
+    final_costs_dsc = cum_dsc_comp[:, -1]
+    costs_for_min_finding = np.where(mask_dsc_comp, final_costs_dsc, np.inf)
+    best_stable_idx = np.argmin(costs_for_min_finding)
+    plot_idx_dsc = best_stable_idx
+    plot_title_dsc = f"(Best Stable Trial #{plot_idx_dsc})"
+
+save_brax_rollout(np.array(comp_trajectories_dsc), "dsc", trial_idx=plot_idx_dsc)
+plot_state_trajectory(np.array(comp_trajectories_dsc), np.array(dsc_u_history), "dsc", dt_for_plot, trial_to_plot_idx=plot_idx_dsc, plot_title_suffix=plot_title_dsc)
+
 rem_dsc_comp = np.sum(~mask_dsc_comp)
 print(f"Removed {rem_dsc_comp} DSC comparison trial(s)")
 
