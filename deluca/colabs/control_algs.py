@@ -625,13 +625,12 @@ for lr in nndrc_LEARNING_RATES_TO_TEST:
     if num_stable_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD:
         avg_costs_stable = cum_costs_current[stable_mask] / (np.arange(1, T + 1)[None, :])
         mean_avg_cost_current = np.mean(avg_costs_stable, axis=0)
-        mean_avg_cost_sliding = sliding_window_avg(mean_avg_cost_current, T // 10)
         
         label_str = f"lr={lr:.0e}"
         current_color = nndrc_colors[nndrc_color_idx % len(nndrc_colors)]
-        plt.plot(mean_avg_cost_sliding, label=label_str, color=current_color, alpha=0.8)
+        plt.plot(mean_avg_cost_current, label=label_str, color=current_color, alpha=0.8)
         
-        final_avg_cost = mean_avg_cost_sliding[-1]
+        final_avg_cost = mean_avg_cost_current[-1]
         if final_avg_cost < lowest_final_nndrc_cost:
             lowest_final_nndrc_cost = final_avg_cost
             best_nndrc_hyperparams = current_params
@@ -917,14 +916,13 @@ for init_scale in INIT_SCALES_TO_TEST:
             if num_stable_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD: 
                 avg_costs_stable = cum_costs_current[stable_mask_current] / (np.arange(1, T + 1)[None, :])
                 mean_avg_cost_current = np.mean(avg_costs_stable, axis=0)
-                mean_avg_cost_sliding = sliding_window_avg(mean_avg_cost_current, T // 10)
                 
                 label_str = f"is={init_scale}, rm={R_M}, lr={lr:.0e}"
                 # Ensure color_idx is within bounds for colors array
                 current_color = colors[color_idx % len(colors)] if len(colors) > 0 else 'blue'
-                plt.plot(mean_avg_cost_sliding, label=label_str, color=current_color, alpha=0.7)
+                plt.plot(mean_avg_cost_current, label=label_str, color=current_color, alpha=0.7)
                 
-                final_avg_cost = mean_avg_cost_sliding[-1]
+                final_avg_cost = mean_avg_cost_current[-1]
                 if final_avg_cost < lowest_final_cost:
                     lowest_final_cost = final_avg_cost
                     best_gpc_hyperparams = current_params
@@ -1235,13 +1233,12 @@ for eta in ADAPTIVE_GPC_ETA_VALUES:
         if num_stable_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD:
             avg_costs_stable = cum_costs_current[stable_mask] / (np.arange(1, T + 1)[None, :])
             mean_avg_cost_current = np.mean(avg_costs_stable, axis=0)
-            mean_avg_cost_sliding = sliding_window_avg(mean_avg_cost_current, T // 10)
             
             label_str = f"eta={eta}, dens={expert_density}"
             current_color = agpc_colors[agpc_color_idx % len(agpc_colors)]
-            plt.plot(mean_avg_cost_sliding, label=label_str, color=current_color, alpha=0.7)
+            plt.plot(mean_avg_cost_current, label=label_str, color=current_color, alpha=0.7)
             
-            final_avg_cost = mean_avg_cost_sliding[-1]
+            final_avg_cost = mean_avg_cost_current[-1]
             if final_avg_cost < lowest_final_adaptive_gpc_cost:
                 lowest_final_adaptive_gpc_cost = final_avg_cost
                 best_adaptive_gpc_hyperparams = current_params
@@ -1533,13 +1530,12 @@ for sfc_init_scale in INIT_SCALES_TO_TEST:
                 if num_stable_sfc_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD: 
                     avg_costs_stable_sfc = cum_costs_current_sfc[stable_mask_current_sfc] / (np.arange(1, T + 1)[None, :])
                     mean_avg_cost_current_sfc = np.mean(avg_costs_stable_sfc, axis=0)
-                    mean_avg_cost_sliding_sfc = sliding_window_avg(mean_avg_cost_current_sfc, T // 10)
                     
                     sfc_label_str = f"is={sfc_init_scale}, rm={sfc_R_M}, lr={sfc_lr:.0e}, g={sfc_gamma}"
                     current_sfc_color = sfc_colors[sfc_color_idx % len(sfc_colors)] if len(sfc_colors) > 0 else 'green'
-                    plt.plot(mean_avg_cost_sliding_sfc, label=sfc_label_str, color=current_sfc_color, alpha=0.6)
+                    plt.plot(mean_avg_cost_current_sfc, label=sfc_label_str, color=current_sfc_color, alpha=0.6)
                     
-                    final_avg_sfc_cost = mean_avg_cost_sliding_sfc[-1]
+                    final_avg_sfc_cost = mean_avg_cost_current_sfc[-1]
                     if final_avg_sfc_cost < lowest_sfc_final_cost:
                         lowest_sfc_final_cost = final_avg_sfc_cost
                         best_sfc_hyperparams = current_sfc_params
@@ -1870,13 +1866,12 @@ for dsc_init_scale in INIT_SCALES_TO_TEST:
                 if num_stable_dsc_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD: 
                     avg_costs_stable_dsc = cum_costs_current_dsc[stable_mask_current_dsc] / (np.arange(1, T + 1)[None, :])
                     mean_avg_cost_current_dsc = np.mean(avg_costs_stable_dsc, axis=0)
-                    mean_avg_cost_sliding_dsc = sliding_window_avg(mean_avg_cost_current_dsc, T // 10)
                     
                     dsc_label_str = f"is={dsc_init_scale}, rm={dsc_R_M:.1e}, lr={dsc_lr:.0e}, g={dsc_gamma}"
                     current_dsc_color = dsc_colors[dsc_color_idx % len(dsc_colors)] if len(dsc_colors) > 0 else 'red'
-                    plt.plot(mean_avg_cost_sliding_dsc, label=dsc_label_str, color=current_dsc_color, alpha=0.6)
+                    plt.plot(mean_avg_cost_current_dsc, label=dsc_label_str, color=current_dsc_color, alpha=0.6)
                     
-                    final_avg_dsc_cost = mean_avg_cost_sliding_dsc[-1]
+                    final_avg_dsc_cost = mean_avg_cost_current_dsc[-1]
                     if final_avg_dsc_cost < lowest_dsc_final_cost:
                         lowest_dsc_final_cost = final_avg_dsc_cost
                         best_dsc_hyperparams = current_dsc_params
