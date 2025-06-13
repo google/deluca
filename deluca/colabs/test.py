@@ -13,14 +13,9 @@ from brax import envs
 from brax import kinematics
 from brax.io import html
 from collections import namedtuple
-#TODO: plot sliding window of cum avg costs, 1/10 of iterations
-import sys
-sys.path.append("../../")
-from deluca.colabs import nngpc
-
 
 # ---------- System Configuration ----------
-SYSTEM_TYPE = "lds" # Options: "lds", "pendulum", "brax"
+SYSTEM_TYPE = "pendulum" # Options: "lds", "pendulum", "brax"
 BRAX_ENV_NAME = "inverted_pendulum" # Used if SYSTEM_TYPE == "brax"
 MAX_TORQUE = 1.0
 M = 1.0
@@ -57,7 +52,6 @@ INIT_SCALES_TO_TEST = [2.0]
 LEARNING_RATES_TO_TEST = [5e-5, 1e-4, 5e-4]
 R_M_VALUES_TO_TEST = [0.005, 0.01, 0.1, 1.0, 5.0, 10.0]
 GAMMA_VALUES_TO_TEST = [0.05, 0.1, 0.3] # For SFC and DSC
-NNGPC_LEARNING_RATES_TO_TEST = [1e-5, 1e-4, 5e-4] # For NN-GPC
 
 # ---------- Experiment & Hyperparameter Configuration ----------
 # System Parameters
@@ -70,11 +64,8 @@ if SYSTEM_TYPE == "lds":
     SFC_H_FILT = 10
     DSC_M_HIST = 30 # Often same as SFC, but kept separate for flexibility
     DSC_H_FILT = 10 # Often same as SFC
-    # NN-GPC parameters
-    NNGPC_M = 10
-    NNGPC_K = 5 # Prediction horizon for the NN
     # Adaptive GPC parameters
-    ADAPTIVE_GPC_HH = GPC_M
+    ADAPTIVE_GPC_HH = 10
     ADAPTIVE_GPC_ETA_VALUES = [0.1, 0.5, 1.0]
     ADAPTIVE_GPC_EXPERT_DENSITY_VALUES = [50, 100, 200]
     ADAPTIVE_GPC_LIFE_LOWER_BOUND = 100
@@ -83,21 +74,18 @@ elif SYSTEM_TYPE == "pendulum":
     INIT_SCALES_TO_TEST = [0.01]
     LEARNING_RATES_TO_TEST = [1e-8, 1e-7, 1e-6, 1e-5]
     D, N, P = 2, 1, 2
-    T = 5000     # Time horizon for simulations
+    T = 500     # Time horizon for simulations
     GPC_M = 3
     SFC_M_HIST = 5
     SFC_H_FILT = 3
     DSC_M_HIST = 5
     DSC_H_FILT = 3
     GAUSSIAN_NOISE_STD = 0.001
-    # NN-GPC parameters
-    NNGPC_M = 5
-    NNGPC_K = 3
     # Adaptive GPC parameters
-    ADAPTIVE_GPC_HH = GPC_M
-    ADAPTIVE_GPC_ETA_VALUES = [1e-4, 1e-3, 1e-2]
-    ADAPTIVE_GPC_EXPERT_DENSITY_VALUES = [10, 50, 100, 500, 1000, 2000]
-    ADAPTIVE_GPC_LIFE_LOWER_BOUND = 2500 # Must be > expert_density to ensure overlap
+    ADAPTIVE_GPC_HH = 3
+    ADAPTIVE_GPC_ETA_VALUES = [0.1, 0.5, 1.0]
+    ADAPTIVE_GPC_EXPERT_DENSITY_VALUES = [10, 20, 40]
+    ADAPTIVE_GPC_LIFE_LOWER_BOUND = 20
 elif SYSTEM_TYPE == "brax":
     NUM_STABLE_TRIALS_THRESHOLD = 10 # 10%
     D = brax_env.sys.q_size() + brax_env.sys.qd_size()
@@ -112,7 +100,7 @@ elif SYSTEM_TYPE == "brax":
     DSC_H_FILT = 5 # Often same as SFC
     GAUSSIAN_NOISE_STD = 0
     # Adaptive GPC parameters
-    ADAPTIVE_GPC_HH = GPC_M
+    ADAPTIVE_GPC_HH = 5
     ADAPTIVE_GPC_ETA_VALUES = [0.1, 0.5, 1.0]
     ADAPTIVE_GPC_EXPERT_DENSITY_VALUES = [20, 40, 60]
     ADAPTIVE_GPC_LIFE_LOWER_BOUND = 40
@@ -544,117 +532,6 @@ def plot_state_trajectory(trajectory, u_history, controller_name, dt, trial_to_p
 #     print("--- Brax Sanity Check Complete ---")
     
 
-# ---------- NN-GPC Hyperparameter Tuning (Grid Search) ----------
-print("\n--- NN-GPC Hyperparameter Tuning (Grid Search) ---")
-
-@partial(jit, static_argnames=("d", "n", "p", "T", "nngpc_m", "nngpc_k", "nngpc_lr_decay", "lds_transition_type", "lds_noise_type"))
-def nngpc_trial_runner_for_vmap(key_trial_specific, d, n, p, T, nngpc_m, nngpc_k, nngpc_lr, nngpc_lr_decay, lds_transition_type, lds_noise_type):
-    key_params_gen, key_sim_run = jax.random.split(key_trial_specific)
-    A, B, C, Q, R, x0 = generate_trial_params(key_params_gen, d, n, p)
-
-    if SYSTEM_TYPE == "lds":
-        sim = partial(lds_sim, A=A, B=B)
-        output_map = partial(lds_output, C=C)
-    elif SYSTEM_TYPE == "pendulum":
-        sim = partial(pendulum_sim, max_torque=MAX_TORQUE, m=M, l=L, g=G, dt=DT)
-        output_map = pendulum_output
-    elif SYSTEM_TYPE == "brax":
-        sim = partial(brax_sim, env=brax_env, template_state=brax_template_state, jit_step_fn=jit_brax_env_step)
-        output_map = brax_output
-    else:
-        raise ValueError(f"Unknown SYSTEM_TYPE: {SYSTEM_TYPE}")
-    
-    # We pass functions from control_algs into the nngpc module's runner
-    costs, trajectory, u_history = nngpc.run_single_nngpc_trial(
-        key_trial_run=key_sim_run, A=A, B=B, C=C, Q_cost=Q, R_cost=R, x0=x0, sim=sim, output_map=output_map,
-        T_sim_steps=T, 
-        nngpc_m=nngpc_m, nngpc_k=nngpc_k, nngpc_lr=nngpc_lr, nngpc_lr_decay=nngpc_lr_decay,
-        gaussian_noise_std=GAUSSIAN_NOISE_STD, 
-        lds_transition_type=lds_transition_type,
-        lds_noise_type=lds_noise_type,
-        sinusoidal_noise_amp=SINUSOIDAL_NOISE_AMPLITUDE, 
-        sinusoidal_noise_freq=SINUSOIDAL_NOISE_FREQUENCY,
-        step_fn=step,
-        lds_gaussian_step_fn=lds_gaussian_step_dynamic,
-        lds_sinusoidal_step_fn=lds_sinusoidal_step_dynamic,
-        disturbance_fn=gaussian_disturbance,
-        cost_evaluate_fn=quadratic_cost_evaluate
-    )
-    return costs, trajectory, u_history
-
-print(f"Tuning NN-GPC with fixed params: d={D}, n={N}, p={P}, m={NNGPC_M}, k={NNGPC_K}, T={T}, trials={NUM_TRIALS}, LR decay={LR_DECAY}")
-
-plt.figure(figsize=(15, 10))
-plt.title(f"NN-GPC Hyperparameter Tuning (d={D}, m={NNGPC_M}, k={NNGPC_K}, System={SYSTEM_TYPE})")
-plt.xlabel("Time Step")
-plt.ylabel("Mean Cumulative Average Cost")
-plt.grid(True)
-
-best_nngpc_hyperparams = None
-lowest_final_nngpc_cost = float('inf')
-
-nngpc_color_idx = 0
-num_nngpc_param_combinations = len(NNGPC_LEARNING_RATES_TO_TEST)
-nngpc_colors = plt.cm.spring(np.linspace(0, 1, num_nngpc_param_combinations if num_nngpc_param_combinations > 0 else 1))
-
-vmap_nngpc = jax.vmap(nngpc_trial_runner_for_vmap,
-    in_axes=(0, None, None, None, None, None, None, None, None, None, None),
-    out_axes=0)
-
-for lr in NNGPC_LEARNING_RATES_TO_TEST:
-    current_params = {"lr": lr}
-    print(f"Testing NN-GPC with: {current_params}...")
-    
-    costs, _, u_history = vmap_nngpc(
-        TRIAL_KEYS, D, N, P, T, NNGPC_M, NNGPC_K, lr, LR_DECAY, LDS_TRANSITION_TYPE, LDS_NOISE_TYPE
-    )
-    costs_current_params = np.array(costs)
-
-    cum_costs_current = np.cumsum(costs_current_params, axis=1)
-
-    if np.any(np.isnan(cum_costs_current)) or np.any(np.isinf(cum_costs_current)):
-        print(f"  Params {current_params} resulted in NaN/Inf costs. Skipping.")
-        nngpc_color_idx += 1
-        continue
-
-    stable_mask = cum_costs_current[:, -1] < 1e7
-    num_stable_trials = np.sum(stable_mask)
-
-    print(f"  Params {current_params}: {num_stable_trials}/{NUM_TRIALS} stable trials.")
-
-    if num_stable_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD:
-        avg_costs_stable = cum_costs_current[stable_mask] / (np.arange(1, T + 1)[None, :])
-        mean_avg_cost_current = np.mean(avg_costs_stable, axis=0)
-        
-        label_str = f"lr={lr:.0e}"
-        current_color = nngpc_colors[nngpc_color_idx % len(nngpc_colors)]
-        plt.plot(mean_avg_cost_current, label=label_str, color=current_color, alpha=0.8)
-        
-        final_avg_cost = mean_avg_cost_current[-1]
-        if final_avg_cost < lowest_final_nngpc_cost:
-            lowest_final_nngpc_cost = final_avg_cost
-            best_nngpc_hyperparams = current_params
-            print(f"    New best NN-GPC params: {best_nngpc_hyperparams} with final avg cost: {final_avg_cost:.4f}")
-    else:
-        print(f"  Params {current_params}: Not enough stable trials. Skipping plot.")
-    nngpc_color_idx += 1
-
-if plt.gca().has_data():
-    plt.legend(loc='upper right', fontsize='small')
-plt.ylim(bottom=0)
-plots_dir_nngpc = get_plot_dir()
-plt.savefig(os.path.join(plots_dir_nngpc, "nngpc_tuning_plot.png"))
-print(f"NN-GPC tuning plot saved to {os.path.join(plots_dir_nngpc, 'nngpc_tuning_plot.png')}")
-
-if best_nngpc_hyperparams:
-    print(f"\nSelected best NN-GPC hyperparameters: {best_nngpc_hyperparams}")
-    print(f"Corresponding lowest final mean cumulative average cost: {lowest_final_nngpc_cost:.4f}")
-else:
-    print("\nCould not determine best NN-GPC hyperparameters.")
-
-print("\n--- NN-GPC Hyperparameter Tuning Complete ---")
-
-
 def gpc_init_controller_state(key, init_scale, m, n, p, d):
     M = init_scale * jax.random.normal(key, shape=(m, n, p))
     z = jnp.zeros((d, 1))
@@ -957,10 +834,10 @@ print("\n--- GPC Hyperparameter Tuning (Grid Search) Complete ---")
 from collections import namedtuple
 
 # Pytree for storing the state of all GPC experts
-GPCExpertStates = namedtuple('GPCExpertStates', ['M', 't'])
+GPCExpertStates = namedtuple('GPCExpertStates', ['M', 'z', 'ynat_history', 't'])
 
 # Pytree for the full state of the Adaptive GPC controller
-AdaptiveGPCState = namedtuple('AdaptiveGPCState', ['t', 'weights', 'alive', 'z', 'ynat_history', 'experts'])
+AdaptiveGPCState = namedtuple('AdaptiveGPCState', ['t', 'weights', 'alive', 'experts'])
 
 def lifetime(x, lower_bound):
     """Computes the lifetime of an expert based on its birth time."""
@@ -977,23 +854,21 @@ def adaptive_gpc_init_controller_state(key, T_sim, d, n, p, gpc_m, init_scale, h
     """Initializes the state of the Adaptive GPC controller."""
     # Expert 0 is born at t=0 and is alive.
     key_expert0, _ = jax.random.split(key)
-    # Note: gpc_init_controller_state returns (M, z, ynat_hist, t). We only need M and t for the expert.
-    M0, _, _, t0 = gpc_init_controller_state(key_expert0, init_scale, gpc_m, n, p, d)
+    M0, z0, ynat_hist0, t0 = gpc_init_controller_state(key_expert0, init_scale, gpc_m, n, p, d)
 
     # All other experts are dormant.
     experts_M = jnp.zeros((T_sim, gpc_m, n, p)).at[0].set(M0)
+    experts_z = jnp.zeros((T_sim, d, 1)).at[0].set(z0)
+    experts_ynat_hist = jnp.zeros((T_sim, 2 * gpc_m, p, 1)).at[0].set(ynat_hist0)
     experts_t = jnp.zeros((T_sim,), dtype=jnp.int32).at[0].set(t0)
-    expert_states = GPCExpertStates(M=experts_M, t=experts_t)
-    
-    # Shared state is initialized to zeros
-    z = jnp.zeros((d, 1))
-    ynat_history = jnp.zeros((2 * gpc_m, p, 1))
+
+    expert_states = GPCExpertStates(M=experts_M, z=experts_z, ynat_history=experts_ynat_hist, t=experts_t)
 
     # Only expert 0 is alive and has weight
     weights = jnp.zeros((T_sim,)).at[0].set(1.0)
     alive = jnp.zeros((T_sim,), dtype=jnp.int32).at[0].set(1)
 
-    return AdaptiveGPCState(t=0, weights=weights, alive=alive, z=z, ynat_history=ynat_history, experts=expert_states)
+    return AdaptiveGPCState(t=0, weights=weights, alive=alive, experts=expert_states)
 
 
 def run_single_adaptive_gpc_trial(
@@ -1020,32 +895,16 @@ def run_single_adaptive_gpc_trial(
 
     # --- Vmapped functions for updating all experts in parallel ---
     @jit
-    def vmapped_gpc_update(experts, alive_mask, shared_ynat_hist):
-        def update_one_expert(M, t, is_alive):
-            # This is a simplified update that only changes M based on the shared ynat_history
-            # Note: We need a simplified gpc_update_controller or to pass in dummy z, etc.
-            # Let's create a minimal version here for clarity.
-            grad_M = gpc_grad_fn(M, shared_ynat_hist)
-            lr_current = gpc_lr * (1.0 / (t + 1.0) if gpc_lr_decay else 1.0)
-            M_next_pre_clip = M - lr_current * grad_M
-            
-            norm_M = jnp.linalg.norm(M_next_pre_clip)
-            scale = jnp.minimum(1.0, gpc_R_M / (norm_M + 1e-8))
-            M_next = scale * M_next_pre_clip
-            t_next = t + 1
-            
-            # Conditionally apply the update only if the expert is alive
-            final_M = jnp.where(is_alive, M_next, M)
-            final_t = jnp.where(is_alive, t_next, t)
-            return final_M, final_t
-
-        # The vmap will now iterate over the alive_mask as well
-        return jax.vmap(update_one_expert)(experts.M, experts.t, alive_mask)
+    def vmapped_gpc_update(experts, y_meas, u_taken):
+        def update_one_expert(M, z, ynat_hist, t):
+            # We need to compute the grad inside, or pass it in.
+            # Passing it in is better.
+            return gpc_update_controller(M, z, ynat_hist, t, y_meas, u_taken, gpc_lr, gpc_lr_decay, gpc_R_M, gpc_grad_fn, gpc_m, p, sim, output_map)
+        return jax.vmap(update_one_expert)(experts.M, experts.z, experts.ynat_history, experts.t)
 
     @jit
-    def vmapped_gpc_loss(experts, shared_ynat_hist):
-        """Calculates loss for each expert based on its M and the SHARED ynat history."""
-        return jax.vmap(final_gpc_loss_fn)(experts.M, jax.lax.broadcast(shared_ynat_hist, (experts.M.shape[0],)))
+    def vmapped_gpc_loss(experts):
+        return jax.vmap(final_gpc_loss_fn)(experts.M, experts.ynat_history)
 
     key_adaptive_init, key_sim_loop_main = jax.random.split(key_trial_run)
     adaptive_controller_state = adaptive_gpc_init_controller_state(key_adaptive_init, T_sim_steps, d, n, p, gpc_m, gpc_init_scale, hh)
@@ -1056,40 +915,41 @@ def run_single_adaptive_gpc_trial(
     def adaptive_gpc_simulation_step(carry, key_step):
         prev_x, prev_adaptive_state, prev_sim_t = carry
         
-        # 1. Select best expert and get action using the shared ynat history
+        # 1. Select best expert and get action
         play_i = jnp.argmax(prev_adaptive_state.weights)
+        
+        # Slice out the state of the best expert
         played_M = jtu.tree_map(lambda leaf: leaf[play_i], prev_adaptive_state.experts.M)
-        u_t = gpc_get_action(played_M, prev_adaptive_state.ynat_history, gpc_m, p)
+        played_ynat_hist = jtu.tree_map(lambda leaf: leaf[play_i], prev_adaptive_state.experts.ynat_history)
+        
+        u_t = gpc_get_action(played_M, played_ynat_hist, gpc_m, p)
 
         # 2. Step the true system dynamics
+        # (This section is identical to other controllers)
         if LDS_TRANSITION_TYPE == "special":
              next_x, y_measured_t = step(
                 x=prev_x, u=u_t, sim=sim, output_map=output_map,
                 dist_std=GAUSSIAN_NOISE_STD, t_sim_step=prev_sim_t,
                 disturbance=gaussian_disturbance, key=key_step
             )
+        # Note: Add other LDS types here if needed, following GPC/SFC structure
         else:
              raise ValueError(f"Unsupported LDS transition type for AdaptiveGPC: {LDS_TRANSITION_TYPE}")
 
-        # 3. Update the SHARED state (z and ynat_history)
-        # This z represents the forced response of the chosen policy
-        next_z = sim(prev_adaptive_state.z, u_t)
-        y_nat_current = y_measured_t - output_map(next_z)
-        next_ynat_hist = jnp.roll(prev_adaptive_state.ynat_history, shift=1, axis=0).at[0].set(y_nat_current)
 
-        # 4. Evaluate loss for all experts using the NEW shared ynat history
-        losses = vmapped_gpc_loss(prev_adaptive_state.experts, next_ynat_hist)
+        # 3. Update all GPC experts with the single (y_measured, u_taken) pair
+        next_M, next_z, next_ynat_hist, next_t_experts = vmapped_gpc_update(prev_adaptive_state.experts, y_measured_t, u_t)
+        updated_expert_states = GPCExpertStates(M=next_M, z=next_z, ynat_history=next_ynat_hist, t=next_t_experts)
         
-        # 5. Update weights based on loss, only for alive experts
+        # 4. Evaluate loss for all experts to update adaptive weights
+        losses = vmapped_gpc_loss(updated_expert_states)
+        
+        # Update weights based on loss, only for alive experts
         new_weights = prev_adaptive_state.weights * jnp.exp(-eta * losses)
         new_weights = jnp.where(prev_adaptive_state.alive, new_weights, prev_adaptive_state.weights)
         new_weights = jnp.clip(new_weights, a_min=eps, a_max=inf) # Clip weights
 
-        # 6. NOW, update all ALIVE GPC experts' internal states (just M and t)
-        next_M_experts, next_t_experts = vmapped_gpc_update(prev_adaptive_state.experts, prev_adaptive_state.alive, next_ynat_hist)
-        updated_expert_states = GPCExpertStates(M=next_M_experts, t=next_t_experts)
-        
-        # 7. Birth and Death of experts
+        # 5. Birth and Death of experts
         t_current = prev_adaptive_state.t
         t_next = t_current + 1
         
@@ -1101,9 +961,9 @@ def run_single_adaptive_gpc_trial(
         # Birth
         is_birth_time = (t_next % expert_density == 0)
         
-        # Initialize new expert state if it's birth time. It only needs an M matrix and a birth time.
+        # Initialize new expert state if it's birth time
         key_birth, _ = jax.random.split(key_step)
-        new_expert_M, _, _, new_expert_t = gpc_init_controller_state(
+        new_expert_M, new_expert_z, new_expert_ynat, new_expert_t = gpc_init_controller_state(
             key_birth, gpc_init_scale, gpc_m, n, p, d
         )
 
@@ -1114,27 +974,22 @@ def run_single_adaptive_gpc_trial(
             lambda x: x,
             updated_expert_states.M
         )
+        final_expert_z = jax.lax.cond(is_birth_time, lambda x: x.at[t_next].set(new_expert_z), lambda x: x, updated_expert_states.z)
+        final_expert_ynat = jax.lax.cond(is_birth_time, lambda x: x.at[t_next].set(new_expert_ynat), lambda x: x, updated_expert_states.ynat_history)
         final_expert_t = jax.lax.cond(is_birth_time, lambda x: x.at[t_next].set(new_expert_t), lambda x: x, updated_expert_states.t)
         
         # Update alive status and weights for the newborn
         next_alive = jax.lax.cond(is_birth_time, lambda x: x.at[t_next].set(1), lambda x: x, next_alive)
         new_weights = jax.lax.cond(is_birth_time, lambda x: x.at[t_next].set(eps), lambda x: x, new_weights)
         
-        final_expert_states = GPCExpertStates(M=final_expert_M, t=final_expert_t)
+        final_expert_states = GPCExpertStates(M=final_expert_M, z=final_expert_z, ynat_history=final_expert_ynat, t=final_expert_t)
 
-        # 8. Rescale weights
+        # 6. Rescale weights
         max_w = jnp.max(new_weights)
         final_weights = jax.lax.cond(max_w < 1, lambda w: w / max_w, lambda w: w, new_weights)
 
-        # 9. Assemble next state using the UPDATED experts for the next loop iteration
-        next_adaptive_state = AdaptiveGPCState(
-            t=t_next, 
-            weights=final_weights, 
-            alive=next_alive, 
-            z=next_z, 
-            ynat_history=next_ynat_hist, 
-            experts=final_expert_states
-        )
+        # 7. Assemble next state
+        next_adaptive_state = AdaptiveGPCState(t=t_next, weights=final_weights, alive=next_alive, experts=final_expert_states)
         
         # Calculate cost for this step
         cost_at_t = quadratic_cost_evaluate(y_measured_t, u_t, Q_cost, R_cost)
@@ -1146,8 +1001,7 @@ def run_single_adaptive_gpc_trial(
     initial_carry = (current_x_state, adaptive_controller_state, initial_sim_time_step)
     keys_for_scan = jax.random.split(key_sim_loop_main, T_sim_steps)
 
-    # Note: we need to unpack the final state correctly
-    (final_x, final_adaptive_state, _), (costs_over_time, trajectory, u_history) = jax.lax.scan(adaptive_gpc_simulation_step, initial_carry, keys_for_scan)
+    (_, (costs_over_time, trajectory, u_history)) = jax.lax.scan(adaptive_gpc_simulation_step, initial_carry, keys_for_scan)
     return costs_over_time, trajectory, u_history
 
 @partial(jit, static_argnames=("d","n","p","T","gpc_m","gpc_init_scale","gpc_lr","gpc_decay","gpc_R_M", "hh", "eta", "eps", "inf", "life_lower_bound", "expert_density"))
@@ -1203,7 +1057,7 @@ num_agpc_param_combinations = len(ADAPTIVE_GPC_ETA_VALUES) * len(ADAPTIVE_GPC_EX
 agpc_colors = plt.cm.magma(np.linspace(0, 1, num_agpc_param_combinations if num_agpc_param_combinations > 0 else 1))
 
 vmap_agpc = jax.vmap(adaptive_gpc_trial_runner_for_vmap, 
-    in_axes=(0, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None),
+    in_axes=(0, None, None, None, None, None, None, None, None, None, None, 0, None, None, None, 0),
     out_axes=0)
 
 for eta in ADAPTIVE_GPC_ETA_VALUES:
@@ -1256,7 +1110,6 @@ print(f"Adaptive GPC tuning plot saved to {os.path.join(plots_dir_agpc, 'adaptiv
 
 if best_adaptive_gpc_hyperparams:
     print(f"\nSelected best Adaptive GPC hyperparameters: {best_adaptive_gpc_hyperparams}")
-    print(f"Corresponding lowest final mean cumulative average cost: {lowest_final_adaptive_gpc_cost:.4f}")
 else:
     print("\nCould not determine best Adaptive GPC hyperparameters.")
 
@@ -1938,9 +1791,6 @@ tuned_agpc_eta_comp = best_adaptive_gpc_hyperparams['eta'] if best_adaptive_gpc_
 tuned_agpc_exp_dens_comp = best_adaptive_gpc_hyperparams['expert_density'] if best_adaptive_gpc_hyperparams else 50
 agpc_params_source_message = "using tuned params" if best_adaptive_gpc_hyperparams else "using default Adaptive GPC params (tuning failed)"
 
-# NN-GPC
-tuned_nngpc_lr_comp = best_nngpc_hyperparams['lr'] if best_nngpc_hyperparams else 1e-4
-nngpc_params_source_message = "using tuned params" if best_nngpc_hyperparams else "using default NN-GPC params (tuning failed)"
 
 # --- Comparison Plots---
 print("\n--- Running Comparison Experiments (Optimized GPC, SFC, DSC) ---")
@@ -2005,7 +1855,7 @@ if mask_gpc_comp.sum() > 0:
 # Adaptive GPC for Comparison
 agpc_hyperparam_details_str = ""
 if best_adaptive_gpc_hyperparams:
-    agpc_hyperparam_details_str = f": eta={tuned_agpc_eta_comp:.4f}, dens={tuned_agpc_exp_dens_comp}"
+    agpc_hyperparam_details_str = f": eta={tuned_agpc_eta_comp:.2f}, dens={tuned_agpc_exp_dens_comp}"
 agpc_label_suffix = f" ({agpc_params_source_message}{agpc_hyperparam_details_str})"
 
 print(f"Adaptive GPC for Comparison ({agpc_params_source_message}): {comp_num_trials} trials, {T} steps")
@@ -2042,45 +1892,6 @@ if mask_agpc_comp.sum() > 0:
     mean_avg_cost_agpc_comp = np.mean(avg_agpc_comp, axis=0)
     stderr_avg_cost_agpc_comp = np.std(avg_agpc_comp, axis=0) / np.sqrt(n_st_agpc_comp)
 
-
-# NN-GPC for Comparison
-nngpc_lr_for_comp = tuned_nngpc_lr_comp
-nngpc_hyperparam_details_str = f": lr={nngpc_lr_for_comp:.1e}" if best_nngpc_hyperparams else ""
-nngpc_label_suffix = f" ({nngpc_params_source_message}{nngpc_hyperparam_details_str})"
-
-print(f"NN-GPC for Comparison ({nngpc_params_source_message}): {comp_num_trials} trials, {T} steps, m={NNGPC_M}, k={NNGPC_K}, lr={nngpc_lr_for_comp:.1e}")
-comp_costs_nngpc, comp_trajectories_nngpc, nngpc_u_history = vmap_nngpc(
-    comp_trial_keys, D, N, P, T, NNGPC_M, NNGPC_K, nngpc_lr_for_comp, LR_DECAY, LDS_TRANSITION_TYPE, LDS_NOISE_TYPE
-)
-comp_costs_nngpc_np = np.array(comp_costs_nngpc)
-print("NN-GPC for Comparison complete.")
-cum_nngpc_comp = np.cumsum(comp_costs_nngpc_np, axis=1)
-mask_nngpc_comp = cum_nngpc_comp[:, -1] < comp_threshold
-
-plot_idx_nngpc = 0
-plot_title_nngpc = f"(Trial {plot_idx_nngpc} - All Unstable)"
-if np.any(mask_nngpc_comp):
-    final_costs_nngpc = cum_nngpc_comp[:, -1]
-    costs_for_min_finding_nngpc = np.where(mask_nngpc_comp, final_costs_nngpc, np.inf)
-    best_stable_idx_nngpc = np.argmin(costs_for_min_finding_nngpc)
-    plot_idx_nngpc = best_stable_idx_nngpc
-    plot_title_nngpc = f"(Best Stable Trial #{plot_idx_nngpc})"
-
-save_brax_rollout(np.array(comp_trajectories_nngpc), "nngpc", trial_idx=plot_idx_nngpc)
-plot_state_trajectory(np.array(comp_trajectories_nngpc), np.array(nngpc_u_history), "nngpc", dt_for_plot, trial_to_plot_idx=plot_idx_nngpc, plot_title_suffix=plot_title_nngpc)
-
-rem_nngpc_comp = np.sum(~mask_nngpc_comp)
-print(f"Removed {rem_nngpc_comp} NN-GPC comparison trial(s)")
-mean_avg_cost_nngpc_comp = np.zeros(T)
-stderr_avg_cost_nngpc_comp = np.zeros(T)
-if mask_nngpc_comp.sum() > 0:
-    c_st_nngpc_comp = cum_nngpc_comp[mask_nngpc_comp]
-    n_st_nngpc_comp = c_st_nngpc_comp.shape[0]
-    avg_nngpc_comp = c_st_nngpc_comp / (np.arange(1, T + 1)[None, :])
-    mean_avg_cost_nngpc_comp = np.mean(avg_nngpc_comp, axis=0)
-    stderr_avg_cost_nngpc_comp = np.std(avg_nngpc_comp, axis=0) / np.sqrt(n_st_nngpc_comp)
-    
-    
 # SFC for Comparison 
 sfc_init_scale_for_comp = tuned_sfc_init_scale_comp
 sfc_lr_for_comp = tuned_sfc_lr_comp
@@ -2201,12 +2012,6 @@ plt.fill_between(np.arange(T),
                 mean_avg_cost_agpc_comp - stderr_avg_cost_agpc_comp,
                 mean_avg_cost_agpc_comp + stderr_avg_cost_agpc_comp,
                 alpha=0.2, color="purple")
-# NN-GPC
-plt.plot(mean_avg_cost_nngpc_comp, label=f"NN-GPC {nngpc_label_suffix}", color="orange")
-plt.fill_between(np.arange(T),
-                mean_avg_cost_nngpc_comp - stderr_avg_cost_nngpc_comp,
-                mean_avg_cost_nngpc_comp + stderr_avg_cost_nngpc_comp,
-                alpha=0.2, color="orange")
 # SFC 
 plt.plot(mean_avg_cost_sfc_comp, label=f"SFC {sfc_label_suffix}", color="green")
 plt.fill_between(np.arange(T), 
@@ -2227,8 +2032,6 @@ title_parts = []
 if best_gpc_hyperparams: title_parts.append("Tuned GPC")
 else: title_parts.append("Default GPC")
 if best_adaptive_gpc_hyperparams: title_parts.append("Tuned AdaptiveGPC")
-if best_nngpc_hyperparams: title_parts.append("Tuned NN-GPC")
-else: title_parts.append("Default NN-GPC")
 if best_sfc_hyperparams: title_parts.append("Tuned SFC")
 else: title_parts.append("Default SFC")
 if best_dsc_hyperparams: title_parts.append("Tuned DSC")
@@ -2240,8 +2043,8 @@ plt.legend(fontsize='small')
 plt.grid(True)
 
 # Determine a reasonable y-limit based on all plotted data
-all_means_for_ylim = [mean_avg_cost_gpc_comp, mean_avg_cost_agpc_comp, mean_avg_cost_nngpc_comp, mean_avg_cost_sfc_comp, mean_avg_cost_dsc_comp]
-all_stderr_for_ylim = [stderr_avg_cost_gpc_comp, stderr_avg_cost_agpc_comp, stderr_avg_cost_nngpc_comp, stderr_avg_cost_sfc_comp, stderr_avg_cost_dsc_comp]
+all_means_for_ylim = [mean_avg_cost_gpc_comp, mean_avg_cost_agpc_comp, mean_avg_cost_sfc_comp, mean_avg_cost_dsc_comp]
+all_stderr_for_ylim = [stderr_avg_cost_gpc_comp, stderr_avg_cost_agpc_comp, stderr_avg_cost_sfc_comp, stderr_avg_cost_dsc_comp]
 max_y = 0
 for mean_data, stderr_data in zip(all_means_for_ylim, all_stderr_for_ylim):
     if mean_data.size > 0 and stderr_data.size > 0: # Check if array is not empty
