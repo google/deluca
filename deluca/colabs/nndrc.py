@@ -19,7 +19,7 @@ class MLP(nn.Module):
         x = nn.Dense(self.features[-1])(x)
         return x
 
-# ---------- NN-GPC Controller State and Initialization ----------
+# ---------- NN-drc Controller State and Initialization ----------
 class TrainState(train_state.TrainState):
     pass
 
@@ -29,8 +29,8 @@ def create_train_state(key, model, learning_rate, input_shape):
     tx = optax.adam(learning_rate)
     return TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
-def nngpc_init_controller_state(key, learning_rate, d, n, p, m, k, nn_features):
-    """Initializes the state for the NN-GPC controller."""
+def nndrc_init_controller_state(key, learning_rate, d, n, p, m, k, nn_features):
+    """Initializes the state for the NN-drc controller."""
     # State for the neural network
     model = MLP(features=nn_features)
     input_shape = (m * p,)
@@ -42,8 +42,8 @@ def nngpc_init_controller_state(key, learning_rate, d, n, p, m, k, nn_features):
     controller_t = 0
     return train_state, z, ynat_history, controller_t
 
-# ---------- NN-GPC Policy Loss and Action ----------
-def nngpc_policy_loss(
+# ---------- NN-drc Policy Loss and Action ----------
+def nndrc_policy_loss(
     params, apply_fn, ynat_history_for_loss,
     cost_evaluate_fn, Q_cost, R_cost,
     m_controller, k_future, d, p, sim, output_map
@@ -89,8 +89,8 @@ def nngpc_policy_loss(
     
     return total_future_cost
 
-def nngpc_get_action(params, apply_fn, ynat_history_buffer, m_controller, p):
-    """Get the next action from the NN-GPC controller."""
+def nndrc_get_action(params, apply_fn, ynat_history_buffer, m_controller, p):
+    """Get the next action from the NN-drc controller."""
     # Use the most recent m steps of ynat_history
     window_for_action = jax.lax.dynamic_slice(ynat_history_buffer, (0, 0, 0), (m_controller, p, 1))
     nn_input = window_for_action.flatten()
@@ -100,16 +100,16 @@ def nngpc_get_action(params, apply_fn, ynat_history_buffer, m_controller, p):
     u = u_sequence[:1] # Take first action
     return u.reshape(-1, 1)
 
-# ---------- NN-GPC Update Step ----------
+# ---------- NN-drc Update Step ----------
 @partial(jax.jit, static_argnames=('loss_fn', 'apply_lr_decay', 'sim', 'output_map'))
-def nngpc_update_controller(
+def nndrc_update_controller(
     train_state, z, ynat_history_buffer, controller_t,
     y_meas, u_taken,
     lr_base, apply_lr_decay,
     loss_fn,
     sim, output_map
 ):
-    """Performs a single update step for the NN-GPC controller."""
+    """Performs a single update step for the NN-drc controller."""
     # 1. Update z state and ynat_history
     z_next = sim(z, u_taken)
     y_nat_current = y_meas - output_map(z_next)
@@ -130,11 +130,11 @@ def nngpc_update_controller(
     
     return new_train_state, z_next, ynat_history_updated, controller_t_next, loss_val
 
-# ---------- Simulation for NN-GPC ----------
-def run_single_nngpc_trial(
+# ---------- Simulation for NN-drc ----------
+def run_single_nndrc_trial(
     key_trial_run, A, B, C, Q_cost, R_cost, x0, sim, output_map,
     T_sim_steps, 
-    nngpc_m, nngpc_k, nngpc_lr, nngpc_lr_decay,
+    nndrc_m, nndrc_k, nndrc_lr, nndrc_lr_decay,
     gaussian_noise_std, lds_transition_type, lds_noise_type, sinusoidal_noise_amp, sinusoidal_noise_freq, # System params
     step_fn, lds_gaussian_step_fn, lds_sinusoidal_step_fn, # Step functions
     disturbance_fn,
@@ -143,34 +143,34 @@ def run_single_nngpc_trial(
     d, n, p = A.shape[0], B.shape[1], C.shape[0]
     
     # Define NN structure
-    nn_features = [4, nngpc_k * n]
+    nn_features = [4, nndrc_k * n]
     model = MLP(features=nn_features)
 
     # --- Loss function for gradient computation ---
-    def _nngpc_loss_for_grad(params, ynat_hist):
-        return nngpc_policy_loss(
+    def _nndrc_loss_for_grad(params, ynat_hist):
+        return nndrc_policy_loss(
             params, model.apply, ynat_hist,
             cost_evaluate_fn, Q_cost, R_cost,
-            nngpc_m, nngpc_k, d, p, sim, output_map
+            nndrc_m, nndrc_k, d, p, sim, output_map
         )
 
-    key_nngpc_init, key_sim_loop_main = jax.random.split(key_trial_run)
+    key_nndrc_init, key_sim_loop_main = jax.random.split(key_trial_run)
     
-    train_state_init, z_init, ynat_hist_init, t_init = nngpc_init_controller_state(
-        key_nngpc_init, nngpc_lr, d, n, p, nngpc_m, nngpc_k, nn_features
+    train_state_init, z_init, ynat_hist_init, t_init = nndrc_init_controller_state(
+        key_nndrc_init, nndrc_lr, d, n, p, nndrc_m, nndrc_k, nn_features
     )
 
     current_x_state = x0
     initial_sim_time_step = 0
 
-    def nngpc_simulation_step(carry, key_step_specific):
+    def nndrc_simulation_step(carry, key_step_specific):
         prev_x, prev_train_state, prev_z, prev_ynat_hist, prev_t, prev_sim_t = carry
 
         # 1. Get action from controller
-        u_control_t = nngpc_get_action(
+        u_control_t = nndrc_get_action(
             prev_train_state.params, 
             prev_train_state.apply_fn,
-            prev_ynat_hist, nngpc_m, p
+            prev_ynat_hist, nndrc_m, p
         )
 
         # 2. Step the system dynamics
@@ -200,11 +200,11 @@ def run_single_nngpc_trial(
             next_x, y_measured_t = prev_x, output_map(prev_x)
         
         # 3. Update controller state
-        next_train_state, next_z, next_ynat_hist, next_t, loss_val = nngpc_update_controller(
+        next_train_state, next_z, next_ynat_hist, next_t, loss_val = nndrc_update_controller(
             prev_train_state, prev_z, prev_ynat_hist, prev_t,
             y_measured_t, u_control_t,
-            nngpc_lr, nngpc_lr_decay,
-            _nngpc_loss_for_grad,
+            nndrc_lr, nndrc_lr_decay,
+            _nndrc_loss_for_grad,
             sim, output_map
         )
         
@@ -219,6 +219,6 @@ def run_single_nngpc_trial(
     initial_carry = (current_x_state, train_state_init, z_init, ynat_hist_init, t_init, initial_sim_time_step)
     keys_for_scan = jax.random.split(key_sim_loop_main, T_sim_steps)
     
-    (_, (costs_over_time, trajectory, u_history)) = jax.lax.scan(nngpc_simulation_step, initial_carry, keys_for_scan)
+    (_, (costs_over_time, trajectory, u_history)) = jax.lax.scan(nndrc_simulation_step, initial_carry, keys_for_scan)
     
     return costs_over_time, trajectory, u_history 

@@ -16,7 +16,7 @@ from collections import namedtuple
 #TODO: plot sliding window of cum avg costs, 1/10 of iterations
 import sys
 sys.path.append("../../")
-from deluca.colabs import nngpc
+from deluca.colabs import nndrc
 
 
 # ---------- System Configuration ----------
@@ -57,7 +57,7 @@ INIT_SCALES_TO_TEST = [2.0]
 LEARNING_RATES_TO_TEST = [5e-5, 1e-4, 5e-4]
 R_M_VALUES_TO_TEST = [0.005, 0.01, 0.1, 1.0, 5.0, 10.0]
 GAMMA_VALUES_TO_TEST = [0.05, 0.1, 0.3] # For SFC and DSC
-NNGPC_LEARNING_RATES_TO_TEST = [1e-5, 1e-4, 5e-4] # For NN-GPC
+nndrc_LEARNING_RATES_TO_TEST = [1e-5, 1e-4, 5e-4] # For NN-GPC
 
 # ---------- Experiment & Hyperparameter Configuration ----------
 # System Parameters
@@ -71,8 +71,8 @@ if SYSTEM_TYPE == "lds":
     DSC_M_HIST = 30 # Often same as SFC, but kept separate for flexibility
     DSC_H_FILT = 10 # Often same as SFC
     # NN-GPC parameters
-    NNGPC_M = 10
-    NNGPC_K = 5 # Prediction horizon for the NN
+    nndrc_M = 10
+    nndrc_K = 5 # Prediction horizon for the NN
     # Adaptive GPC parameters
     ADAPTIVE_GPC_HH = GPC_M
     ADAPTIVE_GPC_ETA_VALUES = [0.1, 0.5, 1.0]
@@ -91,8 +91,8 @@ elif SYSTEM_TYPE == "pendulum":
     DSC_H_FILT = 3
     GAUSSIAN_NOISE_STD = 0.001
     # NN-GPC parameters
-    NNGPC_M = 5
-    NNGPC_K = 3
+    nndrc_M = 5
+    nndrc_K = 3
     # Adaptive GPC parameters
     ADAPTIVE_GPC_HH = GPC_M
     ADAPTIVE_GPC_ETA_VALUES = [1e-4, 1e-3, 1e-2]
@@ -547,8 +547,8 @@ def plot_state_trajectory(trajectory, u_history, controller_name, dt, trial_to_p
 # ---------- NN-GPC Hyperparameter Tuning (Grid Search) ----------
 print("\n--- NN-GPC Hyperparameter Tuning (Grid Search) ---")
 
-@partial(jit, static_argnames=("d", "n", "p", "T", "nngpc_m", "nngpc_k", "nngpc_lr_decay", "lds_transition_type", "lds_noise_type"))
-def nngpc_trial_runner_for_vmap(key_trial_specific, d, n, p, T, nngpc_m, nngpc_k, nngpc_lr, nngpc_lr_decay, lds_transition_type, lds_noise_type):
+@partial(jit, static_argnames=("d", "n", "p", "T", "nndrc_m", "nndrc_k", "nndrc_lr_decay", "lds_transition_type", "lds_noise_type"))
+def nndrc_trial_runner_for_vmap(key_trial_specific, d, n, p, T, nndrc_m, nndrc_k, nndrc_lr, nndrc_lr_decay, lds_transition_type, lds_noise_type):
     key_params_gen, key_sim_run = jax.random.split(key_trial_specific)
     A, B, C, Q, R, x0 = generate_trial_params(key_params_gen, d, n, p)
 
@@ -564,11 +564,11 @@ def nngpc_trial_runner_for_vmap(key_trial_specific, d, n, p, T, nngpc_m, nngpc_k
     else:
         raise ValueError(f"Unknown SYSTEM_TYPE: {SYSTEM_TYPE}")
     
-    # We pass functions from control_algs into the nngpc module's runner
-    costs, trajectory, u_history = nngpc.run_single_nngpc_trial(
+    # We pass functions from control_algs into the nndrc module's runner
+    costs, trajectory, u_history = nndrc.run_single_nndrc_trial(
         key_trial_run=key_sim_run, A=A, B=B, C=C, Q_cost=Q, R_cost=R, x0=x0, sim=sim, output_map=output_map,
         T_sim_steps=T, 
-        nngpc_m=nngpc_m, nngpc_k=nngpc_k, nngpc_lr=nngpc_lr, nngpc_lr_decay=nngpc_lr_decay,
+        nndrc_m=nndrc_m, nndrc_k=nndrc_k, nndrc_lr=nndrc_lr, nndrc_lr_decay=nndrc_lr_decay,
         gaussian_noise_std=GAUSSIAN_NOISE_STD, 
         lds_transition_type=lds_transition_type,
         lds_noise_type=lds_noise_type,
@@ -582,31 +582,31 @@ def nngpc_trial_runner_for_vmap(key_trial_specific, d, n, p, T, nngpc_m, nngpc_k
     )
     return costs, trajectory, u_history
 
-print(f"Tuning NN-GPC with fixed params: d={D}, n={N}, p={P}, m={NNGPC_M}, k={NNGPC_K}, T={T}, trials={NUM_TRIALS}, LR decay={LR_DECAY}")
+print(f"Tuning NN-GPC with fixed params: d={D}, n={N}, p={P}, m={nndrc_M}, k={nndrc_K}, T={T}, trials={NUM_TRIALS}, LR decay={LR_DECAY}")
 
 plt.figure(figsize=(15, 10))
-plt.title(f"NN-GPC Hyperparameter Tuning (d={D}, m={NNGPC_M}, k={NNGPC_K}, System={SYSTEM_TYPE})")
+plt.title(f"NN-GPC Hyperparameter Tuning (d={D}, m={nndrc_M}, k={nndrc_K}, System={SYSTEM_TYPE})")
 plt.xlabel("Time Step")
 plt.ylabel("Mean Cumulative Average Cost")
 plt.grid(True)
 
-best_nngpc_hyperparams = None
-lowest_final_nngpc_cost = float('inf')
+best_nndrc_hyperparams = None
+lowest_final_nndrc_cost = float('inf')
 
-nngpc_color_idx = 0
-num_nngpc_param_combinations = len(NNGPC_LEARNING_RATES_TO_TEST)
-nngpc_colors = plt.cm.spring(np.linspace(0, 1, num_nngpc_param_combinations if num_nngpc_param_combinations > 0 else 1))
+nndrc_color_idx = 0
+num_nndrc_param_combinations = len(nndrc_LEARNING_RATES_TO_TEST)
+nndrc_colors = plt.cm.spring(np.linspace(0, 1, num_nndrc_param_combinations if num_nndrc_param_combinations > 0 else 1))
 
-vmap_nngpc = jax.vmap(nngpc_trial_runner_for_vmap,
+vmap_nndrc = jax.vmap(nndrc_trial_runner_for_vmap,
     in_axes=(0, None, None, None, None, None, None, None, None, None, None),
     out_axes=0)
 
-for lr in NNGPC_LEARNING_RATES_TO_TEST:
+for lr in nndrc_LEARNING_RATES_TO_TEST:
     current_params = {"lr": lr}
     print(f"Testing NN-GPC with: {current_params}...")
     
-    costs, _, u_history = vmap_nngpc(
-        TRIAL_KEYS, D, N, P, T, NNGPC_M, NNGPC_K, lr, LR_DECAY, LDS_TRANSITION_TYPE, LDS_NOISE_TYPE
+    costs, _, u_history = vmap_nndrc(
+        TRIAL_KEYS, D, N, P, T, nndrc_M, nndrc_K, lr, LR_DECAY, LDS_TRANSITION_TYPE, LDS_NOISE_TYPE
     )
     costs_current_params = np.array(costs)
 
@@ -614,7 +614,7 @@ for lr in NNGPC_LEARNING_RATES_TO_TEST:
 
     if np.any(np.isnan(cum_costs_current)) or np.any(np.isinf(cum_costs_current)):
         print(f"  Params {current_params} resulted in NaN/Inf costs. Skipping.")
-        nngpc_color_idx += 1
+        nndrc_color_idx += 1
         continue
 
     stable_mask = cum_costs_current[:, -1] < 1e7
@@ -625,30 +625,31 @@ for lr in NNGPC_LEARNING_RATES_TO_TEST:
     if num_stable_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD:
         avg_costs_stable = cum_costs_current[stable_mask] / (np.arange(1, T + 1)[None, :])
         mean_avg_cost_current = np.mean(avg_costs_stable, axis=0)
+        mean_avg_cost_sliding = sliding_window_avg(mean_avg_cost_current, T // 10)
         
         label_str = f"lr={lr:.0e}"
-        current_color = nngpc_colors[nngpc_color_idx % len(nngpc_colors)]
-        plt.plot(mean_avg_cost_current, label=label_str, color=current_color, alpha=0.8)
+        current_color = nndrc_colors[nndrc_color_idx % len(nndrc_colors)]
+        plt.plot(mean_avg_cost_sliding, label=label_str, color=current_color, alpha=0.8)
         
-        final_avg_cost = mean_avg_cost_current[-1]
-        if final_avg_cost < lowest_final_nngpc_cost:
-            lowest_final_nngpc_cost = final_avg_cost
-            best_nngpc_hyperparams = current_params
-            print(f"    New best NN-GPC params: {best_nngpc_hyperparams} with final avg cost: {final_avg_cost:.4f}")
+        final_avg_cost = mean_avg_cost_sliding[-1]
+        if final_avg_cost < lowest_final_nndrc_cost:
+            lowest_final_nndrc_cost = final_avg_cost
+            best_nndrc_hyperparams = current_params
+            print(f"    New best NN-GPC params: {best_nndrc_hyperparams} with final avg cost: {final_avg_cost:.4f}")
     else:
         print(f"  Params {current_params}: Not enough stable trials. Skipping plot.")
-    nngpc_color_idx += 1
+    nndrc_color_idx += 1
 
 if plt.gca().has_data():
     plt.legend(loc='upper right', fontsize='small')
 plt.ylim(bottom=0)
-plots_dir_nngpc = get_plot_dir()
-plt.savefig(os.path.join(plots_dir_nngpc, "nngpc_tuning_plot.png"))
-print(f"NN-GPC tuning plot saved to {os.path.join(plots_dir_nngpc, 'nngpc_tuning_plot.png')}")
+plots_dir_nndrc = get_plot_dir()
+plt.savefig(os.path.join(plots_dir_nndrc, "nndrc_tuning_plot.png"))
+print(f"NN-GPC tuning plot saved to {os.path.join(plots_dir_nndrc, 'nndrc_tuning_plot.png')}")
 
-if best_nngpc_hyperparams:
-    print(f"\nSelected best NN-GPC hyperparameters: {best_nngpc_hyperparams}")
-    print(f"Corresponding lowest final mean cumulative average cost: {lowest_final_nngpc_cost:.4f}")
+if best_nndrc_hyperparams:
+    print(f"\nSelected best NN-GPC hyperparameters: {best_nndrc_hyperparams}")
+    print(f"Corresponding lowest final mean cumulative average cost: {lowest_final_nndrc_cost:.4f}")
 else:
     print("\nCould not determine best NN-GPC hyperparameters.")
 
@@ -916,13 +917,14 @@ for init_scale in INIT_SCALES_TO_TEST:
             if num_stable_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD: 
                 avg_costs_stable = cum_costs_current[stable_mask_current] / (np.arange(1, T + 1)[None, :])
                 mean_avg_cost_current = np.mean(avg_costs_stable, axis=0)
+                mean_avg_cost_sliding = sliding_window_avg(mean_avg_cost_current, T // 10)
                 
                 label_str = f"is={init_scale}, rm={R_M}, lr={lr:.0e}"
                 # Ensure color_idx is within bounds for colors array
                 current_color = colors[color_idx % len(colors)] if len(colors) > 0 else 'blue'
-                plt.plot(mean_avg_cost_current, label=label_str, color=current_color, alpha=0.7)
+                plt.plot(mean_avg_cost_sliding, label=label_str, color=current_color, alpha=0.7)
                 
-                final_avg_cost = mean_avg_cost_current[-1]
+                final_avg_cost = mean_avg_cost_sliding[-1]
                 if final_avg_cost < lowest_final_cost:
                     lowest_final_cost = final_avg_cost
                     best_gpc_hyperparams = current_params
@@ -1233,12 +1235,13 @@ for eta in ADAPTIVE_GPC_ETA_VALUES:
         if num_stable_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD:
             avg_costs_stable = cum_costs_current[stable_mask] / (np.arange(1, T + 1)[None, :])
             mean_avg_cost_current = np.mean(avg_costs_stable, axis=0)
+            mean_avg_cost_sliding = sliding_window_avg(mean_avg_cost_current, T // 10)
             
             label_str = f"eta={eta}, dens={expert_density}"
             current_color = agpc_colors[agpc_color_idx % len(agpc_colors)]
-            plt.plot(mean_avg_cost_current, label=label_str, color=current_color, alpha=0.7)
+            plt.plot(mean_avg_cost_sliding, label=label_str, color=current_color, alpha=0.7)
             
-            final_avg_cost = mean_avg_cost_current[-1]
+            final_avg_cost = mean_avg_cost_sliding[-1]
             if final_avg_cost < lowest_final_adaptive_gpc_cost:
                 lowest_final_adaptive_gpc_cost = final_avg_cost
                 best_adaptive_gpc_hyperparams = current_params
@@ -1530,12 +1533,13 @@ for sfc_init_scale in INIT_SCALES_TO_TEST:
                 if num_stable_sfc_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD: 
                     avg_costs_stable_sfc = cum_costs_current_sfc[stable_mask_current_sfc] / (np.arange(1, T + 1)[None, :])
                     mean_avg_cost_current_sfc = np.mean(avg_costs_stable_sfc, axis=0)
+                    mean_avg_cost_sliding_sfc = sliding_window_avg(mean_avg_cost_current_sfc, T // 10)
                     
                     sfc_label_str = f"is={sfc_init_scale}, rm={sfc_R_M}, lr={sfc_lr:.0e}, g={sfc_gamma}"
                     current_sfc_color = sfc_colors[sfc_color_idx % len(sfc_colors)] if len(sfc_colors) > 0 else 'green'
-                    plt.plot(mean_avg_cost_current_sfc, label=sfc_label_str, color=current_sfc_color, alpha=0.6)
+                    plt.plot(mean_avg_cost_sliding_sfc, label=sfc_label_str, color=current_sfc_color, alpha=0.6)
                     
-                    final_avg_sfc_cost = mean_avg_cost_current_sfc[-1]
+                    final_avg_sfc_cost = mean_avg_cost_sliding_sfc[-1]
                     if final_avg_sfc_cost < lowest_sfc_final_cost:
                         lowest_sfc_final_cost = final_avg_sfc_cost
                         best_sfc_hyperparams = current_sfc_params
@@ -1866,12 +1870,13 @@ for dsc_init_scale in INIT_SCALES_TO_TEST:
                 if num_stable_dsc_trials > NUM_TRIALS // NUM_STABLE_TRIALS_THRESHOLD: 
                     avg_costs_stable_dsc = cum_costs_current_dsc[stable_mask_current_dsc] / (np.arange(1, T + 1)[None, :])
                     mean_avg_cost_current_dsc = np.mean(avg_costs_stable_dsc, axis=0)
+                    mean_avg_cost_sliding_dsc = sliding_window_avg(mean_avg_cost_current_dsc, T // 10)
                     
                     dsc_label_str = f"is={dsc_init_scale}, rm={dsc_R_M:.1e}, lr={dsc_lr:.0e}, g={dsc_gamma}"
                     current_dsc_color = dsc_colors[dsc_color_idx % len(dsc_colors)] if len(dsc_colors) > 0 else 'red'
-                    plt.plot(mean_avg_cost_current_dsc, label=dsc_label_str, color=current_dsc_color, alpha=0.6)
+                    plt.plot(mean_avg_cost_sliding_dsc, label=dsc_label_str, color=current_dsc_color, alpha=0.6)
                     
-                    final_avg_dsc_cost = mean_avg_cost_current_dsc[-1]
+                    final_avg_dsc_cost = mean_avg_cost_sliding_dsc[-1]
                     if final_avg_dsc_cost < lowest_dsc_final_cost:
                         lowest_dsc_final_cost = final_avg_dsc_cost
                         best_dsc_hyperparams = current_dsc_params
@@ -1939,8 +1944,8 @@ tuned_agpc_exp_dens_comp = best_adaptive_gpc_hyperparams['expert_density'] if be
 agpc_params_source_message = "using tuned params" if best_adaptive_gpc_hyperparams else "using default Adaptive GPC params (tuning failed)"
 
 # NN-GPC
-tuned_nngpc_lr_comp = best_nngpc_hyperparams['lr'] if best_nngpc_hyperparams else 1e-4
-nngpc_params_source_message = "using tuned params" if best_nngpc_hyperparams else "using default NN-GPC params (tuning failed)"
+tuned_nndrc_lr_comp = best_nndrc_hyperparams['lr'] if best_nndrc_hyperparams else 1e-4
+nndrc_params_source_message = "using tuned params" if best_nndrc_hyperparams else "using default NN-GPC params (tuning failed)"
 
 # --- Comparison Plots---
 print("\n--- Running Comparison Experiments (Optimized GPC, SFC, DSC) ---")
@@ -2044,41 +2049,41 @@ if mask_agpc_comp.sum() > 0:
 
 
 # NN-GPC for Comparison
-nngpc_lr_for_comp = tuned_nngpc_lr_comp
-nngpc_hyperparam_details_str = f": lr={nngpc_lr_for_comp:.1e}" if best_nngpc_hyperparams else ""
-nngpc_label_suffix = f" ({nngpc_params_source_message}{nngpc_hyperparam_details_str})"
+nndrc_lr_for_comp = tuned_nndrc_lr_comp
+nndrc_hyperparam_details_str = f": lr={nndrc_lr_for_comp:.1e}" if best_nndrc_hyperparams else ""
+nndrc_label_suffix = f" ({nndrc_params_source_message}{nndrc_hyperparam_details_str})"
 
-print(f"NN-GPC for Comparison ({nngpc_params_source_message}): {comp_num_trials} trials, {T} steps, m={NNGPC_M}, k={NNGPC_K}, lr={nngpc_lr_for_comp:.1e}")
-comp_costs_nngpc, comp_trajectories_nngpc, nngpc_u_history = vmap_nngpc(
-    comp_trial_keys, D, N, P, T, NNGPC_M, NNGPC_K, nngpc_lr_for_comp, LR_DECAY, LDS_TRANSITION_TYPE, LDS_NOISE_TYPE
+print(f"NN-GPC for Comparison ({nndrc_params_source_message}): {comp_num_trials} trials, {T} steps, m={nndrc_M}, k={nndrc_K}, lr={nndrc_lr_for_comp:.1e}")
+comp_costs_nndrc, comp_trajectories_nndrc, nndrc_u_history = vmap_nndrc(
+    comp_trial_keys, D, N, P, T, nndrc_M, nndrc_K, nndrc_lr_for_comp, LR_DECAY, LDS_TRANSITION_TYPE, LDS_NOISE_TYPE
 )
-comp_costs_nngpc_np = np.array(comp_costs_nngpc)
+comp_costs_nndrc_np = np.array(comp_costs_nndrc)
 print("NN-GPC for Comparison complete.")
-cum_nngpc_comp = np.cumsum(comp_costs_nngpc_np, axis=1)
-mask_nngpc_comp = cum_nngpc_comp[:, -1] < comp_threshold
+cum_nndrc_comp = np.cumsum(comp_costs_nndrc_np, axis=1)
+mask_nndrc_comp = cum_nndrc_comp[:, -1] < comp_threshold
 
-plot_idx_nngpc = 0
-plot_title_nngpc = f"(Trial {plot_idx_nngpc} - All Unstable)"
-if np.any(mask_nngpc_comp):
-    final_costs_nngpc = cum_nngpc_comp[:, -1]
-    costs_for_min_finding_nngpc = np.where(mask_nngpc_comp, final_costs_nngpc, np.inf)
-    best_stable_idx_nngpc = np.argmin(costs_for_min_finding_nngpc)
-    plot_idx_nngpc = best_stable_idx_nngpc
-    plot_title_nngpc = f"(Best Stable Trial #{plot_idx_nngpc})"
+plot_idx_nndrc = 0
+plot_title_nndrc = f"(Trial {plot_idx_nndrc} - All Unstable)"
+if np.any(mask_nndrc_comp):
+    final_costs_nndrc = cum_nndrc_comp[:, -1]
+    costs_for_min_finding_nndrc = np.where(mask_nndrc_comp, final_costs_nndrc, np.inf)
+    best_stable_idx_nndrc = np.argmin(costs_for_min_finding_nndrc)
+    plot_idx_nndrc = best_stable_idx_nndrc
+    plot_title_nndrc = f"(Best Stable Trial #{plot_idx_nndrc})"
 
-save_brax_rollout(np.array(comp_trajectories_nngpc), "nngpc", trial_idx=plot_idx_nngpc)
-plot_state_trajectory(np.array(comp_trajectories_nngpc), np.array(nngpc_u_history), "nngpc", dt_for_plot, trial_to_plot_idx=plot_idx_nngpc, plot_title_suffix=plot_title_nngpc)
+save_brax_rollout(np.array(comp_trajectories_nndrc), "nndrc", trial_idx=plot_idx_nndrc)
+plot_state_trajectory(np.array(comp_trajectories_nndrc), np.array(nndrc_u_history), "nndrc", dt_for_plot, trial_to_plot_idx=plot_idx_nndrc, plot_title_suffix=plot_title_nndrc)
 
-rem_nngpc_comp = np.sum(~mask_nngpc_comp)
-print(f"Removed {rem_nngpc_comp} NN-GPC comparison trial(s)")
-mean_avg_cost_nngpc_comp = np.zeros(T)
-stderr_avg_cost_nngpc_comp = np.zeros(T)
-if mask_nngpc_comp.sum() > 0:
-    c_st_nngpc_comp = cum_nngpc_comp[mask_nngpc_comp]
-    n_st_nngpc_comp = c_st_nngpc_comp.shape[0]
-    avg_nngpc_comp = c_st_nngpc_comp / (np.arange(1, T + 1)[None, :])
-    mean_avg_cost_nngpc_comp = np.mean(avg_nngpc_comp, axis=0)
-    stderr_avg_cost_nngpc_comp = np.std(avg_nngpc_comp, axis=0) / np.sqrt(n_st_nngpc_comp)
+rem_nndrc_comp = np.sum(~mask_nndrc_comp)
+print(f"Removed {rem_nndrc_comp} NN-GPC comparison trial(s)")
+mean_avg_cost_nndrc_comp = np.zeros(T)
+stderr_avg_cost_nndrc_comp = np.zeros(T)
+if mask_nndrc_comp.sum() > 0:
+    c_st_nndrc_comp = cum_nndrc_comp[mask_nndrc_comp]
+    n_st_nndrc_comp = c_st_nndrc_comp.shape[0]
+    avg_nndrc_comp = c_st_nndrc_comp / (np.arange(1, T + 1)[None, :])
+    mean_avg_cost_nndrc_comp = np.mean(avg_nndrc_comp, axis=0)
+    stderr_avg_cost_nndrc_comp = np.std(avg_nndrc_comp, axis=0) / np.sqrt(n_st_nndrc_comp)
     
     
 # SFC for Comparison 
@@ -2202,10 +2207,10 @@ plt.fill_between(np.arange(T),
                 mean_avg_cost_agpc_comp + stderr_avg_cost_agpc_comp,
                 alpha=0.2, color="purple")
 # NN-GPC
-plt.plot(mean_avg_cost_nngpc_comp, label=f"NN-GPC {nngpc_label_suffix}", color="orange")
+plt.plot(mean_avg_cost_nndrc_comp, label=f"NN-GPC {nndrc_label_suffix}", color="orange")
 plt.fill_between(np.arange(T),
-                mean_avg_cost_nngpc_comp - stderr_avg_cost_nngpc_comp,
-                mean_avg_cost_nngpc_comp + stderr_avg_cost_nngpc_comp,
+                mean_avg_cost_nndrc_comp - stderr_avg_cost_nndrc_comp,
+                mean_avg_cost_nndrc_comp + stderr_avg_cost_nndrc_comp,
                 alpha=0.2, color="orange")
 # SFC 
 plt.plot(mean_avg_cost_sfc_comp, label=f"SFC {sfc_label_suffix}", color="green")
@@ -2227,7 +2232,7 @@ title_parts = []
 if best_gpc_hyperparams: title_parts.append("Tuned GPC")
 else: title_parts.append("Default GPC")
 if best_adaptive_gpc_hyperparams: title_parts.append("Tuned AdaptiveGPC")
-if best_nngpc_hyperparams: title_parts.append("Tuned NN-GPC")
+if best_nndrc_hyperparams: title_parts.append("Tuned NN-GPC")
 else: title_parts.append("Default NN-GPC")
 if best_sfc_hyperparams: title_parts.append("Tuned SFC")
 else: title_parts.append("Default SFC")
@@ -2240,8 +2245,8 @@ plt.legend(fontsize='small')
 plt.grid(True)
 
 # Determine a reasonable y-limit based on all plotted data
-all_means_for_ylim = [mean_avg_cost_gpc_comp, mean_avg_cost_agpc_comp, mean_avg_cost_nngpc_comp, mean_avg_cost_sfc_comp, mean_avg_cost_dsc_comp]
-all_stderr_for_ylim = [stderr_avg_cost_gpc_comp, stderr_avg_cost_agpc_comp, stderr_avg_cost_nngpc_comp, stderr_avg_cost_sfc_comp, stderr_avg_cost_dsc_comp]
+all_means_for_ylim = [mean_avg_cost_gpc_comp, mean_avg_cost_agpc_comp, mean_avg_cost_nndrc_comp, mean_avg_cost_sfc_comp, mean_avg_cost_dsc_comp]
+all_stderr_for_ylim = [stderr_avg_cost_gpc_comp, stderr_avg_cost_agpc_comp, stderr_avg_cost_nndrc_comp, stderr_avg_cost_sfc_comp, stderr_avg_cost_dsc_comp]
 max_y = 0
 for mean_data, stderr_data in zip(all_means_for_ylim, all_stderr_for_ylim):
     if mean_data.size > 0 and stderr_data.size > 0: # Check if array is not empty
