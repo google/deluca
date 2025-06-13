@@ -23,9 +23,11 @@ SINUSOIDAL_NOISE_AMPLITUDE = 0.5
 SINUSOIDAL_NOISE_FREQUENCY = 0.1 # Example frequency, adjust as needed
 
 # ---------- LDS Transition Configuration ----------
+
 LDS_TRANSITION_TYPE = "special" # Options: "linear", "relu", "special"
 
 # ---------- System Configuration ----------
+
 SYSTEM_TYPE = "brax" # Options: "lds", "pendulum", "brax"
 BRAX_ENV_NAME = "inverted_pendulum" # Used if SYSTEM_TYPE == "brax"
 MAX_TORQUE = 1.0
@@ -1469,7 +1471,7 @@ def run_single_batch_nn_drc_trial(
         
         next_params, next_z, next_ynat_hist, next_t, next_opt_state = batch_nn_drc_update_controller(
                                                                         prev_params, prev_z, prev_ynat_hist, prev_t,
-                                                                        y_measured_t, u_control_t,
+                                                                        y_measured_t, u_control_t[0],
                                                                         prev_opt_state, optimizer, sim, output_map, batch_nn_drc_grad_fn
                                                                     )
 
