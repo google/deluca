@@ -11,9 +11,7 @@ import os
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-import numpy as np
 import optax
-from flax import linen as nn
 
 from deluca.experimental.agents.agent import policy_loss, update_agentstate, AgentState
 from deluca.experimental.agents.gpc import get_gpc_features
