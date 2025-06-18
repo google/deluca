@@ -2,7 +2,7 @@
 
 import argparse
 import functools
-from typing import Callable, Any
+from typing import Callable, Any, Tuple
 import importlib.util
 import sys
 sys.path.append("../../../")
@@ -35,7 +35,7 @@ def run_trial(
     d: int,
     m: int,
     num_steps: int,
-) -> jnp.ndarray:
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Run a single trial for the pendulum environment."""
     # Initialize model parameters and agent state
     init_key, loop_key = jax.random.split(key)
@@ -49,7 +49,8 @@ def run_trial(
         params=params,
         opt_state=opt_state,
     )
-    initial_physical_state = jnp.zeros((d, 1))
+    # Start the pendulum with a slight angle to encourage learning
+    initial_physical_state = jnp.zeros((d, 1)).at[0].set(0.15)
 
     # Define loss function for grad and for reporting
     def loss_fn(p, dist_history):
@@ -102,15 +103,15 @@ def run_trial(
         loss = cost_fn(output, action)
 
         new_carry = (agentstate, next_physical_state, key2)
-        return new_carry, loss
+        return new_carry, (loss, physical_state)
 
     # Run simulation with scan
     initial_carry = (initial_agentstate, initial_physical_state, loop_key)
-    (_, _, _), losses = jax.lax.scan(
+    (_, _, _), (losses, states) = jax.lax.scan(
         scan_body, initial_carry, jnp.arange(num_steps)
     )
 
-    return losses
+    return losses, states
 
 def main():
     parser = argparse.ArgumentParser(description="Run GPC/SFC experiments on Pendulum")
@@ -197,8 +198,9 @@ def main():
         )
         jitted_gpc_run_trial = jax.jit(vmapped_gpc_run_trial)
         print("Compiling and running GPC trials...")
-        gpc_losses = jitted_gpc_run_trial(trial_keys)
+        gpc_losses, gpc_states = jitted_gpc_run_trial(trial_keys)
         gpc_losses.block_until_ready()
+        gpc_states.block_until_ready()
         print("--- GPC trials completed ---")
 
         # --- Run SFC ---
@@ -225,8 +227,9 @@ def main():
         )
         jitted_sfc_run_trial = jax.jit(vmapped_sfc_run_trial)
         print("Compiling and running SFC trials...")
-        sfc_losses = jitted_sfc_run_trial(trial_keys)
+        sfc_losses, sfc_states = jitted_sfc_run_trial(trial_keys)
         sfc_losses.block_until_ready()
+        sfc_states.block_until_ready()
         print("--- SFC trials completed ---")
 
         # --- Process and Plot Results ---
@@ -267,6 +270,34 @@ def main():
         filepath = os.path.join(results_dir, filename)
         plt.savefig(filepath)
         print(f"Plot saved to {filepath}")
+
+        # --- Plot State Trajectories ---
+        gpc_mean_states = jnp.mean(gpc_states, axis=0)
+        sfc_mean_states = jnp.mean(sfc_states, axis=0)
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+        
+        # Theta plot
+        ax1.plot(gpc_mean_states[:, 0, 0], label="GPC Mean Theta", color="blue")
+        ax1.plot(sfc_mean_states[:, 0, 0], label="SFC Mean Theta", color="green")
+        ax1.set_ylabel('Theta (rad)')
+        ax1.set_title(f"Pendulum State Over Time ({disturbance_type.capitalize()} Disturbance)")
+        ax1.legend()
+        ax1.grid(True)
+
+        # Theta_dot plot
+        ax2.plot(gpc_mean_states[:, 1, 0], label="GPC Mean Theta Dot", color="blue", linestyle='--')
+        ax2.plot(sfc_mean_states[:, 1, 0], label="SFC Mean Theta Dot", color="green", linestyle='--')
+        ax2.set_xlabel('Step')
+        ax2.set_ylabel('Theta Dot (rad/s)')
+        ax2.legend()
+        ax2.grid(True)
+
+        # Save the state plot
+        state_filename = f"pendulum_state_{disturbance_type}.png"
+        state_filepath = os.path.join(results_dir, state_filename)
+        plt.savefig(state_filepath)
+        print(f"State plot saved to {state_filepath}")
 
 
 if __name__ == "__main__":

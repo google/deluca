@@ -28,5 +28,5 @@ def pendulum_cost_evaluate(y: jnp.ndarray, u: jnp.ndarray) -> float:
     u_val = u.flatten()[0]
     
     # Penalize angle deviation, angular velocity, and control effort
-    cost = 1.0 * angle_normalize(theta)**2 + 0.1 * thdot**2 + 0.001 * u_val**2
+    cost = 1.0 * angle_normalize(theta)**2
     return cost 
