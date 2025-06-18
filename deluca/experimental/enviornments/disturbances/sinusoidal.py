@@ -29,4 +29,4 @@ def sinusoidal_disturbance(d: int, noise_amplitude: float, noise_frequency: jax.
     assert d == noise_frequency.shape[0], "Noise frequency vector is of incorrect dimension"
     time_scaled = noise_frequency * t.astype(jnp.float32)
     sin_values = jnp.sin(time_scaled)
-    return noise_amplitude * sin_values
+    return (noise_amplitude * sin_values).reshape(d, 1)

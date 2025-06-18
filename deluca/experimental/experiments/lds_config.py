@@ -5,25 +5,21 @@ min_eig = 0.5
 max_eig = 1.5
 
 # Model parameters
-model_type = 'gpc'  # 'gpc' or 'sfc'
 m = 5
 k = 5 # Action horizon, must be <= m for GPC, and == h for SFC
 # For SFC
 h = 4
 gamma = 0.9
-hidden_dims = [64, 64]
+hidden_dims = None
 
 # Disturbance parameters
-disturbance_type = 'gaussian'  # 'sinusoidal', 'gaussian', or 'zero'
 disturbance_params = {
     'sinusoidal': {
-        'amplitude': 1.0,
-        'frequency': 0.1,
-        'phase': 0.0,
+        'noise_amplitude': 1.0,
+        'noise_frequency': 0.1,
     },
     'gaussian': {
-        'mean': 0.0,
-        'std': 1.0,
+        'dist_std': 1.0,
     },
     'zero': {}
 }
