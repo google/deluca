@@ -187,30 +187,28 @@ def main():
     spec = importlib.util.spec_from_file_location("config", args.config)
     config = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config)
-
-    # Determine results directory based on model type
+    
+    # Setup results directory
     base_results_dir = "lds_results"
-    if config.hidden_dims is None:
-        model_dir_name = "linear_model"
-    else:
-        model_dir_name = "neural_net_model"
-    results_dir = os.path.join(base_results_dir, model_dir_name)
+    results_dir = os.path.join(base_results_dir, "model_comparison")
     os.makedirs(results_dir, exist_ok=True)
 
     # Set random seed
     key = jax.random.PRNGKey(config.seed)
 
-    print("--- Creating System and Cost Matrices ---")
-    # Create random system
-    key, A_B_key = jax.random.split(key)
+    print("--- Creating a Common Set of Environments and Costs ---")
+    # Create a single set of system/cost matrices for all trials
+    key, env_key = jax.random.split(key)
     A, B = create_random_system(
-        A_B_key, config.d, config.n, config.min_eig, config.max_eig
+        env_key, config.d, config.n, config.min_eig, config.max_eig
     )
+    key, cost_key = jax.random.split(key)
+    Q, R = create_random_cost_matrices(cost_key, config.d, config.n)
 
-    # Create random cost matrices
-    key, Q_R_key = jax.random.split(key)
-    Q, R = create_random_cost_matrices(Q_R_key, config.d, config.n)
-
+    # Create a single set of trial keys for all experiments
+    key, trial_key_master = jax.random.split(key)
+    trial_keys = jax.random.split(trial_key_master, config.num_trials)
+    
     # Create optimizer
     optimizer = optax.chain(
         optax.clip_by_global_norm(config.R_M), optax.adam(config.learning_rate)
@@ -219,8 +217,9 @@ def main():
     disturbance_types = config.disturbance_params.keys()
 
     for disturbance_type in disturbance_types:
-        print(f"--- Running experiment for disturbance type: {disturbance_type} ---")
-        # Create disturbance
+        print(f"\n--- Running Experiment for Disturbance Type: {disturbance_type.upper()} ---")
+        
+        # Create disturbance function for this type
         disturbance_params = config.disturbance_params[disturbance_type]
         if disturbance_type == "sinusoidal":
             disturbance = lambda d, dist_std, t, key: sinusoidal_disturbance(
@@ -239,116 +238,75 @@ def main():
         else:
             raise ValueError(f"Unknown disturbance type: {disturbance_type}")
 
-        # Generate a common set of trial keys for this disturbance type
-        key, trial_key_master = jax.random.split(key)
-        trial_keys = jax.random.split(trial_key_master, config.num_trials)
+        all_losses = {}
 
-        # --- Run GPC ---
-        print("--- Creating GPC Model ---")
-        gpc_model = GPCModel(
-            d=config.d,
-            n=config.n,
-            m=config.m,
-            k=config.k,
-            hidden_dims=config.hidden_dims,
-        )
+        # --- LINEAR MODELS ---
+        print("\n-- Evaluating LINEAR Models --")
+        # GPC (Linear)
+        gpc_linear_model = GPCModel(d=config.d, n=config.n, m=config.m, k=config.k, hidden_dims=None)
+        vmapped_gpc_linear_run = jax.vmap(functools.partial(run_trial, A=A, B=B, Q=Q, R=R, model=gpc_linear_model, optimizer=optimizer, disturbance=disturbance, d=config.d, m=config.m, num_steps=config.num_steps), in_axes=(0))
+        all_losses['gpc_linear'] = jax.jit(vmapped_gpc_linear_run)(trial_keys)
+        print("GPC (Linear) trials complete.")
 
-        print(f"--- Starting {config.num_trials} GPC Trials (vmapped) ---")
-        vmapped_gpc_run_trial = jax.vmap(
-            functools.partial(
-                run_trial,
-                A=A,
-                B=B,
-                Q=Q,
-                R=R,
-                model=gpc_model,
-                optimizer=optimizer,
-                disturbance=disturbance,
-                d=config.d,
-                m=config.m,
-                num_steps=config.num_steps,
-            ),
-            in_axes=(0),
-        )
-        jitted_gpc_run_trial = jax.jit(vmapped_gpc_run_trial)
-        print("Compiling and running GPC trials...")
-        gpc_losses = jitted_gpc_run_trial(trial_keys)
-        gpc_losses.block_until_ready()
-        print("--- GPC trials completed ---")
+        # SFC (Linear)
+        sfc_linear_model = SFCModel(d=config.d, n=config.n, m=config.m, h=config.h, k=config.k, gamma=config.gamma, hidden_dims=None)
+        vmapped_sfc_linear_run = jax.vmap(functools.partial(run_trial, A=A, B=B, Q=Q, R=R, model=sfc_linear_model, optimizer=optimizer, disturbance=disturbance, d=config.d, m=config.m, num_steps=config.num_steps), in_axes=(0))
+        all_losses['sfc_linear'] = jax.jit(vmapped_sfc_linear_run)(trial_keys)
+        print("SFC (Linear) trials complete.")
 
-        # --- Run SFC ---
-        print("--- Creating SFC Model ---")
-        sfc_model = SFCModel(
-            d=config.d,
-            n=config.n,
-            m=config.m,
-            h=config.h,
-            k=config.k,
-            gamma=config.gamma,
-            hidden_dims=config.hidden_dims,
-        )
+        # --- NEURAL NETWORK MODELS ---
+        print("\n-- Evaluating NEURAL NET Models --")
+        # GPC (NN)
+        gpc_nn_model = GPCModel(d=config.d, n=config.n, m=config.m, k=config.k, hidden_dims=config.hidden_dims_nn)
+        vmapped_gpc_nn_run = jax.vmap(functools.partial(run_trial, A=A, B=B, Q=Q, R=R, model=gpc_nn_model, optimizer=optimizer, disturbance=disturbance, d=config.d, m=config.m, num_steps=config.num_steps), in_axes=(0))
+        all_losses['gpc_nn'] = jax.jit(vmapped_gpc_nn_run)(trial_keys)
+        print("GPC (NN) trials complete.")
 
-        print(f"--- Starting {config.num_trials} SFC Trials (vmapped) ---")
-        vmapped_sfc_run_trial = jax.vmap(
-            functools.partial(
-                run_trial,
-                A=A,
-                B=B,
-                Q=Q,
-                R=R,
-                model=sfc_model,
-                optimizer=optimizer,
-                disturbance=disturbance,
-                d=config.d,
-                m=config.m,
-                num_steps=config.num_steps,
-            ),
-            in_axes=(0),
-        )
-        jitted_sfc_run_trial = jax.jit(vmapped_sfc_run_trial)
-        print("Compiling and running SFC trials...")
-        sfc_losses = jitted_sfc_run_trial(trial_keys)
-        sfc_losses.block_until_ready()
-        print("--- SFC trials completed ---")
+        # SFC (NN)
+        sfc_nn_model = SFCModel(d=config.d, n=config.n, m=config.m, h=config.h, k=config.k, gamma=config.gamma, hidden_dims=config.hidden_dims_nn)
+        vmapped_sfc_nn_run = jax.vmap(functools.partial(run_trial, A=A, B=B, Q=Q, R=R, model=sfc_nn_model, optimizer=optimizer, disturbance=disturbance, d=config.d, m=config.m, num_steps=config.num_steps), in_axes=(0))
+        all_losses['sfc_nn'] = jax.jit(vmapped_sfc_nn_run)(trial_keys)
+        print("SFC (NN) trials complete.")
+
+        for name, losses in all_losses.items():
+            losses.block_until_ready()
+            print(f"All {name.upper()} trials finished computation.")
 
         # --- Process and Plot Results ---
-        gpc_mean_losses = jnp.mean(gpc_losses, axis=0)
-        gpc_std_losses = jnp.std(gpc_losses, axis=0) / jnp.sqrt(config.num_trials)
+        plt.figure(figsize=(12, 8))
         
-        sfc_mean_losses = jnp.mean(sfc_losses, axis=0)
-        sfc_std_losses = jnp.std(sfc_losses, axis=0) / jnp.sqrt(config.num_trials)
+        plot_configs = {
+            'gpc_linear': {'label': 'GPC (Linear)', 'color': 'blue'},
+            'sfc_linear': {'label': 'SFC (Linear)', 'color': 'green'},
+            'gpc_nn': {'label': 'GPC (NN)', 'color': 'red'},
+            'sfc_nn': {'label': 'SFC (NN)', 'color': 'purple'},
+        }
 
-        plt.figure(figsize=(10, 6))
-        
-        # Plot GPC
-        plt.plot(gpc_mean_losses, label="GPC Mean Loss")
-        plt.fill_between(
-            range(len(gpc_mean_losses)),
-            gpc_mean_losses - gpc_std_losses,
-            gpc_mean_losses + gpc_std_losses,
-            alpha=0.2,
-        )
-        
-        # Plot SFC
-        plt.plot(sfc_mean_losses, label="SFC Mean Loss")
-        plt.fill_between(
-            range(len(sfc_mean_losses)),
-            sfc_mean_losses - sfc_std_losses,
-            sfc_mean_losses + sfc_std_losses,
-            alpha=0.2,
-        )
+        for name, losses in all_losses.items():
+            mean_losses = jnp.mean(losses, axis=0)
+            std_losses = jnp.std(losses, axis=0) / jnp.sqrt(config.num_trials)
+            
+            plt.plot(mean_losses, label=plot_configs[name]['label'], color=plot_configs[name]['color'])
+            plt.fill_between(
+                range(len(mean_losses)),
+                mean_losses - std_losses,
+                mean_losses + std_losses,
+                alpha=0.2,
+                color=plot_configs[name]['color']
+            )
 
         plt.xlabel("Step")
         plt.ylabel("Loss")
-        plt.title(f"GPC vs SFC Performance ({disturbance_type.capitalize()} Disturbance)")
+        plt.title(f"Model Comparison on LDS ({disturbance_type.capitalize()} Disturbance)")
         plt.legend()
         plt.grid(True)
-
+        
         # Save the figure
-        filename = f"GPC_vs_SFC_performance_{disturbance_type}.png"
+        filename = f"model_comparison_{disturbance_type}.png"
         filepath = os.path.join(results_dir, filename)
         plt.savefig(filepath)
-        print(f"Plot saved to {filepath}")
+        print(f"Comparison plot saved to {filepath}")
+
 
 if __name__ == "__main__":
     main() 
