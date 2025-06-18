@@ -33,17 +33,18 @@ def policy_loss(
     dist_history: jnp.ndarray,
     sim: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray],
     cost_fn: Callable[[jnp.ndarray, jnp.ndarray], float],
+    get_features: Callable[[int, jnp.ndarray], jnp.ndarray],
 ) -> jnp.ndarray:
     # Get the sequence of actions from the policy
     actions = apply_fn(params, dist_history)
 
     def evolve(state: jnp.ndarray, offset: int) -> Tuple[jnp.ndarray, int]:
-        slice = jax.lax.dynamic_slice(dist_history, (offset, 0, 0), (m, d, 1))
+        slice = get_features(offset, dist_history)
         actions = apply_fn(params, slice)
         next_state = sim(state, actions[0]) + dist_history[-m + offset]
         return next_state, None
     final_state, _ = jax.lax.scan(evolve, jnp.zeros((d, 1)), jnp.arange(m-1))
-    final_slice = jax.lax.dynamic_slice(dist_history, (m-1, 0, 0), (m, d, 1))
+    final_slice = get_features(m-1, dist_history)
     final_actions = apply_fn(params, final_slice)
     def collect_cost(carry: Tuple[jnp.ndarray, float, jnp.ndarray], action: jnp.ndarray) -> Tuple[Tuple[jnp.ndarray, float], jnp.ndarray]:
         state, total_cost, dist = carry

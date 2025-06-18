@@ -37,3 +37,4 @@ window_length = 100
 # Experiment parameters
 num_trials = 10
 seed = 42 
+algorithm_type = 'gpc'

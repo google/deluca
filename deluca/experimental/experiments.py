@@ -7,6 +7,7 @@ import importlib.util
 import sys
 sys.path.append("../../")
 import os
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -16,8 +17,9 @@ import optax
 from flax import linen as nn
 
 from deluca.experimental.agents.agent import policy_loss, update_agentstate, AgentState
-from deluca.experimental.agents.gpc import GPCModel
-from deluca.experimental.agents.sfc import SFCModel
+from deluca.experimental.agents.gpc import get_gpc_features
+from deluca.experimental.agents.sfc import get_sfc_features
+from deluca.experimental.agents.model import FullyConnectedModel, SequentialModel, GridModel
 from deluca.experimental.enviornments.disturbances.sinusoidal import sinusoidal_disturbance
 from deluca.experimental.enviornments.disturbances.gaussian import gaussian_disturbance
 from deluca.experimental.enviornments.disturbances.zero import zero_disturbance
@@ -107,11 +109,23 @@ def run_trial(
     else:
         raise ValueError(f"Unknown disturbance type: {config.disturbance_type}")
     
+    #Create feature extractor
+    if config.algorithm_type == 'gpc':
+        get_features = partial(get_gpc_features, m=config.m, d=config.d)
+        input_dim = config.m
+    elif config.algorithm_type == 'sfc':
+        get_features = get_sfc_features(m=config.m, d=config.d, h=config.h, gamma=config.gamma)
+        input_dim = config.h
+    else:
+        raise ValueError(f"Unknown algorithm type: {config.algorithm_type}")
+
     # Create model
-    if config.model_type == 'gpc':
-        model = GPCModel(d=config.d, n=config.n, m=config.m, k=config.k, hidden_dims=config.hidden_dims)
-    elif config.model_type == 'sfc':
-        model = SFCModel(d=config.d, n=config.n, m=config.m, h=config.h, k=config.k, gamma=config.gamma, hidden_dims=config.hidden_dims)
+    if config.model_type == 'fully_connected':
+        model = FullyConnectedModel(m=input_dim, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
+    elif config.model_type == 'sequential':
+        model = SequentialModel(m=input_dim, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
+    elif config.model_type == 'grid':
+        model = GridModel(m=input_dim, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
     else:
         raise ValueError(f"Unknown model type: {config.model_type}")
     
@@ -144,7 +158,8 @@ def run_trial(
             m=config.m,
             dist_history=dist_history,
             sim=sim,
-            cost_fn=cost_fn
+            cost_fn=cost_fn,
+            get_features=get_features,
         )
     
     grad_fn = jax.grad(loss_fn)
