@@ -18,7 +18,7 @@ m_sfc = 10  # history length for SFC
 h_sfc = 5   # filter horizon for SFC
 k_sfc = 5   # action horizon for SFC
 gamma = 0.9
-hidden_dims = [16]
+hidden_dims = [8]
 
 # Disturbance parameters
 disturbance_params = {

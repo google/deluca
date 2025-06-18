@@ -169,6 +169,10 @@ def main():
         else:
             raise ValueError(f"Unknown disturbance type: {disturbance_type}")
 
+        # Generate a common set of trial keys for this disturbance type
+        key, trial_key_master = jax.random.split(key)
+        trial_keys = jax.random.split(trial_key_master, config.num_trials)
+
         # --- Run GPC ---
         print("--- Creating GPC Model ---")
         gpc_model = GPCModel(
@@ -176,8 +180,6 @@ def main():
         )
 
         print(f"--- Starting {config.num_trials} GPC Trials (vmapped) ---")
-        key, gpc_key = jax.random.split(key)
-        gpc_trial_keys = jax.random.split(gpc_key, config.num_trials)
         vmapped_gpc_run_trial = jax.vmap(
             functools.partial(
                 run_trial,
@@ -195,7 +197,7 @@ def main():
         )
         jitted_gpc_run_trial = jax.jit(vmapped_gpc_run_trial)
         print("Compiling and running GPC trials...")
-        gpc_losses = jitted_gpc_run_trial(gpc_trial_keys)
+        gpc_losses = jitted_gpc_run_trial(trial_keys)
         gpc_losses.block_until_ready()
         print("--- GPC trials completed ---")
 
@@ -206,8 +208,6 @@ def main():
         )
 
         print(f"--- Starting {config.num_trials} SFC Trials (vmapped) ---")
-        key, sfc_key = jax.random.split(key)
-        sfc_trial_keys = jax.random.split(sfc_key, config.num_trials)
         vmapped_sfc_run_trial = jax.vmap(
             functools.partial(
                 run_trial,
@@ -225,7 +225,7 @@ def main():
         )
         jitted_sfc_run_trial = jax.jit(vmapped_sfc_run_trial)
         print("Compiling and running SFC trials...")
-        sfc_losses = jitted_sfc_run_trial(sfc_trial_keys)
+        sfc_losses = jitted_sfc_run_trial(trial_keys)
         sfc_losses.block_until_ready()
         print("--- SFC trials completed ---")
 
