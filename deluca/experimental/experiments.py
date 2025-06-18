@@ -199,7 +199,7 @@ def run_trial(
         # Compute loss for reporting
         loss = loss_fn(agentstate.params, agentstate.dist_history)
 
-        new_carry = (agentstate, next_physical_state, key)
+        new_carry = (agentstate, next_physical_state, key2)
         return new_carry, loss
 
     # Run simulation with scan
