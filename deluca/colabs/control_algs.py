@@ -197,7 +197,8 @@ def lds_sim(x: jnp.ndarray, u: jnp.ndarray, A: jnp.ndarray, B:jnp.ndarray) -> jn
 
 @jit
 def lds_output(x: jnp.ndarray, C: jnp.ndarray) -> jnp.ndarray:
-    return C @ x
+    return C @ x]
+
 
 @jit
 def pendulum_sim(x: jnp.ndarray, u: jnp.ndarray, max_torque: float, m: float, l: float, g: float, dt: float) -> jnp.ndarray:
