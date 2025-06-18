@@ -5,7 +5,8 @@ min_eig = 0.5
 max_eig = 1.5
 
 # Model parameters
-model_type = 'gpc'  # 'gpc' or 'sfc'
+model_type = 'fully_connected'  # 'fully_connected' or 'sequential' or 'grid'
+algorithm_type = 'gpc' # 'gpc' or 'sfc'
 m = 5
 k = 5 # Action horizon, must be <= m for GPC, and == h for SFC
 # For SFC
@@ -37,4 +38,3 @@ window_length = 100
 # Experiment parameters
 num_trials = 10
 seed = 42 
-algorithm_type = 'gpc'

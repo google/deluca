@@ -4,15 +4,13 @@ Each agent is implemented as a set of JIT-compiled functions that can be partial
 for specific configurations.
 """
 
-from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Tuple
 
 import jax
 from jax import jit
 import jax.numpy as jnp
 import optax
-from flax import linen as nn
 from flax import struct
 
 @struct.dataclass
@@ -36,8 +34,7 @@ def policy_loss(
     get_features: Callable[[int, jnp.ndarray], jnp.ndarray],
 ) -> jnp.ndarray:
     # Get the sequence of actions from the policy
-    actions = apply_fn(params, dist_history)
-
+    
     def evolve(state: jnp.ndarray, offset: int) -> Tuple[jnp.ndarray, int]:
         slice = get_features(offset, dist_history)
         actions = apply_fn(params, slice)
@@ -52,7 +49,7 @@ def policy_loss(
         next_state = sim(state, action) + dist
         
         return (next_state, total_cost+cost, jnp.zeros_like(dist)), None
-    (_, total_cost, dist), _ = jax.lax.scan(collect_cost, (final_state, 0.0, dist_history[-1]), final_actions)
+    (_, total_cost, _), _ = jax.lax.scan(collect_cost, (final_state, 0.0, dist_history[-1]), final_actions)
     return total_cost
 
 

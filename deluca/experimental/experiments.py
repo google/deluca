@@ -2,12 +2,11 @@
 
 import argparse
 import functools
-from typing import Callable, Tuple, Any, Optional, Sequence
+from typing import Tuple, Any
 import importlib.util
 import sys
 sys.path.append("../../")
 import os
-from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -111,7 +110,7 @@ def run_trial(
     
     #Create feature extractor
     if config.algorithm_type == 'gpc':
-        get_features = partial(get_gpc_features, m=config.m, d=config.d)
+        get_features = functools.partial(get_gpc_features, m=config.m, d=config.d)
         input_dim = config.m
     elif config.algorithm_type == 'sfc':
         get_features = get_sfc_features(m=config.m, d=config.d, h=config.h, gamma=config.gamma)

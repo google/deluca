@@ -1,16 +1,15 @@
 """SFC (Spectral Filter Control) implementation."""
 
 from functools import partial
-from typing import Callable, Tuple, Any, Sequence, Optional
+from typing import Callable
 
 import jax
 import jax.numpy as jnp
-from flax import linen as nn
-from jax import jit, vmap
+from jax import jit
 from jax.scipy.linalg import eigh
 
-from .model import PerturbationNetwork
 
+@jit
 def compute_filter_matrix(m: int, h: int, gamma: float) -> jnp.ndarray:
     """Compute the spectral filter matrix.
     

@@ -1,13 +1,9 @@
 """GPC (Generalized Predictive Control) implementation."""
 
-from typing import Callable, Tuple, Any, Sequence, Optional
-
 import jax
 import jax.numpy as jnp
-from flax import linen as nn
-from jax import jit, vmap
+from jax import jit
 
-from .model import PerturbationNetwork
 
 @jit
 def get_gpc_features(
