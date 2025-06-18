@@ -10,7 +10,7 @@ k = 5 # Action horizon, must be <= m for GPC, and == h for SFC
 # For SFC
 h = 4
 gamma = 0.9
-hidden_dims = None
+hidden_dims = [8]
 
 # Disturbance parameters
 disturbance_params = {
