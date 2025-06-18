@@ -14,8 +14,8 @@ p = 2  # output dimension (same as state)
 m_gpc = 100  # history length for GPC
 k_gpc = 100  # action horizon for GPC
 
-m_sfc = 100  # history length for SFC
-h_sfc = 10   # filter horizon for SFC
+m_sfc = 500  # history length for SFC
+h_sfc = 100   # filter horizon for SFC
 k_sfc = 100   # action horizon for SFC
 gamma = 0.9
 hidden_dims = [64, 64]

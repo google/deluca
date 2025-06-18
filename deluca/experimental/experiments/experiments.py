@@ -2,7 +2,7 @@
 
 import argparse
 import functools
-from typing import Callable, Tuple, Any, Optional, Sequence
+from typing import Tuple, Any
 import importlib.util
 import sys
 sys.path.append("../../")
@@ -16,8 +16,9 @@ import optax
 from flax import linen as nn
 
 from deluca.experimental.agents.agent import policy_loss, update_agentstate, AgentState
-from deluca.experimental.agents.gpc import GPCModel
-from deluca.experimental.agents.sfc import SFCModel
+from deluca.experimental.agents.gpc import get_gpc_features
+from deluca.experimental.agents.sfc import get_sfc_features
+from deluca.experimental.agents.model import FullyConnectedModel, SequentialModel, GridModel
 from deluca.experimental.enviornments.disturbances.sinusoidal import sinusoidal_disturbance
 from deluca.experimental.enviornments.disturbances.gaussian import gaussian_disturbance
 from deluca.experimental.enviornments.disturbances.zero import zero_disturbance
@@ -165,7 +166,7 @@ def run_trial(
         # Compute loss for reporting
         loss = loss_fn(agentstate.params, agentstate.dist_history)
 
-        new_carry = (agentstate, next_physical_state, key)
+        new_carry = (agentstate, next_physical_state, key2)
         return new_carry, loss
 
     # Run simulation with scan
