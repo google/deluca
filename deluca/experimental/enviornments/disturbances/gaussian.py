@@ -5,11 +5,12 @@ for control system simulations. The disturbances are sampled from a normal distr
 with zero mean and specified standard deviation.
 """
 
+from functools import partial
 import jax
 from jax import jit
 import jax.numpy as jnp
 
-@jit
+@partial(jit, static_argnames=['d'])
 def gaussian_disturbance(d: int, dist_std: float, t: int, key: jax.random.PRNGKey) -> jax.Array:
     """Generate a Gaussian disturbance vector.
     

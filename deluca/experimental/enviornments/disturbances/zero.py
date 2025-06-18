@@ -5,11 +5,12 @@ This is useful for testing control algorithms in a noise-free environment or as 
 for comparing with other disturbance types.
 """
 
+from functools import partial
 import jax
 from jax import jit
 import jax.numpy as jnp
 
-@jit
+@partial(jit, static_argnames=['d'])
 def zero_disturbance(d: int, dist_std: float, t: int, key: jax.random.PRNGKey) -> jax.Array:
     """Generate a zero disturbance vector.
     

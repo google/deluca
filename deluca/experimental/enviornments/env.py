@@ -6,12 +6,13 @@ through callback functions.
 """
 
 from typing import Callable
+from functools import partial
 
 import jax
 from jax import jit
 import jax.numpy as jnp
 
-@jit
+@partial(jit, static_argnames=['sim', 'output_map', 'disturbance'])
 def step(
     x: jnp.ndarray,
     u: jnp.ndarray,

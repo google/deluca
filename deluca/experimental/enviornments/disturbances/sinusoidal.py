@@ -4,11 +4,12 @@ This module provides functions to generate sinusoidal disturbances for control s
 The disturbances follow a pure sinusoidal pattern with specified amplitude and frequency.
 """
 
+from functools import partial
 import jax
 from jax import jit
 import jax.numpy as jnp
 
-@jit
+@partial(jit, static_argnames=['d'])
 def sinusoidal_disturbance(d: int, noise_amplitude: float, noise_frequency: jax.Array, t: int, key: jax.random.PRNGKey) -> jax.Array:
     """Generate a sinusoidal disturbance vector.
     

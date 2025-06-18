@@ -21,33 +21,38 @@ class GPCModel(nn.Module):
     Note: The random key for initialization is passed to model.init() when the model
     is first created, not in this class.
     """
-    d: int  # Action dimension
-    n: int  # State dimension
+    d: int  # State dimension
+    n: int  # Action dimension
     m: int  # History length
+    k: int  # Action horizon
     hidden_dims: Optional[Sequence[int]] = None  # Optional hidden dimensions for each network
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        # x is the disturbance history of shape (m, n, 1)
+        # x is the disturbance history of shape (m, d, 1)
         
-        # Create a single network and vmap it across timesteps
+        # Create m independent networks, one for each history element
         network = PerturbationNetwork(
-            d_in=self.n,
-            d_out=self.d,
+            d_in=self.d,
+            d_out=self.k * self.n,
+            k=self.k,
+            n=self.n,
             hidden_dims=self.hidden_dims
         )
         
-        # Initialize parameters for all timesteps at once
-        # The key is passed to model.init() when the model is first created
+        # Initialize parameters for all m networks at once
         params = self.param('networks',
-                          lambda key, _: vmap(lambda k: network.init(k, jnp.zeros((self.n, 1))))(
+                          lambda key, _: vmap(lambda k: network.init(k, jnp.zeros((self.d, 1))))(
                               jax.random.split(key, self.m)
                           ),
                           (self.m,))
         
-        # Vectorize the network application across timesteps
-        apply_network = vmap(lambda p, x: network.apply(p, x))
+        # Vectorize the network application across the m history elements
+        # This applies each of the m networks to its corresponding disturbance vector in x.
+        # Input: params(m, ...), x(m, d, 1) -> Output: perturbations(m, k, n, 1)
+        apply_network = vmap(lambda p, h: network.apply(p, h))
         perturbations = apply_network(params, x)
         
-        # Sum all perturbations
+        # Sum the contributions from each history element to get the final action plan
+        # Output shape: (k, n, 1)
         return jnp.sum(perturbations, axis=0)

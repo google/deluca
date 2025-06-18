@@ -50,10 +50,11 @@ class SFCModel(nn.Module):
     - M_i are neural networks (or linear layers)
     - w_i is the filtered disturbance at timestep i
     """
-    d: int  # Action dimension
-    n: int  # State dimension
+    d: int  # State dimension
+    n: int  # Action dimension
     m: int  # History length
     h: int  # Number of eigenvectors
+    k: int  # Action horizon
     gamma: float  # Decay rate
     hidden_dims: Optional[Sequence[int]] = None  # Optional hidden dimensions for each network
 
@@ -63,30 +64,33 @@ class SFCModel(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        # x is the disturbance history of shape (m, n, 1)
+        # x is the disturbance history of shape (m, d, 1)
         
         # Apply spectral filtering to reduce dimension from m to h
-        # Use einsum to handle the batch dimension directly
-        # mh,mn1->hn1: (m,h) @ (m,n,1) -> (h,n,1)
-        filtered_x = jnp.einsum('mh,mn1->hn1', self.filter_matrix, x)
+        # mh,md1->hd1: (m,h) @ (m,d,1) -> (h,d,1)
+        filtered_x = jnp.einsum('mh,md1->hd1', self.filter_matrix, x)
         
-        # Create a single network and vmap it across timesteps
+        # Create h independent networks, one for each filtered component
         network = PerturbationNetwork(
-            d_in=self.n,
-            d_out=self.d,
+            d_in=self.d,
+            d_out=self.k * self.n,
+            k=self.k,
+            n=self.n,
             hidden_dims=self.hidden_dims
         )
         
-        # Initialize parameters for all timesteps at once
+        # Initialize parameters for all h networks
         params = self.param('networks',
-                          lambda key, _: vmap(lambda k: network.init(k, jnp.zeros((self.n, 1))))(
+                          lambda key, _: vmap(lambda k: network.init(k, jnp.zeros((self.d, 1))))(
                               jax.random.split(key, self.h)
                           ),
                           (self.h,))
         
-        # Vectorize the network application across timesteps
-        apply_network = vmap(lambda p, x: network.apply(p, x))
+        # Vectorize the network application across the h filtered components
+        # Input: params(h, ...), filtered_x(h, d, 1) -> Output: perturbations(h, k, n, 1)
+        apply_network = vmap(lambda p, h: network.apply(p, h))
         perturbations = apply_network(params, filtered_x)
         
-        # Sum all perturbations
+        # Sum the contributions from each filtered component to get the final action plan
+        # Output shape: (k, n, 1)
         return jnp.sum(perturbations, axis=0)

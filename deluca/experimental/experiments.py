@@ -3,6 +3,10 @@
 import argparse
 import functools
 from typing import Callable, Tuple, Any, Optional, Sequence
+import importlib.util
+import sys
+sys.path.append("../../")
+import os
 
 import jax
 import jax.numpy as jnp
@@ -80,195 +84,160 @@ def create_random_cost_matrices(
 
 def run_trial(
     key: jax.random.PRNGKey,
-    model_type: str,
-    d: int,
-    n: int,
-    m: int,
-    h: Optional[int],
-    gamma: Optional[float],
-    hidden_dims: Optional[Sequence[int]],
+    config: Any,
     A: jnp.ndarray,
     B: jnp.ndarray,
     Q: jnp.ndarray,
     R: jnp.ndarray,
-    disturbance_type: str,
-    disturbance_params: dict,
-    learning_rate: float,
-    R_M: float,
-    num_steps: int,
-    window_length: int
 ) -> jnp.ndarray:
     """Run a single trial."""
     # Create simulator and cost function
     sim = functools.partial(lds_sim, A=A, B=B)
-    output_map = functools.partial(lds_output, C=jnp.eye(d))  # Identity output map
+    output_map = functools.partial(lds_output, C=jnp.eye(config.d))  # Identity output map
     cost_fn = functools.partial(quadratic_cost_evaluate, Q=Q, R=R)
     
     # Create disturbance
-    if disturbance_type == 'sinusoidal':
-        disturbance = lambda d, dist_std, t, key: sinusoidal_disturbance(key, **disturbance_params)
-    elif disturbance_type == 'gaussian':
-        disturbance = lambda d, dist_std, t, key: gaussian_disturbance(key, **disturbance_params)
-    elif disturbance_type == 'zero':
-        disturbance = lambda d, dist_std, t, key: zero_disturbance(key, **disturbance_params)
+    disturbance_params = config.disturbance_params[config.disturbance_type]
+    if config.disturbance_type == 'sinusoidal':
+        disturbance = lambda d, dist_std, t, key: sinusoidal_disturbance(key=key, **disturbance_params)
+    elif config.disturbance_type == 'gaussian':
+        disturbance = lambda d, dist_std, t, key: gaussian_disturbance(d=d, dist_std=disturbance_params['std'], t=t, key=key)
+    elif config.disturbance_type == 'zero':
+        disturbance = lambda d, dist_std, t, key: zero_disturbance(d=d, key=key)
     else:
-        raise ValueError(f"Unknown disturbance type: {disturbance_type}")
+        raise ValueError(f"Unknown disturbance type: {config.disturbance_type}")
     
     # Create model
-    if model_type == 'gpc':
-        model = GPCModel(d=d, n=n, m=m, hidden_dims=hidden_dims)
-    elif model_type == 'sfc':
-        if h is None or gamma is None:
-            raise ValueError("h and gamma must be provided for SFC")
-        model = SFCModel(d=d, n=n, m=m, h=h, gamma=gamma, hidden_dims=hidden_dims)
+    if config.model_type == 'gpc':
+        model = GPCModel(d=config.d, n=config.n, m=config.m, k=config.k, hidden_dims=config.hidden_dims)
+    elif config.model_type == 'sfc':
+        model = SFCModel(d=config.d, n=config.n, m=config.m, h=config.h, k=config.k, gamma=config.gamma, hidden_dims=config.hidden_dims)
     else:
-        raise ValueError(f"Unknown model type: {model_type}")
+        raise ValueError(f"Unknown model type: {config.model_type}")
     
     # Create optimizer
     optimizer = optax.chain(
-        optax.clip_by_global_norm(R_M),
-        optax.adam(learning_rate)
+        optax.clip_by_global_norm(config.R_M),
+        optax.adam(config.learning_rate)
     )
     
     # Initialize model parameters and agent state
-    key1, key2 = jax.random.split(key)
-    params = model.init(key1, jnp.zeros((m, n, 1)))
+    init_key, loop_key = jax.random.split(key)
+    params = model.init(init_key, jnp.zeros((config.m, config.d, 1)))
     opt_state = optimizer.init(params)
-    agentstate = AgentState(
+    
+    initial_agentstate = AgentState(
         controller_t=0,
-        z=jnp.zeros((d, 1)),
-        ynat_history=jnp.zeros((m, d, 1)),
+        state=jnp.zeros((config.d, 1)),
+        dist_history=jnp.zeros((config.m, config.d, 1)),
         params=params,
         opt_state=opt_state
     )
+    initial_physical_state = jnp.zeros((config.d, 1))
+
+    # Define loss function for grad and for reporting
+    def loss_fn(p, dist_history):
+        return policy_loss(
+            apply_fn=model.apply,
+            params=p,
+            d=config.d,
+            m=config.m,
+            dist_history=dist_history,
+            sim=sim,
+            cost_fn=cost_fn
+        )
     
-    # Run simulation
-    losses = []
-    state = jnp.zeros((d, 1))
-    for t in range(num_steps):
-        # Get disturbance and update state
-        key1, key2 = jax.random.split(key2)
-        state, output = step(
-            x=state,
-            u=jnp.zeros((n, 1)),  # Initial control input
+    grad_fn = jax.grad(loss_fn)
+
+    def scan_body(carry, t):
+        agentstate, physical_state, key = carry
+
+        # Get action from model
+        actions = model.apply(agentstate.params, agentstate.dist_history)
+        action = actions[0]
+
+        # Step the environment
+        key1, key2 = jax.random.split(key)
+        next_physical_state, output = step(
+            x=physical_state,
+            u=action,
             sim=sim,
             output_map=output_map,
-            dist_std=1.0,  # Standard deviation for disturbance
+            dist_std=1.0,
             t_sim_step=t,
             disturbance=disturbance,
             key=key1
         )
         
-        # Update agent state and compute loss
+        # Update agent state
         agentstate = update_agentstate(
             agentstate=agentstate,
-            w=output,
+            next_state=output,
+            action=action,
             sim=sim,
-            cost_fn=cost_fn,
-            model=model,
+            grad_fn=grad_fn,
             optimizer=optimizer
         )
-        
-        loss = policy_loss(
-            agentstate=agentstate,
-            w=output,
-            sim=sim,
-            cost_fn=cost_fn,
-            model=model
-        )
-        losses.append(loss)
+
+        # Update physical state for next iteration
+        physical_state = next_physical_state
+
+        # Compute loss for reporting
+        loss = loss_fn(agentstate.params, agentstate.dist_history)
+
+        new_carry = (agentstate, next_physical_state, key)
+        return new_carry, loss
+
+    # Run simulation with scan
+    initial_carry = (initial_agentstate, initial_physical_state, loop_key)
+    (_, _, _), losses = jax.lax.scan(scan_body, initial_carry, jnp.arange(config.num_steps))
     
-    # Compute windowed losses
-    windowed_losses = []
-    for i in range(len(losses) - window_length + 1):
-        windowed_losses.append(jnp.mean(jnp.array(losses[i:i + window_length])))
-    
-    return jnp.array(windowed_losses)
+    return losses
 
 def main():
     parser = argparse.ArgumentParser(description='Run GPC/SFC experiments')
-    
-    # System parameters
-    parser.add_argument('--d', type=int, required=True, help='State dimension')
-    parser.add_argument('--n', type=int, required=True, help='Input dimension')
-    parser.add_argument('--min_eig', type=float, required=True, help='Minimum eigenvalue of A')
-    parser.add_argument('--max_eig', type=float, required=True, help='Maximum eigenvalue of A')
-    
-    # Model parameters
-    parser.add_argument('--model_type', type=str, choices=['gpc', 'sfc'], required=True, help='Model type')
-    parser.add_argument('--m', type=int, required=True, help='History length')
-    parser.add_argument('--h', type=int, help='Number of eigenvectors (for SFC)')
-    parser.add_argument('--gamma', type=float, help='Decay rate (for SFC)')
-    parser.add_argument('--hidden_dims', type=int, nargs='+', help='Hidden dimensions for networks')
-    
-    # Disturbance parameters
-    parser.add_argument('--disturbance_type', type=str, choices=['sinusoidal', 'gaussian', 'zero'], required=True, help='Disturbance type')
-    parser.add_argument('--disturbance_params', type=float, nargs='+', help='Disturbance parameters')
-    
-    # Training parameters
-    parser.add_argument('--learning_rate', type=float, required=True, help='Learning rate')
-    parser.add_argument('--R_M', type=float, required=True, help='Radius for parameter projection')
-    parser.add_argument('--num_steps', type=int, required=True, help='Number of steps to run')
-    parser.add_argument('--window_length', type=int, required=True, help='Length of window for loss computation')
-    
-    # Experiment parameters
-    parser.add_argument('--num_trials', type=int, required=True, help='Number of trials')
-    parser.add_argument('--seed', type=int, default=0, help='Random seed')
-    
+    parser.add_argument('--config', type=str, required=True, help='Path to config file')
     args = parser.parse_args()
+
+    # Load config file
+    spec = importlib.util.spec_from_file_location("config", args.config)
+    config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config)
     
     # Set random seed
-    key = jax.random.PRNGKey(args.seed)
+    key = jax.random.PRNGKey(config.seed)
     
+    print("--- Creating System and Cost Matrices ---")
     # Create random system
-    key1, key2 = jax.random.split(key)
-    A, B = create_random_system(key1, args.d, args.n, args.min_eig, args.max_eig)
+    key, A_B_key = jax.random.split(key)
+    A, B = create_random_system(A_B_key, config.d, config.n, config.min_eig, config.max_eig)
     
     # Create random cost matrices
-    key1, key2 = jax.random.split(key2)
-    Q, R = create_random_cost_matrices(key1, args.d, args.n)
+    key, Q_R_key = jax.random.split(key)
+    Q, R = create_random_cost_matrices(Q_R_key, config.d, config.n)
     
-    # Parse disturbance parameters
-    disturbance_params = {}
-    if args.disturbance_type == 'sinusoidal':
-        disturbance_params['amplitude'] = args.disturbance_params[0]
-        disturbance_params['frequency'] = args.disturbance_params[1]
-        disturbance_params['phase'] = args.disturbance_params[2]
-    elif args.disturbance_type == 'gaussian':
-        disturbance_params['mean'] = args.disturbance_params[0]
-        disturbance_params['std'] = args.disturbance_params[1]
-    elif args.disturbance_type == 'zero':
-        pass  # No parameters needed
+    print(f"--- Starting {config.num_trials} Trials (vmapped) ---")
     
-    # Run trials
-    all_losses = []
-    for i in range(args.num_trials):
-        key1, key2 = jax.random.split(key2)
-        losses = run_trial(
-            key=key1,
-            model_type=args.model_type,
-            d=args.d,
-            n=args.n,
-            m=args.m,
-            h=args.h,
-            gamma=args.gamma,
-            hidden_dims=args.hidden_dims,
-            A=A,
-            B=B,
-            Q=Q,
-            R=R,
-            disturbance_type=args.disturbance_type,
-            disturbance_params=disturbance_params,
-            learning_rate=args.learning_rate,
-            R_M=args.R_M,
-            num_steps=args.num_steps,
-            window_length=args.window_length
-        )
-        all_losses.append(losses)
+    # Create keys for each trial
+    trial_keys = jax.random.split(key, config.num_trials)
+
+    # Vmap the run_trial function
+    vmapped_run_trial = jax.vmap(
+        functools.partial(run_trial, config=config, A=A, B=B, Q=Q, R=R),
+        in_axes=(0),
+    )
     
+    # JIT compile the vmapped function for performance
+    jitted_vmapped_run_trial = jax.jit(vmapped_run_trial)
+    
+    print("Compiling and running trials... (this may take a moment)")
+    all_losses = jitted_vmapped_run_trial(trial_keys)
+    all_losses.block_until_ready() # Wait for all computations to finish
+    print("--- All trials completed ---")
+
     # Compute mean and standard error
-    mean_losses = jnp.mean(jnp.array(all_losses), axis=0)
-    std_losses = jnp.std(jnp.array(all_losses), axis=0) / jnp.sqrt(args.num_trials)
+    mean_losses = jnp.mean(all_losses, axis=0)
+    std_losses = jnp.std(all_losses, axis=0) / jnp.sqrt(config.num_trials)
     
     # Plot results
     plt.figure(figsize=(10, 6))
@@ -281,10 +250,19 @@ def main():
     )
     plt.xlabel('Step')
     plt.ylabel('Loss')
-    plt.title(f'{args.model_type.upper()} Performance')
+    plt.title(f'{config.model_type.upper()} Performance')
     plt.legend()
     plt.grid(True)
-    plt.show()
+    
+    # Create results directory if it doesn't exist
+    results_dir = 'results'
+    os.makedirs(results_dir, exist_ok=True)
+
+    # Save the figure
+    filename = f"{config.model_type.upper()}_performance.png"
+    filepath = os.path.join(results_dir, filename)
+    plt.savefig(filepath)
+    print(f"Plot saved to {filepath}")
 
 if __name__ == '__main__':
     main() 
