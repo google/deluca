@@ -35,6 +35,7 @@ def run_trial(
     d: int,
     m: int,
     num_steps: int,
+    gradient_updates_per_step: int,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Run a single trial for the pendulum environment."""
     # Initialize model parameters and agent state
@@ -87,14 +88,17 @@ def run_trial(
         )
 
         # Update agent state
-        agentstate = update_agentstate(
-            agentstate=agentstate,
-            next_state=output,
-            action=action,
-            sim=sim,
-            grad_fn=grad_fn,
-            optimizer=optimizer,
-        )
+        def update_loop_body(i, agentstate):
+            return update_agentstate(
+                agentstate=agentstate,
+                next_state=output,
+                action=action,
+                sim=sim,
+                grad_fn=grad_fn,
+                optimizer=optimizer,
+            )
+        
+        agentstate = jax.lax.fori_loop(0, gradient_updates_per_step, update_loop_body, agentstate)
 
         # Update physical state for next iteration
         physical_state = next_physical_state
@@ -193,6 +197,7 @@ def main():
                 d=config.d,
                 m=config.m_gpc,
                 num_steps=config.num_steps,
+                gradient_updates_per_step=config.gradient_updates_per_step,
             ),
             in_axes=(0),
         )
@@ -222,6 +227,7 @@ def main():
                 d=config.d,
                 m=config.m_sfc,
                 num_steps=config.num_steps,
+                gradient_updates_per_step=config.gradient_updates_per_step,
             ),
             in_axes=(0),
         )

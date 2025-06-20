@@ -7,7 +7,7 @@ from functools import partial
 @partial(jax.jit)
 def angle_normalize(x: float) -> float:
     """Normalize an angle to the range [-pi, pi]."""
-    return ((x + jnp.pi) % (2 * jnp.pi)) - jnp.pi
+    return ((x + jnp.pi) % (2 * jnp.pi))
 
 @partial(jax.jit)
 def pendulum_cost_evaluate(y: jnp.ndarray, u: jnp.ndarray) -> float:
@@ -27,6 +27,6 @@ def pendulum_cost_evaluate(y: jnp.ndarray, u: jnp.ndarray) -> float:
     theta, thdot = y.flatten()
     u_val = u.flatten()[0]
     
-    # Penalize angle deviation, angular velocity, and control effort
-    cost = 1.0 * angle_normalize(theta)**2
+    # Cost based on cosine of angle is better for swing-up
+    cost = (1 - jnp.cos(theta)) + 0.1 * thdot**2 + 0.001 * u_val**2
     return cost 

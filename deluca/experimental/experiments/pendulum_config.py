@@ -11,14 +11,14 @@ n = 1  # action dimension (torque)
 p = 2  # output dimension (same as state)
 
 # Model parameters
-m_gpc = 100  # history length for GPC
-k_gpc = 100  # action horizon for GPC
+m_gpc = 10  # history length for GPC
+k_gpc = 10  # action horizon for GPC
 
-m_sfc = 100  # history length for SFC
+m_sfc = 15  # history length for SFC
 h_sfc = 10   # filter horizon for SFC
-k_sfc = 100   # action horizon for SFC
+k_sfc = 25   # action horizon for SFC
 gamma = 0.9
-hidden_dims = [64, 64]
+hidden_dims = [16]
 
 # Disturbance parameters
 disturbance_params = {
@@ -36,6 +36,7 @@ disturbance_params = {
 learning_rate = 1e-3
 R_M = 1.0
 num_steps = 500
+gradient_updates_per_step = 10
 
 # Experiment parameters
 num_trials = 10
