@@ -9,7 +9,6 @@ from jax import jit
 from jax.scipy.linalg import eigh
 
 
-@jit
 def compute_filter_matrix(m: int, h: int, gamma: float) -> jnp.ndarray:
     """Compute the spectral filter matrix.
     
@@ -40,7 +39,7 @@ def compute_filter_matrix(m: int, h: int, gamma: float) -> jnp.ndarray:
     
     return filter_matrix
 
-@jit
+
 def get_sfc_features(
     m: int,
     d: int,
@@ -58,10 +57,13 @@ def get_sfc_features(
     Returns:
         A function that takes (offset, dist_history) and returns filtered features
     """
+    # Compute filter matrix
+    filter_matrix = compute_filter_matrix(m, h, gamma)
+
+    @jit
     def _get_sfc_features(
         offset: int, 
         dist_history: jnp.ndarray,
-        filter_matrix: jnp.ndarray
     ) -> jnp.ndarray:
         """Compute SFC features from a window of disturbance history.
         
@@ -76,8 +78,5 @@ def get_sfc_features(
         window = jax.lax.dynamic_slice(dist_history, (offset, 0, 0), (m, d, 1))
         return jnp.einsum('mh,md1->hd1', filter_matrix, window)
     
-    # Compute filter matrix
-    filter_matrix = compute_filter_matrix(m, h, gamma)
+    return _get_sfc_features
     
-    # Return partially applied function with filter matrix
-    return partial(_get_sfc_features, filter_matrix=filter_matrix)

@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optax
+from jax import debug as jax_debug
 
 from deluca.experimental.agents.agent import policy_loss, update_agentstate, AgentState
 from deluca.experimental.agents.gpc import get_gpc_features
@@ -21,6 +22,8 @@ from deluca.experimental.enviornments.disturbances.sinusoidal import sinusoidal_
 from deluca.experimental.enviornments.disturbances.gaussian import gaussian_disturbance
 from deluca.experimental.enviornments.disturbances.zero import zero_disturbance
 from deluca.experimental.enviornments.sim_and_output.lds import lds_sim, lds_output
+from deluca.experimental.enviornments.sim_and_output.brax import brax_sim, brax_output
+from deluca.experimental.enviornments.sim_and_output.pendulum import pendulum_sim, pendulum_output
 from deluca.experimental.enviornments.cost_functions.quadratic_cost import quadratic_cost_evaluate
 from deluca.experimental.enviornments.env import step
 
@@ -84,16 +87,32 @@ def create_random_cost_matrices(
 def run_trial(
     key: jax.random.PRNGKey,
     config: Any,
-    A: jnp.ndarray,
-    B: jnp.ndarray,
-    Q: jnp.ndarray,
-    R: jnp.ndarray,
+    # A: jnp.ndarray,
+    # B: jnp.ndarray,
+    # Q: jnp.ndarray,
+    # R: jnp.ndarray,
 ) -> jnp.ndarray:
     """Run a single trial."""
     # Create simulator and cost function
-    sim = functools.partial(lds_sim, A=A, B=B)
-    output_map = functools.partial(lds_output, C=jnp.eye(config.d))  # Identity output map
-    cost_fn = functools.partial(quadratic_cost_evaluate, Q=Q, R=R)
+    if config.sim_type == 'lds':
+        key, A_B_key = jax.random.split(key)
+        A, B = create_random_system(A_B_key, config.d, config.n, config.min_eig, config.max_eig)
+        key, Q_R_key = jax.random.split(key)
+        Q, R = create_random_cost_matrices(Q_R_key, config.d, config.n)
+        # if config.debug:
+        #     print(f'A.shape={A.shape}, B.shape={B.shape}, Q.shape={Q.shape}, R.shape={R.shape}')
+
+        sim = functools.partial(lds_sim, A=A, B=B)
+        output_map = functools.partial(lds_output, C=jnp.eye(config.d))  # Identity output map
+        cost_fn = functools.partial(quadratic_cost_evaluate, Q=Q, R=R)
+    
+    elif config.sim_type == 'pendulum':
+        sim = functools.partial(pendulum_sim, max_torque=config.max_torque, m=config.mass, l=config.length, g=config.g, dt=config.dt)
+        output_map = pendulum_output
+
+        Q = jnp.array([[1.0, 0.0], [0.0, 0.0]])
+        R = jnp.zeros((config.n, config.n))
+        cost_fn = functools.partial(quadratic_cost_evaluate, Q=Q, R=R)
     
     # Create disturbance
     disturbance_params = config.disturbance_params[config.disturbance_type]
@@ -108,7 +127,7 @@ def run_trial(
     
     #Create feature extractor
     if config.algorithm_type == 'gpc':
-        get_features = functools.partial(get_gpc_features, m=config.m, d=config.d)
+        get_features = get_gpc_features(m=config.m, d=config.d)
         input_dim = config.m
     elif config.algorithm_type == 'sfc':
         get_features = get_sfc_features(m=config.m, d=config.d, h=config.h, gamma=config.gamma)
@@ -134,40 +153,50 @@ def run_trial(
     
     # Initialize model parameters and agent state
     init_key, loop_key = jax.random.split(key)
-    params = model.init(init_key, jnp.zeros((config.m, config.d, 1)))
+    params = model.init(init_key, jnp.zeros((input_dim, config.d, 1)))
     opt_state = optimizer.init(params)
     
     initial_agentstate = AgentState(
         controller_t=0,
         state=jnp.zeros((config.d, 1)),
-        dist_history=jnp.zeros((config.m, config.d, 1)),
+        dist_history=jnp.zeros((2*config.m, config.d, 1)),
+        state_history=jnp.zeros((config.m, config.d, 1)),
         params=params,
         opt_state=opt_state
     )
+    # if config.debug:
+    #     initial_agentstate.show()
     initial_physical_state = jnp.zeros((config.d, 1))
 
     # Define loss function for grad and for reporting
-    def loss_fn(p, dist_history):
+    def loss_fn(p, dist_history, start_state):
         return policy_loss(
             apply_fn=model.apply,
             params=p,
             d=config.d,
             m=config.m,
             dist_history=dist_history,
+            start_state=start_state,
             sim=sim,
             cost_fn=cost_fn,
             get_features=get_features,
+            debug=config.debug,
         )
     
     grad_fn = jax.grad(loss_fn)
 
     def scan_body(carry, t):
         agentstate, physical_state, key = carry
-
+        # if config.debug:
+        #     jax_debug.print('--- Step {} ---', t)
+        #     jax_debug.print('agentstate.controller_t: {}', agentstate.controller_t)
+        #     jax_debug.print('physical_state: {}', physical_state)
         # Get action from model
-        actions = model.apply(agentstate.params, agentstate.dist_history)
+        actions = model.apply(agentstate.params, get_features(config.m, agentstate.dist_history))
         action = actions[0]
-
+        # if config.debug:
+        #     jax_debug.print('actions shape: {}', actions.shape)
+        #     jax_debug.print('action: {}', action)
         # Step the environment
         key1, key2 = jax.random.split(key)
         next_physical_state, output = step(
@@ -180,7 +209,8 @@ def run_trial(
             disturbance=disturbance,
             key=key1
         )
-        
+        # if config.debug:
+        #     jax_debug.print('next_physical_state: {}, output: {}', next_physical_state, output)
         # Update agent state
         agentstate = update_agentstate(
             agentstate=agentstate,
@@ -188,15 +218,14 @@ def run_trial(
             action=action,
             sim=sim,
             grad_fn=grad_fn,
-            optimizer=optimizer
+            optimizer=optimizer,
+            debug=config.debug
         )
-
         # Update physical state for next iteration
         physical_state = next_physical_state
-
         # Compute loss for reporting
-        loss = loss_fn(agentstate.params, agentstate.dist_history)
-
+        loss = loss_fn(agentstate.params, agentstate.dist_history, agentstate.state_history[0])
+        
         new_carry = (agentstate, next_physical_state, key2)
         return new_carry, loss
 
@@ -219,15 +248,6 @@ def main():
     # Set random seed
     key = jax.random.PRNGKey(config.seed)
     
-    print("--- Creating System and Cost Matrices ---")
-    # Create random system
-    key, A_B_key = jax.random.split(key)
-    A, B = create_random_system(A_B_key, config.d, config.n, config.min_eig, config.max_eig)
-    
-    # Create random cost matrices
-    key, Q_R_key = jax.random.split(key)
-    Q, R = create_random_cost_matrices(Q_R_key, config.d, config.n)
-    
     print(f"--- Starting {config.num_trials} Trials (vmapped) ---")
     
     # Create keys for each trial
@@ -235,7 +255,7 @@ def main():
 
     # Vmap the run_trial function
     vmapped_run_trial = jax.vmap(
-        functools.partial(run_trial, config=config, A=A, B=B, Q=Q, R=R),
+        functools.partial(run_trial, config=config),
         in_axes=(0),
     )
     
@@ -250,7 +270,23 @@ def main():
     # Compute mean and standard error
     mean_losses = jnp.mean(all_losses, axis=0)
     std_losses = jnp.std(all_losses, axis=0) / jnp.sqrt(config.num_trials)
-    
+
+    # Create results subdirectories
+    results_dir = 'results'
+    plots_dir = os.path.join(results_dir, 'plots')
+    arrays_dir = os.path.join(results_dir, 'arrays')
+    os.makedirs(plots_dir, exist_ok=True)
+    os.makedirs(arrays_dir, exist_ok=True)
+
+    # Save mean_losses and std_losses as .npy files in arrays_dir
+    base_name = f"{config.sim_type}_{config.model_type}_{config.algorithm_type}"
+    mean_path = os.path.join(arrays_dir, f"{base_name}_mean_losses.npy")
+    std_path = os.path.join(arrays_dir, f"{base_name}_std_losses.npy")
+    jnp.save(mean_path, mean_losses)
+    jnp.save(std_path, std_losses)
+    print(f"Mean losses saved to {mean_path}")
+    print(f"Std losses saved to {std_path}")
+
     # Plot results
     plt.figure(figsize=(10, 6))
     plt.plot(mean_losses, label='Mean Loss')
@@ -262,17 +298,13 @@ def main():
     )
     plt.xlabel('Step')
     plt.ylabel('Loss')
-    plt.title(f'{config.model_type.upper()} Performance')
+    plt.title(f'{config.sim_type} {config.model_type} {config.algorithm_type} Performance')
     plt.legend()
     plt.grid(True)
     
-    # Create results directory if it doesn't exist
-    results_dir = 'results'
-    os.makedirs(results_dir, exist_ok=True)
-
-    # Save the figure
-    filename = f"{config.model_type.upper()}_performance.png"
-    filepath = os.path.join(results_dir, filename)
+    # Save the figure in plots_dir
+    filename = f"{base_name}_performance.png"
+    filepath = os.path.join(plots_dir, filename)
     plt.savefig(filepath)
     print(f"Plot saved to {filepath}")
 

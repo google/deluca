@@ -17,6 +17,7 @@ class PerturbationNetwork(nn.Module):
     k: int
     n: int
     hidden_dims: Optional[Sequence[int]] = None
+    use_bias: bool = True
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
@@ -26,14 +27,14 @@ class PerturbationNetwork(nn.Module):
 
         if self.hidden_dims is None:
             # Linear layer
-            y = nn.Dense(self.d_out)(x_t) # output (1, k * n)
+            y = nn.Dense(self.d_out, use_bias=self.use_bias)(x_t) # output (1, k * n)
         else:
             # Neural network with hidden layers
             y = x_t
             for hidden_dim in self.hidden_dims:
-                y = nn.Dense(hidden_dim)(y)
+                y = nn.Dense(hidden_dim, use_bias=self.use_bias)(y)
                 y = nn.relu(y)
-            y = nn.Dense(self.d_out)(y) # output (1, k * n)
+            y = nn.Dense(self.d_out, use_bias=self.use_bias)(y) # output (1, k * n)
             
         # Reshape to (k, n, 1)
         return y.reshape((self.k, self.n, 1))
@@ -48,24 +49,23 @@ class FullyConnectedModel(nn.Module):
     k: int  # Output sequence length
     n: int  # Output dimension
     hidden_dims: Optional[Sequence[int]] = None
+    use_bias: bool = True
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         # x is of shape (m, d, 1)
         # Flatten input to (m*d, 1)
-        x_flat = x.reshape((-1, 1))
-        
+        x_flat = x.reshape(-1)
         if self.hidden_dims is None:
             # Linear layer
-            y = nn.Dense(self.k * self.n)(x_flat)  # output (1, k*n)
+            y = nn.Dense(self.k * self.n, use_bias=self.use_bias)(x_flat)  # output (1, k*n)
         else:
             # Neural network with hidden layers
             y = x_flat
             for hidden_dim in self.hidden_dims:
-                y = nn.Dense(hidden_dim)(y)
+                y = nn.Dense(hidden_dim, use_bias=self.use_bias)(y)
                 y = nn.relu(y)
-            y = nn.Dense(self.k * self.n)(y)  # output (1, k*n)
-        
+            y = nn.Dense(self.k * self.n, use_bias=self.use_bias)(y)  # output (1, k*n)
         # Reshape to (k, n, 1)
         return y.reshape((self.k, self.n, 1))
 
@@ -79,6 +79,7 @@ class SequentialModel(nn.Module):
     k: int  # Output sequence length
     n: int  # Output dimension
     hidden_dims: Optional[Sequence[int]] = None
+    use_bias: bool = True
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
@@ -90,7 +91,8 @@ class SequentialModel(nn.Module):
             d_out=self.k * self.n,
             k=self.k,
             n=self.n,
-            hidden_dims=self.hidden_dims
+            hidden_dims=self.hidden_dims,
+            use_bias=self.use_bias
         )
         
         # Initialize parameters for all m networks
@@ -119,6 +121,7 @@ class GridModel(nn.Module):
     k: int  # Output sequence length
     n: int  # Output dimension
     hidden_dims: Optional[Sequence[int]] = None
+    use_bias: bool = True
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
@@ -130,7 +133,8 @@ class GridModel(nn.Module):
             d_out=self.n,  # Each network only needs to output one action
             k=1,  # Each network only needs to output one action
             n=self.n,
-            hidden_dims=self.hidden_dims
+            hidden_dims=self.hidden_dims,
+            use_bias=self.use_bias
         )
         
         # Initialize parameters for all m*k networks

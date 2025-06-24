@@ -14,11 +14,8 @@ import jax.numpy as jnp
 def pendulum_sim(x: jnp.ndarray, u: jnp.ndarray, max_torque: float, m: float, l: float, g: float, dt: float) -> jnp.ndarray:
     theta, thdot = x
     action = max_torque * jnp.tanh(u[0])
-    newthdot = theta + (
-        -3.0 * g /
-        (2.0 * l) * jnp.sin(theta + jnp.pi) + 3.0 /
-        (m * l**2) * action)
-    newth = theta + newthdot * dt
+    newth = theta + thdot * dt
+    newthdot = thdot + ((3.0 * action) / (m * (l**2)) + (3.0 * g * jnp.sin(theta)) / (2.0 * l)) * dt
     return jnp.array([newth, newthdot])
 
 @jit
