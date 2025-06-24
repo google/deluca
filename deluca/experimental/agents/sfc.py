@@ -1,15 +1,15 @@
 """SFC (Spectral Filter Control) implementation."""
 
-from typing import Callable, Tuple, Any, Sequence, Optional
+from functools import partial
+from typing import Callable
 
 import jax
 import jax.numpy as jnp
-from flax import linen as nn
-from jax import jit, vmap
+from jax import jit
 from jax.scipy.linalg import eigh
 
-from .model import PerturbationNetwork
 
+@jit
 def compute_filter_matrix(m: int, h: int, gamma: float) -> jnp.ndarray:
     """Compute the spectral filter matrix.
     
@@ -40,57 +40,44 @@ def compute_filter_matrix(m: int, h: int, gamma: float) -> jnp.ndarray:
     
     return filter_matrix
 
-class SFCModel(nn.Module):
-    """Neural network model for SFC.
+@jit
+def get_sfc_features(
+    m: int,
+    d: int,
+    h: int,
+    gamma: float,
+) -> Callable[[int, jnp.ndarray], jnp.ndarray]:
+    """Get a function that computes SFC features from disturbance history.
     
-    This model implements the SFC policy:
-    1. Apply spectral filtering to reduce dimension from m to h
-    2. Then apply GPC-like control: u = sum(M_i @ w_i) for i in 1..h
-    where:
-    - M_i are neural networks (or linear layers)
-    - w_i is the filtered disturbance at timestep i
+    Args:
+        m: History length
+        d: State dimension
+        h: Number of eigenvectors
+        gamma: Decay rate
+        
+    Returns:
+        A function that takes (offset, dist_history) and returns filtered features
     """
-    d: int  # State dimension
-    n: int  # Action dimension
-    m: int  # History length
-    h: int  # Number of eigenvectors
-    k: int  # Action horizon
-    gamma: float  # Decay rate
-    hidden_dims: Optional[Sequence[int]] = None  # Optional hidden dimensions for each network
-
-    def setup(self):
-        # Compute filter matrix once during setup
-        self.filter_matrix = compute_filter_matrix(self.m, self.h, self.gamma)
-
-    @nn.compact
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        # x is the disturbance history of shape (m, d, 1)
+    def _get_sfc_features(
+        offset: int, 
+        dist_history: jnp.ndarray,
+        filter_matrix: jnp.ndarray
+    ) -> jnp.ndarray:
+        """Compute SFC features from a window of disturbance history.
         
-        # Apply spectral filtering to reduce dimension from m to h
-        # mh,md1->hd1: (m,h) @ (m,d,1) -> (h,d,1)
-        filtered_x = jnp.einsum('mh,md1->hd1', self.filter_matrix, x)
-        
-        # Create h independent networks, one for each filtered component
-        network = PerturbationNetwork(
-            d_in=self.d,
-            d_out=self.k * self.n,
-            k=self.k,
-            n=self.n,
-            hidden_dims=self.hidden_dims
-        )
-        
-        # Initialize parameters for all h networks
-        params = self.param('networks',
-                          lambda key, _: vmap(lambda k: network.init(k, jnp.zeros((self.d, 1))))(
-                              jax.random.split(key, self.h)
-                          ),
-                          (self.h,))
-        
-        # Vectorize the network application across the h filtered components
-        # Input: params(h, ...), filtered_x(h, d, 1) -> Output: perturbations(h, k, n, 1)
-        apply_network = vmap(lambda p, h: network.apply(p, h))
-        perturbations = apply_network(params, filtered_x)
-        
-        # Sum the contributions from each filtered component to get the final action plan
-        # Output shape: (k, n, 1)
-        return jnp.sum(perturbations, axis=0)
+        Args:
+            offset: Current time offset
+            dist_history: Full disturbance history of shape (m+hist, d, 1)
+            filter_matrix: Pre-computed filter matrix of shape (m, h)
+            
+        Returns:
+            Filtered features of shape (h, d, 1)
+        """
+        window = jax.lax.dynamic_slice(dist_history, (offset, 0, 0), (m, d, 1))
+        return jnp.einsum('mh,md1->hd1', filter_matrix, window)
+    
+    # Compute filter matrix
+    filter_matrix = compute_filter_matrix(m, h, gamma)
+    
+    # Return partially applied function with filter matrix
+    return partial(_get_sfc_features, filter_matrix=filter_matrix)
