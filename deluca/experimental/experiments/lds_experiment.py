@@ -16,8 +16,9 @@ import optax
 from flax import linen as nn
 
 from deluca.experimental.agents.agent import policy_loss, update_agentstate, AgentState
-from deluca.experimental.agents.gpc import GPCModel
-from deluca.experimental.agents.sfc import SFCModel
+from deluca.experimental.agents.gpc import get_gpc_features
+from deluca.experimental.agents.sfc import get_sfc_features
+from deluca.experimental.agents.model import FullyConnectedModel, SequentialModel, GridModel
 from deluca.experimental.enviornments.disturbances.sinusoidal import sinusoidal_disturbance
 from deluca.experimental.enviornments.disturbances.gaussian import gaussian_disturbance
 from deluca.experimental.enviornments.disturbances.zero import zero_disturbance
@@ -243,14 +244,14 @@ def main():
         # --- LINEAR MODELS ---
         print("\n-- Evaluating LINEAR Models --")
         # GPC (Linear)
-        gpc_linear_model = GPCModel(d=config.d, n=config.n, m=config.m, k=config.k, hidden_dims=None)
-        vmapped_gpc_linear_run = jax.vmap(functools.partial(run_trial, A=A, B=B, Q=Q, R=R, model=gpc_linear_model, optimizer=optimizer, disturbance=disturbance, d=config.d, m=config.m, num_steps=config.num_steps), in_axes=(0))
+        gpc_features = get_gpc_features(m=config.m, d=config.d, offset=0, dist_history=jnp.zeros((config.m, config.d, 1)))
+        vmapped_gpc_linear_run = jax.vmap(functools.partial(run_trial, A=A, B=B, Q=Q, R=R, model=gpc_features, optimizer=optimizer, disturbance=disturbance, d=config.d, m=config.m, num_steps=config.num_steps), in_axes=(0))
         all_losses['gpc_linear'] = jax.jit(vmapped_gpc_linear_run)(trial_keys)
         print("GPC (Linear) trials complete.")
 
         # SFC (Linear)
-        sfc_linear_model = SFCModel(d=config.d, n=config.n, m=config.m, h=config.h, k=config.k, gamma=config.gamma, hidden_dims=None)
-        vmapped_sfc_linear_run = jax.vmap(functools.partial(run_trial, A=A, B=B, Q=Q, R=R, model=sfc_linear_model, optimizer=optimizer, disturbance=disturbance, d=config.d, m=config.m, num_steps=config.num_steps), in_axes=(0))
+        sfc_features = get_sfc_features(m=config.m, d=config.d, h=config.h, gamma=config.gamma)
+        vmapped_sfc_linear_run = jax.vmap(functools.partial(run_trial, A=A, B=B, Q=Q, R=R, model=sfc_features, optimizer=optimizer, disturbance=disturbance, d=config.d, m=config.m, num_steps=config.num_steps), in_axes=(0))
         all_losses['sfc_linear'] = jax.jit(vmapped_sfc_linear_run)(trial_keys)
         print("SFC (Linear) trials complete.")
 

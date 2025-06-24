@@ -40,10 +40,10 @@ class PerturbationNetwork(nn.Module):
 
 class FullyConnectedModel(nn.Module):
     """
-    Fully connected model that takes input of shape (m, d, 1) and outputs shape (k, n, 1).
+    Fully connected model that takes input of shape (feature_seq_len, d, 1) and outputs shape (k, n, 1).
     If hidden_dims is None, it's a linear model.
     """
-    m: int  # Input sequence length
+    feature_seq_len: int  # Input sequence length
     d: int  # Input dimension
     k: int  # Output sequence length
     n: int  # Output dimension
@@ -51,9 +51,9 @@ class FullyConnectedModel(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        # x is of shape (m, d, 1)
-        # Flatten input to (m*d, 1)
-        x_flat = x.reshape((-1, 1))
+        # x is of shape (feature_seq_len, d, 1)
+        # Flatten input to (feature_seq_len*d)
+        x_flat = x.flatten()
         
         if self.hidden_dims is None:
             # Linear layer
@@ -71,10 +71,10 @@ class FullyConnectedModel(nn.Module):
 
 class SequentialModel(nn.Module):
     """
-    Model that creates m independent networks, each taking input[i,:,:] to (k, n, 1).
+    Model that creates feature_seq_len independent networks, each taking input[i,:,:] to (k, n, 1).
     If hidden_dims is None, each network is linear.
     """
-    m: int  # Input sequence length
+    feature_seq_len: int  # Input sequence length
     d: int  # Input dimension
     k: int  # Output sequence length
     n: int  # Output dimension
@@ -82,9 +82,9 @@ class SequentialModel(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        # x is of shape (m, d, 1)
+        # x is of shape (feature_seq_len, d, 1)
         
-        # Create m independent networks
+        # Create feature_seq_len independent networks
         network = PerturbationNetwork(
             d_in=self.d,
             d_out=self.k * self.n,
@@ -93,15 +93,15 @@ class SequentialModel(nn.Module):
             hidden_dims=self.hidden_dims
         )
         
-        # Initialize parameters for all m networks
+        # Initialize parameters for all feature_seq_len networks
         params = self.param('networks',
                           lambda key, _: vmap(lambda k: network.init(k, jnp.zeros((self.d, 1))))(
-                              jax.random.split(key, self.m)
+                              jax.random.split(key, self.feature_seq_len)
                           ),
-                          (self.m,))
+                          (self.feature_seq_len,))
         
-        # Vectorize the network application across the m inputs
-        # Input: params(m, ...), x(m, d, 1) -> Output: perturbations(m, k, n, 1)
+        # Vectorize the network application across the feature_seq_len inputs
+        # Input: params(feature_seq_len, ...), x(feature_seq_len, d, 1) -> Output: perturbations(feature_seq_len, k, n, 1)
         apply_network = vmap(lambda p, h: network.apply(p, h))
         perturbations = apply_network(params, x)
         
@@ -111,10 +111,10 @@ class SequentialModel(nn.Module):
 
 class GridModel(nn.Module):
     """
-    Model that creates a grid of (m, k) networks, where network (i,j) takes input[i,:,:]
+    Model that creates a grid of (feature_seq_len, k) networks, where network (i,j) takes input[i,:,:]
     and contributes to output[j,:,:]. If hidden_dims is None, each network is linear.
     """
-    m: int  # Input sequence length
+    feature_seq_len: int  # Input sequence length
     d: int  # Input dimension
     k: int  # Output sequence length
     n: int  # Output dimension
@@ -122,7 +122,7 @@ class GridModel(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        # x is of shape (m, d, 1)
+        # x is of shape (feature_seq_len, d, 1)
         
         # Create a single network that will be used for all (i,j) pairs
         network = PerturbationNetwork(
@@ -133,15 +133,15 @@ class GridModel(nn.Module):
             hidden_dims=self.hidden_dims
         )
         
-        # Initialize parameters for all m*k networks
+        # Initialize parameters for all feature_seq_len*k networks
         params = self.param('networks',
                           lambda key, _: vmap(lambda k: network.init(k, jnp.zeros((self.d, 1))))(
-                              jax.random.split(key, self.m * self.k)
+                              jax.random.split(key, self.feature_seq_len * self.k)
                           ),
-                          (self.m, self.k))
+                          (self.feature_seq_len, self.k))
         
-        # Vectorize the network application across the m inputs and k outputs
-        # Input: params(m, k, ...), x(m, d, 1) -> Output: perturbations(m, k, n, 1)
+        # Vectorize the network application across the feature_seq_len inputs and k outputs
+        # Input: params(feature_seq_len, k, ...), x(feature_seq_len, d, 1) -> Output: perturbations(feature_seq_len, k, n, 1)
         apply_network = vmap(vmap(lambda p, h: network.apply(p, h)))
         perturbations = apply_network(params, x[:, None, :, :])  # Add k dimension to x
         

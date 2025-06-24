@@ -15,8 +15,9 @@ import optax
 from flax import linen as nn
 
 from deluca.experimental.agents.agent import policy_loss, update_agentstate, AgentState
-from deluca.experimental.agents.gpc import GPCModel
-from deluca.experimental.agents.sfc import SFCModel
+from deluca.experimental.agents.gpc import get_gpc_features
+from deluca.experimental.agents.sfc import get_sfc_features
+from deluca.experimental.agents.model import FullyConnectedModel, SequentialModel, GridModel
 from deluca.experimental.enviornments.disturbances.sinusoidal import sinusoidal_disturbance
 from deluca.experimental.enviornments.disturbances.gaussian import gaussian_disturbance
 from deluca.experimental.enviornments.disturbances.zero import zero_disturbance
@@ -27,6 +28,7 @@ from deluca.experimental.enviornments.env import step
 def run_trial(
     key: jax.random.PRNGKey,
     model: nn.Module,
+    get_features: Callable,
     optimizer: Any,
     disturbance: Callable,
     sim: Callable,
@@ -40,7 +42,7 @@ def run_trial(
     """Run a single trial for the pendulum environment."""
     # Initialize model parameters and agent state
     init_key, loop_key = jax.random.split(key)
-    params = model.init(init_key, jnp.zeros((m, d, 1)))
+    params = model.init(init_key, jnp.zeros((model.feature_seq_len, d, 1)))
     opt_state = optimizer.init(params)
 
     initial_agentstate = AgentState(
@@ -63,6 +65,7 @@ def run_trial(
             dist_history=dist_history,
             sim=sim,
             cost_fn=cost_fn,
+            get_features=get_features,
         )
 
     grad_fn = jax.grad(loss_fn)
@@ -71,7 +74,7 @@ def run_trial(
         agentstate, physical_state, key = carry
 
         # Get action from model
-        actions = model.apply(agentstate.params, agentstate.dist_history)
+        actions = model.apply(agentstate.params, get_features(m, agentstate.dist_history))
         action = actions[0]
 
         # Step the environment
@@ -87,7 +90,7 @@ def run_trial(
             key=key1,
         )
 
-        # Update agent state
+        # Update agent statecontroller_t
         def update_loop_body(i, agentstate):
             return update_agentstate(
                 agentstate=agentstate,
@@ -178,17 +181,26 @@ def main():
         key, trial_key_master = jax.random.split(key)
         trial_keys = jax.random.split(trial_key_master, config.num_trials)
 
+        # Create model
+        if config.model_type == 'fully_connected':
+            model = FullyConnectedModel(feature_seq_len=config.m_gpc, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
+        elif config.model_type == 'sequential':
+            model = SequentialModel(feature_seq_len=config.m_gpc, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
+        elif config.model_type == 'grid':
+            model = GridModel(feature_seq_len=config.m_gpc, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
+        else:
+            raise ValueError(f"Unknown model type: {config.model_type}")
+    
         # --- Run GPC ---
         print("--- Creating GPC Model ---")
-        gpc_model = GPCModel(
-            d=config.d, n=config.n, m=config.m_gpc, k=config.k_gpc, hidden_dims=config.hidden_dims
-        )
+        gpc_features = get_gpc_features(m=config.m_gpc, d=config.d)
 
         print(f"--- Starting {config.num_trials} GPC Trials (vmapped) ---")
         vmapped_gpc_run_trial = jax.vmap(
             functools.partial(
                 run_trial,
-                model=gpc_model,
+                model=model,
+                get_features=gpc_features,
                 optimizer=optimizer,
                 disturbance=disturbance,
                 sim=sim,
@@ -209,16 +221,25 @@ def main():
         print("--- GPC trials completed ---")
 
         # --- Run SFC ---
+        # Create model
+        if config.model_type == 'fully_connected':
+            model = FullyConnectedModel(feature_seq_len=config.h_sfc, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
+        elif config.model_type == 'sequential':
+            model = SequentialModel(feature_seq_len=config.h_sfc, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
+        elif config.model_type == 'grid':
+            model = GridModel(feature_seq_len=config.h_sfc, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
+        else:
+            raise ValueError(f"Unknown model type: {config.model_type}")
+        
         print("--- Creating SFC Model ---")
-        sfc_model = SFCModel(
-            d=config.d, n=config.n, m=config.m_sfc, h=config.h_sfc, k=config.k_sfc, gamma=config.gamma, hidden_dims=config.hidden_dims
-        )
+        sfc_features = get_sfc_features(m=config.m_sfc, d=config.d, h=config.h_sfc, gamma=config.gamma)
 
         print(f"--- Starting {config.num_trials} SFC Trials (vmapped) ---")
         vmapped_sfc_run_trial = jax.vmap(
             functools.partial(
                 run_trial,
-                model=sfc_model,
+                model=model,
+                get_features=sfc_features,
                 optimizer=optimizer,
                 disturbance=disturbance,
                 sim=sim,

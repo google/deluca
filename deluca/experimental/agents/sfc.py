@@ -9,7 +9,7 @@ from jax import jit
 from jax.scipy.linalg import eigh
 
 
-@jit
+@partial(jit, static_argnames=["m", "h"])
 def compute_filter_matrix(m: int, h: int, gamma: float) -> jnp.ndarray:
     """Compute the spectral filter matrix.
     
@@ -40,44 +40,20 @@ def compute_filter_matrix(m: int, h: int, gamma: float) -> jnp.ndarray:
     
     return filter_matrix
 
-@jit
 def get_sfc_features(
     m: int,
     d: int,
     h: int,
     gamma: float,
 ) -> Callable[[int, jnp.ndarray], jnp.ndarray]:
-    """Get a function that computes SFC features from disturbance history.
-    
-    Args:
-        m: History length
-        d: State dimension
-        h: Number of eigenvectors
-        gamma: Decay rate
-        
-    Returns:
-        A function that takes (offset, dist_history) and returns filtered features
     """
-    def _get_sfc_features(
-        offset: int, 
-        dist_history: jnp.ndarray,
-        filter_matrix: jnp.ndarray
-    ) -> jnp.ndarray:
-        """Compute SFC features from a window of disturbance history.
-        
-        Args:
-            offset: Current time offset
-            dist_history: Full disturbance history of shape (m+hist, d, 1)
-            filter_matrix: Pre-computed filter matrix of shape (m, h)
-            
-        Returns:
-            Filtered features of shape (h, d, 1)
-        """
+    Returns a function that computes SFC features.
+    """
+
+    def _get_features(offset: int, dist_history: jnp.ndarray) -> jnp.ndarray:
+        """Computes SFC features from a window of disturbance history."""
+        filter_matrix = compute_filter_matrix(m, h, gamma)
         window = jax.lax.dynamic_slice(dist_history, (offset, 0, 0), (m, d, 1))
-        return jnp.einsum('mh,md1->hd1', filter_matrix, window)
-    
-    # Compute filter matrix
-    filter_matrix = compute_filter_matrix(m, h, gamma)
-    
-    # Return partially applied function with filter matrix
-    return partial(_get_sfc_features, filter_matrix=filter_matrix)
+        return jnp.einsum("mh,md1->hd1", filter_matrix, window)
+
+    return _get_features

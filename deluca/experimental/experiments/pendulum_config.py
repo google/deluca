@@ -9,14 +9,13 @@ dt = 0.02
 d = 2  # state dimension (theta, thdot)
 n = 1  # action dimension (torque)
 p = 2  # output dimension (same as state)
+k = 10 # action horizon 
 
 # Model parameters
 m_gpc = 10  # history length for GPC
-k_gpc = 10  # action horizon for GPC
 
 m_sfc = 15  # history length for SFC
 h_sfc = 10   # filter horizon for SFC
-k_sfc = 25   # action horizon for SFC
 gamma = 0.9
 hidden_dims = [16]
 
@@ -31,6 +30,8 @@ disturbance_params = {
     },
     'zero': {}
 }
+
+model_type = 'fully_connected'
 
 # Training parameters
 learning_rate = 1e-3

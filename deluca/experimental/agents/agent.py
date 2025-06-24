@@ -22,7 +22,7 @@ class AgentState:
     params: Any       # Model parameters
     opt_state: Any   # Optimizer state
 
-@partial(jit, static_argnames=['apply_fn', 'd', 'm', 'sim', 'cost_fn'])
+@partial(jit, static_argnames=['apply_fn', 'd', 'm', 'sim', 'cost_fn', 'get_features'])
 def policy_loss(
     apply_fn: Callable,
     params: Any,
