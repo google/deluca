@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optax
 from jax import debug as jax_debug
-import numpy as np
 
 from deluca.experimental.agents.agent import policy_loss, update_agentstate, AgentState
 from deluca.experimental.agents.gpc import get_gpc_features
@@ -92,7 +91,7 @@ def run_trial(
     # B: jnp.ndarray,
     # Q: jnp.ndarray,
     # R: jnp.ndarray,
-) -> Any:
+) -> jnp.ndarray:
     """Run a single trial."""
     # Create simulator and cost function
     if config.sim_type == 'lds':
@@ -100,8 +99,8 @@ def run_trial(
         A, B = create_random_system(A_B_key, config.d, config.n, config.min_eig, config.max_eig)
         key, Q_R_key = jax.random.split(key)
         Q, R = create_random_cost_matrices(Q_R_key, config.d, config.n)
-        if config.debug:
-            print(f'A.shape={A.shape}, B.shape={B.shape}, Q.shape={Q.shape}, R.shape={R.shape}')
+        # if config.debug:
+        #     print(f'A.shape={A.shape}, B.shape={B.shape}, Q.shape={Q.shape}, R.shape={R.shape}')
 
         sim = functools.partial(lds_sim, A=A, B=B)
         output_map = functools.partial(lds_output, C=jnp.eye(config.d))  # Identity output map
@@ -189,17 +188,15 @@ def run_trial(
     def scan_body(carry, t):
         agentstate, physical_state, key = carry
         # if config.debug:
-            # jax_debug.print('--- Step {} ---', t)
-            # jax_debug.print('agentstate.controller_t: {}', agentstate.controller_t)
-            # jax_debug.print('physical_state: {}', physical_state)
+        #     jax_debug.print('--- Step {} ---', t)
+        #     jax_debug.print('agentstate.controller_t: {}', agentstate.controller_t)
+        #     jax_debug.print('physical_state: {}', physical_state)
         # Get action from model
         actions = model.apply(agentstate.params, get_features(config.m, agentstate.dist_history))
         action = actions[0]
-        if config.debug:
-            action_dist_history = agentstate.dist_history
         # if config.debug:
-            # jax_debug.print('actions shape: {}', actions.shape)
-
+        #     jax_debug.print('actions shape: {}', actions.shape)
+        #     jax_debug.print('action: {}', action)
         # Step the environment
         key1, key2 = jax.random.split(key)
         next_physical_state, output = step(
@@ -225,20 +222,17 @@ def run_trial(
             debug=config.debug
         )
         # Update physical state for next iteration
-        # physical_state = next_physical_state
+        physical_state = next_physical_state
         # Compute loss for reporting
         loss = loss_fn(agentstate.params, agentstate.dist_history, agentstate.state_history[0])
         
         new_carry = (agentstate, next_physical_state, key2)
-        if config.debug:
-            return new_carry, (loss, physical_state, next_physical_state, action, action_dist_history, agentstate.dist_history, sim(physical_state, action))
-        else:
-            return new_carry, loss
+        return new_carry, loss
 
     # Run simulation with scan
     initial_carry = (initial_agentstate, initial_physical_state, loop_key)
-    
     (_, _, _), losses = jax.lax.scan(scan_body, initial_carry, jnp.arange(config.num_steps))
+    
     return losses
 
 def main():
@@ -269,74 +263,50 @@ def main():
     jitted_vmapped_run_trial = jax.jit(vmapped_run_trial)
     
     print("Compiling and running trials... (this may take a moment)")
-    all_losses = jitted_vmapped_run_trial(trial_keys)/config.k
-    # all_losses.block_until_ready() # Wait for all computations to finish
+    all_losses = jitted_vmapped_run_trial(trial_keys)
+    all_losses.block_until_ready() # Wait for all computations to finish
     print("--- All trials completed ---")
-    if config.debug:
-        loss, physical_state, next_physical_state, action, action_dist_history, agentstate_dist_history, sim_seq = all_losses
-        
-        # Save all debug arrays to .txt files
-        base_name = f"{config.sim_type}_{config.model_type}_{config.algorithm_type}"
-        arrays_dir = os.path.join('results', 'arrays')
-        os.makedirs(arrays_dir, exist_ok=True)
-        array_dict = {
-            'loss': loss,
-            'physical_state': physical_state,
-            'next_physical_state': next_physical_state,
-            'action': action,
-            'action_dist_history': action_dist_history,
-            'agentstate_dist_history': agentstate_dist_history,
-            'sim_seq': sim_seq,
-        }
-        for name, arr in array_dict.items():
-            arr_np = np.asarray(arr)  # Convert JAX array to numpy
-            path = os.path.join(arrays_dir, f"{base_name}_{name}.txt")
-            with open(path, 'w') as f:
-                f.write(np.array2string(arr_np, threshold=1000, max_line_width=120))
-            print(f"Saved {name} to {path}")
 
-    else:
+    # Compute mean and standard error
+    mean_losses = jnp.mean(all_losses, axis=0)
+    std_losses = jnp.std(all_losses, axis=0) / jnp.sqrt(config.num_trials)
 
-        # Compute mean and standard error
-        mean_losses = jnp.mean(all_losses, axis=0)
-        std_losses = jnp.std(all_losses, axis=0) / jnp.sqrt(config.num_trials)
+    # Create results subdirectories
+    results_dir = 'results'
+    plots_dir = os.path.join(results_dir, 'plots')
+    arrays_dir = os.path.join(results_dir, 'arrays')
+    os.makedirs(plots_dir, exist_ok=True)
+    os.makedirs(arrays_dir, exist_ok=True)
 
-        # Create results subdirectories
-        results_dir = 'results'
-        plots_dir = os.path.join(results_dir, 'plots')
-        arrays_dir = os.path.join(results_dir, 'arrays')
-        os.makedirs(plots_dir, exist_ok=True)
-        os.makedirs(arrays_dir, exist_ok=True)
+    # Save mean_losses and std_losses as .npy files in arrays_dir
+    base_name = f"{config.sim_type}_{config.model_type}_{config.algorithm_type}"
+    mean_path = os.path.join(arrays_dir, f"{base_name}_mean_losses.npy")
+    std_path = os.path.join(arrays_dir, f"{base_name}_std_losses.npy")
+    jnp.save(mean_path, mean_losses)
+    jnp.save(std_path, std_losses)
+    print(f"Mean losses saved to {mean_path}")
+    print(f"Std losses saved to {std_path}")
 
-        # Save mean_losses and std_losses as .npy files in arrays_dir
-        base_name = f"{config.sim_type}_{config.model_type}_{config.algorithm_type}"
-        mean_path = os.path.join(arrays_dir, f"{base_name}_mean_losses.npy")
-        std_path = os.path.join(arrays_dir, f"{base_name}_std_losses.npy")
-        jnp.save(mean_path, mean_losses)
-        jnp.save(std_path, std_losses)
-        print(f"Mean losses saved to {mean_path}")
-        print(f"Std losses saved to {std_path}")
-
-        # Plot results
-        plt.figure(figsize=(10, 6))
-        plt.plot(mean_losses, label='Mean Loss')
-        plt.fill_between(
-            range(len(mean_losses)),
-            mean_losses - std_losses,
-            mean_losses + std_losses,
-            alpha=0.2
-        )
-        plt.xlabel('Step')
-        plt.ylabel('Loss')
-        plt.title(f'{config.sim_type} {config.model_type} {config.algorithm_type} Performance')
-        plt.legend()
-        plt.grid(True)
-        
-        # Save the figure in plots_dir
-        filename = f"{base_name}_performance.png"
-        filepath = os.path.join(plots_dir, filename)
-        plt.savefig(filepath)
-        print(f"Plot saved to {filepath}")
+    # Plot results
+    plt.figure(figsize=(10, 6))
+    plt.plot(mean_losses, label='Mean Loss')
+    plt.fill_between(
+        range(len(mean_losses)),
+        mean_losses - std_losses,
+        mean_losses + std_losses,
+        alpha=0.2
+    )
+    plt.xlabel('Step')
+    plt.ylabel('Loss')
+    plt.title(f'{config.sim_type} {config.model_type} {config.algorithm_type} Performance')
+    plt.legend()
+    plt.grid(True)
+    
+    # Save the figure in plots_dir
+    filename = f"{base_name}_performance.png"
+    filepath = os.path.join(plots_dir, filename)
+    plt.savefig(filepath)
+    print(f"Plot saved to {filepath}")
 
 if __name__ == '__main__':
     main() 

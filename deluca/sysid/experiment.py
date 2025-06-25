@@ -19,10 +19,10 @@ def loss_fn(M_specrtal_parameter, state, u_vector, filter_matrix):
     # M_spectral_parameter: (k, d_in, d_out)
     # temp: (k, d_in, 1)
     # Contract along k and d_in dimensions to get (d_out, 1)
-    y_hat = jnp.tensordot(M_specrtal_parameter, temp, axes=[[0,1], [0,1]])
+    y_hat = jnp.tensordot(M_specrtal_parameter, jax.lax.stop_gradient(temp), axes=[[0,1], [0,1]])
     #   y_hat = jnp.einsum('kdm,kd1->m1', M_specrtal_parameter, temp) # d_out, 1
 
-    return jnp.sum((state - y_hat)**2)
+    return jnp.sum((jax.lax.stop_gradient(state) - y_hat)**2)
 
 grad_fn = jax.grad(loss_fn, argnums=0)
 
@@ -36,13 +36,14 @@ def get_filters(L: int, k: int = 24):
     return jnp.array(evecs[::-1, -k:] * (evals[-k:] ** 0.25))
 
 # Create a Hilbert matrix of order T
-def spectral_sysid(key, sim , d_in, d_out, T = 1000, k = 24):
+def spectral_sysid(key, sim , d_in, d_out, T = 1000, k = 24, R_M=1.0):
     key, subkey = jax.random.split(key)
     filter_matrix = get_filters(T, k)
     print(filter_matrix.shape)
     state = jax.random.normal(subkey,(d_out,1))
     u_vector = jnp.zeros((T,d_in,1))
-    M_specrtal_parameter = jnp.zeros((k, d_in, d_out))
+    key, subkey = jax.random.split(key)
+    M_specrtal_parameter = jax.random.normal(subkey, (k, d_in, d_out)) * 0.1
     for t in range(10000):
         key, subkey = jax.random.split(key)
         u = jax.random.normal(subkey,(d_in,1))
@@ -55,6 +56,7 @@ def spectral_sysid(key, sim , d_in, d_out, T = 1000, k = 24):
         loss = loss_fn(M_specrtal_parameter, state, u_vector, filter_matrix)
         grads = grad_fn(M_specrtal_parameter, state, u_vector, filter_matrix)
         M_specrtal_parameter = M_specrtal_parameter - 0.0001 * grads
+        M_specrtal_parameter = R_M * M_specrtal_parameter / (jnp.linalg.norm(M_specrtal_parameter) + 1e-8)
         # M_specrtal_parameter = M_specrtal_parameter - 0.001 * temp @ (state - y_hat).T
     
         print(f"Loss: {loss}")
