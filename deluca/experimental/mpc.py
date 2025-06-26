@@ -220,11 +220,11 @@ def main():
     # Create disturbance
     disturbance_params = config.disturbance_params[config.disturbance_type]
     if config.disturbance_type == 'sinusoidal':
-        disturbance = lambda d, dist_std, t, key: sinusoidal_disturbance(key=key, **disturbance_params)
+        disturbance = lambda d, dist_std, t, key: sinusoidal_disturbance(d=d, noise_amplitude=disturbance_params['noise_amplitude'], noise_frequency=disturbance_params['noise_frequency'] * jnp.ones((config.d,1)), t=t, key=key)
     elif config.disturbance_type == 'gaussian':
         disturbance = lambda d, dist_std, t, key: gaussian_disturbance(d=d, dist_std=disturbance_params['std'], t=t, key=key)
     elif config.disturbance_type == 'zero':
-        disturbance = lambda d, dist_std, t, key: zero_disturbance(d=d, dist_std=dist_std, t=t, key=key)
+        disturbance = lambda d, dist_std, t, key: zero_disturbance(d=d, key=key)
     else:
         raise ValueError(f"Unknown disturbance type: {config.disturbance_type}")
     # output_map = pendulum_output

@@ -25,12 +25,11 @@ gamma = 0.9
 hidden_dims = [8]
 
 # Disturbance parameters
-disturbance_type = 'sinusoidal'  # 'sinusoidal', 'gaussian', or 'zero'
+disturbance_type = 'gaussian'  # 'sinusoidal', 'gaussian', or 'zero'
 disturbance_params = {
     'sinusoidal': {
-        'amplitude': 1.0,
-        'frequency': 0.1,
-        'phase': 0.0,
+        'noise_amplitude': 1.0,
+        'noise_frequency': 0.1,
     },
     'gaussian': {
         'mean': 0.0,

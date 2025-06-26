@@ -2,7 +2,7 @@
 
 import argparse
 import functools
-from typing import Tuple, Any, Callable
+from typing import Tuple, Any
 import importlib.util
 import sys
 sys.path.append("../../")
@@ -13,8 +13,6 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optax
 from jax import debug as jax_debug
-from flax import linen as nn
-import numpy as np
 
 from deluca.experimental.agents.agent import policy_loss, update_agentstate, AgentState
 from deluca.experimental.agents.gpc import get_gpc_features
@@ -28,8 +26,6 @@ from deluca.experimental.enviornments.sim_and_output.brax import brax_sim, brax_
 from deluca.experimental.enviornments.sim_and_output.pendulum import pendulum_sim, pendulum_output
 from deluca.experimental.enviornments.cost_functions.quadratic_cost import quadratic_cost_evaluate
 from deluca.experimental.enviornments.env import step
-
-PRNGKey = Any
 
 def create_random_system(
     key: jax.random.PRNGKey,
@@ -88,134 +84,40 @@ def create_random_cost_matrices(
     
     return Q, R
 
-
-def rollout(
-    apply_fn: Callable,
-    params: Any,
-    sim: Callable,
-    cost_fn: Callable,
-    k: int,
-    initial_state: jnp.ndarray
-) -> float:
-    """
-    Simulates a k-step rollout and computes the total cost.
-    """
-    actions = apply_fn(params, initial_state)
-
-    def rollout_step(state, action):
-        next_state = sim(state, action)
-        cost = cost_fn(next_state, action)
-        return next_state, cost
-
-    _, costs = jax.lax.scan(rollout_step, initial_state, actions)
-    return jnp.sum(costs)
-
-def run_mpc_trial(
-    key: PRNGKey,
-    config: Any,
-    sim: Callable,
-    output_map: Callable,
-    cost_fn: Callable,
-    d: int,
-    k: int,
-    num_steps: int,
-    gradient_updates_per_step: int,
-) -> Any:
-    """Run a single trial for the pendulum MPC experiment."""
-    
-    # Create optimizer
-    optimizer = optax.chain(
-        optax.clip_by_global_norm(config.R_M), optax.adam(config.learning_rate)
-    )
-
-    # --- Create MPC Model ---
-    print("--- Creating MPC Model ---")
-    model = FullyConnectedModel(
-        m=1, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims
-    )
-    # Initialize model parameters and optimizer state
-    init_key, loop_key = jax.random.split(key)
-    params = model.init(init_key, jnp.zeros((d, 1)))
-    opt_state = optimizer.init(params)
-
-    # Start the pendulum with a slight angle to encourage learning
-    initial_physical_state = jax.random.normal(key, (d, 1)) * 0.1
-
-    def loss_fn(p, state):
-        return rollout(
-            apply_fn=model.apply,
-            params=p,
-            sim=sim,
-            cost_fn=cost_fn,
-            k=k,
-            initial_state=state
-        )
-
-    grad_fn = jax.grad(loss_fn)
-
-    def scan_body(carry, t):
-        params, opt_state, physical_state, key = carry
-
-        def update_step(i, val):
-            p, o = val
-            grads = grad_fn(p, physical_state)
-            updates, o = optimizer.update(grads, o, p)
-            p = optax.apply_updates(p, updates)
-            return p, o
-
-        params, opt_state = jax.lax.fori_loop(0, gradient_updates_per_step, update_step, (params, opt_state))
-
-        # Get action from the updated model
-        actions = model.apply(params, physical_state)
-        action = actions[0]
-
-        # Step the environment with zero disturbance
-        key, step_key = jax.random.split(key)
-        next_physical_state, output, _ = step(
-            x=physical_state,
-            u=action,
-            sim=sim,
-            output_map=output_map,
-            dist_std=0.0,
-            t_sim_step=t,
-            disturbance=zero_disturbance,
-            key=step_key,
-        )
-
-        # Compute loss for reporting (cost of the single step taken)
-        loss = cost_fn(output, action)
-
-        new_carry = (params, opt_state, next_physical_state, key)
-        return new_carry, (loss, next_physical_state)
-
-    # Run simulation with scan
-    initial_carry = (params, opt_state, initial_physical_state, loop_key)
-    (_, _, _, _), (losses, states) = jax.lax.scan(
-        scan_body, initial_carry, jnp.arange(num_steps)
-    )
-
-    return losses, states, model, params
-
-
 def run_trial(
     key: jax.random.PRNGKey,
     config: Any,
-    sim: Callable,
-    output_map: Callable,
-    cost_fn: Callable,
-    mpc_model: Any,
-    mpc_params: Any,
     # A: jnp.ndarray,
     # B: jnp.ndarray,
     # Q: jnp.ndarray,
     # R: jnp.ndarray,
 ) -> jnp.ndarray:
     """Run a single trial."""
+    # Create simulator and cost function
+    if config.sim_type == 'lds':
+        key, A_B_key = jax.random.split(key)
+        A, B = create_random_system(A_B_key, config.d, config.n, config.min_eig, config.max_eig)
+        key, Q_R_key = jax.random.split(key)
+        Q, R = create_random_cost_matrices(Q_R_key, config.d, config.n)
+        # if config.debug:
+        #     print(f'A.shape={A.shape}, B.shape={B.shape}, Q.shape={Q.shape}, R.shape={R.shape}')
+
+        sim = functools.partial(lds_sim, A=A, B=B)
+        output_map = functools.partial(lds_output, C=jnp.eye(config.d))  # Identity output map
+        cost_fn = functools.partial(quadratic_cost_evaluate, Q=Q, R=R)
+    
+    elif config.sim_type == 'pendulum':
+        sim = functools.partial(pendulum_sim, max_torque=config.max_torque, m=config.mass, l=config.length, g=config.g, dt=config.dt)
+        output_map = pendulum_output
+
+        Q = jnp.array([[1.0, 0.0], [0.0, 0.0]])
+        R = jnp.zeros((config.n, config.n))
+        cost_fn = functools.partial(quadratic_cost_evaluate, Q=Q, R=R)
     
     # Create disturbance
     disturbance_params = config.disturbance_params[config.disturbance_type]
     if config.disturbance_type == 'sinusoidal':
-        disturbance = lambda d, dist_std, t, key: sinusoidal_disturbance(key=key, **disturbance_params)
+        disturbance = lambda d, dist_std, t, key: sinusoidal_disturbance(d=d, noise_amplitude=disturbance_params['noise_amplitude'], noise_frequency=disturbance_params['noise_frequency'] * jnp.ones(config.d), t=t, key=key)
     elif config.disturbance_type == 'gaussian':
         disturbance = lambda d, dist_std, t, key: gaussian_disturbance(d=d, dist_std=disturbance_params['std'], t=t, key=key)
     elif config.disturbance_type == 'zero':
@@ -250,12 +152,9 @@ def run_trial(
     )
     
     # Initialize model parameters and agent state
-    init_key1, init_key2, loop_key = jax.random.split(key, 3)
-    params = model.init(init_key1, jnp.zeros((input_dim, config.d, 1)))
+    init_key, loop_key = jax.random.split(key)
+    params = model.init(init_key, jnp.zeros((input_dim, config.d, 1)))
     opt_state = optimizer.init(params)
-    
-    # Freeze MPC model parameters by using jax.lax.stop_gradient
-    mpc_model_apply = lambda x: jax.lax.stop_gradient(mpc_model.apply(mpc_params, x))
     
     initial_agentstate = AgentState(
         controller_t=0,
@@ -268,12 +167,11 @@ def run_trial(
     # if config.debug:
     #     initial_agentstate.show()
     initial_physical_state = jnp.zeros((config.d, 1))
-    initial_mpc_state = jnp.zeros((config.d, 1))
+
     # Define loss function for grad and for reporting
     def loss_fn(p, dist_history, start_state):
         return policy_loss(
             apply_fn=model.apply,
-            mpc_model=mpc_model_apply,
             params=p,
             d=config.d,
             m=config.m,
@@ -288,7 +186,7 @@ def run_trial(
     grad_fn = jax.grad(loss_fn)
 
     def scan_body(carry, t):
-        agentstate, physical_state, mpc_state,key = carry
+        agentstate, physical_state, key = carry
         # if config.debug:
         #     jax_debug.print('--- Step {} ---', t)
         #     jax_debug.print('agentstate.controller_t: {}', agentstate.controller_t)
@@ -296,14 +194,12 @@ def run_trial(
         # Get action from model
         actions = model.apply(agentstate.params, get_features(config.m, agentstate.dist_history))
         action = actions[0]
-        mpc_action = mpc_model_apply(mpc_state)
-        
         # if config.debug:
         #     jax_debug.print('actions shape: {}', actions.shape)
         #     jax_debug.print('action: {}', action)
         # Step the environment
-        key1, key2, key3 = jax.random.split(key, 3)
-        next_physical_state, output, w = step(
+        key1, key2 = jax.random.split(key)
+        next_physical_state, output = step(
             x=physical_state,
             u=action,
             sim=sim,
@@ -313,16 +209,9 @@ def run_trial(
             disturbance=disturbance,
             key=key1
         )
-        next_mpc_state, next_mpc_output, next_mpc_w = step(
-            x=mpc_state,
-            u=mpc_action[0],
-            sim=sim,
-            output_map=output_map,
-            dist_std=1.0,
-            t_sim_step=t,
-            disturbance=w,
-            key=key3
-        )
+        # if config.debug:
+        #     jax_debug.print('next_physical_state: {}, output: {}', next_physical_state, output)
+        # Update agent state
         agentstate = update_agentstate(
             agentstate=agentstate,
             next_state=output,
@@ -335,17 +224,16 @@ def run_trial(
         # Update physical state for next iteration
         physical_state = next_physical_state
         # Compute loss for reporting
-        
         loss = loss_fn(agentstate.params, agentstate.dist_history, agentstate.state_history[0])
-        mpc_loss = cost_fn(mpc_state, mpc_action[0])
-        new_carry = (agentstate, next_physical_state, next_mpc_state, key2)
-        return new_carry, (loss, mpc_loss)
+        
+        new_carry = (agentstate, next_physical_state, key2)
+        return new_carry, loss
 
     # Run simulation with scan
-    initial_carry = (initial_agentstate, initial_physical_state, initial_mpc_state, loop_key)
-    (_, _, _, _), (losses, mpc_losses) = jax.lax.scan(scan_body, initial_carry, jnp.arange(config.num_steps))
+    initial_carry = (initial_agentstate, initial_physical_state, loop_key)
+    (_, _, _), losses = jax.lax.scan(scan_body, initial_carry, jnp.arange(config.num_steps))
     
-    return losses, mpc_losses
+    return losses
 
 def main():
     parser = argparse.ArgumentParser(description='Run GPC/SFC experiments')
@@ -359,53 +247,6 @@ def main():
     
     # Set random seed
     key = jax.random.PRNGKey(config.seed)
-    init_key, loop_key = jax.random.split(key)
-
-    # Create simulator and cost function
-    if config.sim_type == 'lds':
-        key, A_B_key = jax.random.split(key)
-        A, B = create_random_system(A_B_key, config.d, config.n, config.min_eig, config.max_eig)
-        key, Q_R_key = jax.random.split(key)
-        Q, R = create_random_cost_matrices(Q_R_key, config.d, config.n)
-
-        sim = functools.partial(lds_sim, A=A, B=B)
-        output_map = functools.partial(lds_output, C=jnp.eye(config.d))  # Identity output map
-        cost_fn = functools.partial(quadratic_cost_evaluate, Q=Q, R=R)
-    
-    elif config.sim_type == 'pendulum':
-        sim = functools.partial(pendulum_sim, max_torque=config.max_torque, m=config.mass, l=config.length, g=config.g, dt=config.dt)
-        output_map = pendulum_output
-
-        Q = jnp.array([[1.0, 0.0], [0.0, 0.0]])
-        R = jnp.zeros((config.n, config.n))
-        cost_fn = functools.partial(quadratic_cost_evaluate, Q=Q, R=R)
-    
-    mpc_losses, mpc_states, mpc_model, mpc_params = run_mpc_trial(
-        key=init_key,
-        config=config,
-        sim=sim,
-        output_map=output_map,
-        cost_fn=cost_fn,
-        d=config.d,
-        k=config.k,
-        num_steps=config.num_steps,
-        gradient_updates_per_step=config.gradient_updates_per_step,
-    )
-    
-    # Plot MPC results
-    plt.figure(figsize=(10, 6))
-    plt.plot(mpc_losses, label='MPC Loss')
-    plt.xlabel('Step')
-    plt.ylabel('Loss')
-    plt.title('MPC Performance')
-    plt.legend()
-    
-    # Save MPC plot
-    mpc_plot_path = os.path.join('results', 'plots', f"{config.sim_type}_mpc_losses.png")
-    os.makedirs(os.path.dirname(mpc_plot_path), exist_ok=True)
-    plt.savefig(mpc_plot_path)
-    plt.close()
-    print(f"MPC losses plot saved to {mpc_plot_path}")
     
     print(f"--- Starting {config.num_trials} Trials (vmapped) ---")
     
@@ -414,7 +255,7 @@ def main():
 
     # Vmap the run_trial function
     vmapped_run_trial = jax.vmap(
-        functools.partial(run_trial, config=config, sim=sim, output_map=output_map, cost_fn=cost_fn, mpc_model=mpc_model, mpc_params=mpc_params),
+        functools.partial(run_trial, config=config),
         in_axes=(0),
     )
     
@@ -422,16 +263,13 @@ def main():
     jitted_vmapped_run_trial = jax.jit(vmapped_run_trial)
     
     print("Compiling and running trials... (this may take a moment)")
-    all_losses, all_mpc_losses = jitted_vmapped_run_trial(trial_keys)
+    all_losses = jitted_vmapped_run_trial(trial_keys)
     all_losses.block_until_ready() # Wait for all computations to finish
-    all_mpc_losses.block_until_ready() # Wait for all computations to finish
     print("--- All trials completed ---")
 
     # Compute mean and standard error
     mean_losses = jnp.mean(all_losses, axis=0)
     std_losses = jnp.std(all_losses, axis=0) / jnp.sqrt(config.num_trials)
-    mean_mpc_losses = jnp.mean(all_mpc_losses, axis=0)
-    std_mpc_losses = jnp.std(all_mpc_losses, axis=0) / jnp.sqrt(config.num_trials)
 
     # Create results subdirectories
     results_dir = 'results'
@@ -452,17 +290,10 @@ def main():
     # Plot results
     plt.figure(figsize=(10, 6))
     plt.plot(mean_losses, label='Mean Loss')
-    plt.plot(mean_mpc_losses, label='Mean MPC Loss')
     plt.fill_between(
         range(len(mean_losses)),
         mean_losses - std_losses,
         mean_losses + std_losses,
-        alpha=0.2
-    )
-    plt.fill_between(
-        range(len(mean_mpc_losses)), 
-        mean_mpc_losses - std_mpc_losses,
-        mean_mpc_losses + std_mpc_losses,
         alpha=0.2
     )
     plt.xlabel('Step')
@@ -470,6 +301,7 @@ def main():
     plt.title(f'{config.sim_type} {config.model_type} {config.algorithm_type} Performance')
     plt.legend()
     plt.grid(True)
+    
     # Save the figure in plots_dir
     filename = f"{base_name}_performance.png"
     filepath = os.path.join(plots_dir, filename)

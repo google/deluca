@@ -32,7 +32,7 @@ class AgentState:
         print(f'params={getattr(self, "params", None)}')
         print(f'opt_state={getattr(self, "opt_state", None)}')
 
-@partial(jit, static_argnames=['apply_fn', 'd', 'm', 'sim', 'cost_fn', 'get_features', 'debug', 'mpc_model'])
+@partial(jit, static_argnames=['apply_fn', 'd', 'm', 'sim', 'cost_fn', 'get_features', 'debug'])
 def policy_loss(
     apply_fn: Callable,
     params: Any,
@@ -44,18 +44,17 @@ def policy_loss(
     cost_fn: Callable[[jnp.ndarray, jnp.ndarray], float],
     get_features: Callable[[int, jnp.ndarray], jnp.ndarray],
     debug: bool = False,
-    mpc_model: Callable[[jnp.ndarray], jnp.ndarray] = None,
 ) -> jnp.ndarray:
     def evolve(state: jnp.ndarray, offset: int) -> Tuple[jnp.ndarray, int]:
         slice = get_features(offset, dist_history)
-        actions = apply_fn(params, slice) + mpc_model(state)
+        actions = apply_fn(params, slice)
         next_state = sim(state, actions[0]) + dist_history[-m + offset]
         # if debug:
         #     jax_debug.print('offset: {}, slice: {}, dist to add: {}', offset, slice, dist_history[-m + offset])
         return next_state, None
     final_state, _ = jax.lax.scan(evolve, start_state, jnp.arange(m-1))
     final_slice = get_features(m-1, dist_history)
-    final_actions = apply_fn(params, final_slice) + mpc_model(final_state)
+    final_actions = apply_fn(params, final_slice)
     # if debug:
     #     jax_debug.print('final_offset: {}, final_slice: {}, final dist to add: {}', m-1, final_slice, dist_history[-1])
     #     jax_debug.print('final actions: {}', final_actions)

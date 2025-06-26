@@ -17,12 +17,11 @@ k = 25  # action horizon for MPC
 hidden_dims = [64, 64]
 
 # Disturbance parameters
-disturbance_type = 'zero'  # 'sinusoidal', 'gaussian', or 'zero'
+disturbance_type = 'sinusoidal'  # 'sinusoidal', 'gaussian', or 'zero'
 disturbance_params = {
     'sinusoidal': {
-        'amplitude': 1.0,
-        'frequency': 0.1,
-        'phase': 0.0,
+        'noise_amplitude': 0.1,
+        'noise_frequency': 0.1,
     },
     'gaussian': {
         'mean': 0.0,
