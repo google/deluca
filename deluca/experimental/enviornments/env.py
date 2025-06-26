@@ -5,7 +5,7 @@ with disturbances. It supports various types of disturbances and system dynamics
 through callback functions.
 """
 
-from typing import Callable
+from typing import Callable, Any
 from functools import partial
 
 import jax
@@ -20,11 +20,12 @@ def step(
     output_map: Callable[[jnp.ndarray], jnp.ndarray],
     dist_std: float,
     t_sim_step: int,
-    disturbance: Callable[[int, float, int, jax.random.PRNGKey], jax.Array],
+    disturbance: Any,
     key: jax.random.PRNGKey
 ) -> tuple[jnp.ndarray, jnp.ndarray]: # Returns (next_x, y_t)
     d = x.shape[0]
-    w = disturbance(d, dist_std, t_sim_step, key)
+    # If disturbance is already an ndarray, use it directly, otherwise call the disturbance function
+    w = disturbance if isinstance(disturbance, jnp.ndarray) else disturbance(d, dist_std, t_sim_step, key)
     x_next = sim(x, u) + w
     y = output_map(x_next)
-    return x_next, y
+    return x_next, y, w
