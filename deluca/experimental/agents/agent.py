@@ -47,14 +47,14 @@ def policy_loss(
 ) -> jnp.ndarray:
     def evolve(state: jnp.ndarray, offset: int) -> Tuple[jnp.ndarray, int]:
         slice = get_features(offset, dist_history)
-        actions = apply_fn(params, slice)
+        actions = apply_fn(params, jnp.concatenate([jnp.reshape(state, (1, d, 1)), slice], axis=0))
         next_state = sim(state, actions[0]) + dist_history[-m + offset]
         # if debug:
         #     jax_debug.print('offset: {}, slice: {}, dist to add: {}', offset, slice, dist_history[-m + offset])
         return next_state, None
     final_state, _ = jax.lax.scan(evolve, start_state, jnp.arange(m-1))
     final_slice = get_features(m-1, dist_history)
-    final_actions = apply_fn(params, final_slice)
+    final_actions = apply_fn(params, jnp.concatenate([jnp.reshape(final_state, (1, d, 1)), final_slice], axis=0))
     # if debug:
     #     jax_debug.print('final_offset: {}, final_slice: {}, final dist to add: {}', m-1, final_slice, dist_history[-1])
     #     jax_debug.print('final actions: {}', final_actions)

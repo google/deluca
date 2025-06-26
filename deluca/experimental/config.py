@@ -1,9 +1,9 @@
 # System parameters
-sim_type = 'lds' # 'lds' or 'pendulum' or 'brax'
+sim_type = 'pendulum' # 'lds' or 'pendulum' or 'brax'
 
 #Specify if sim_type is 'lds'
-d = 10
-n = 3
+d = 2
+n = 1
 min_eig = 0.5
 max_eig = 0.9
 
@@ -25,7 +25,7 @@ gamma = 0.9
 hidden_dims = [8]
 
 # Disturbance parameters
-disturbance_type = 'gaussian'  # 'sinusoidal', 'gaussian', or 'zero'
+disturbance_type = 'zero'  # 'sinusoidal', 'gaussian', or 'zero'
 disturbance_params = {
     'sinusoidal': {
         'noise_amplitude': 1.0,

@@ -121,7 +121,7 @@ def run_trial(
     elif config.disturbance_type == 'gaussian':
         disturbance = lambda d, dist_std, t, key: gaussian_disturbance(d=d, dist_std=disturbance_params['std'], t=t, key=key)
     elif config.disturbance_type == 'zero':
-        disturbance = lambda d, dist_std, t, key: zero_disturbance(d=d, key=key)
+        disturbance = lambda d, dist_std, t, key: zero_disturbance(d=d, dist_std=dist_std, t=t, key=key)
     else:
         raise ValueError(f"Unknown disturbance type: {config.disturbance_type}")
     
@@ -137,11 +137,11 @@ def run_trial(
 
     # Create model
     if config.model_type == 'fully_connected':
-        model = FullyConnectedModel(m=input_dim, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
+        model = FullyConnectedModel(m=input_dim+1, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
     elif config.model_type == 'sequential':
-        model = SequentialModel(m=input_dim, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
+        model = SequentialModel(m=input_dim+1, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
     elif config.model_type == 'grid':
-        model = GridModel(m=input_dim, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
+        model = GridModel(m=input_dim+1, d=config.d, k=config.k, n=config.n, hidden_dims=config.hidden_dims)
     else:
         raise ValueError(f"Unknown model type: {config.model_type}")
     
@@ -153,7 +153,7 @@ def run_trial(
     
     # Initialize model parameters and agent state
     init_key, loop_key = jax.random.split(key)
-    params = model.init(init_key, jnp.zeros((input_dim, config.d, 1)))
+    params = model.init(init_key, jnp.zeros((input_dim+1, config.d, 1)))
     opt_state = optimizer.init(params)
     
     initial_agentstate = AgentState(
@@ -166,7 +166,7 @@ def run_trial(
     )
     # if config.debug:
     #     initial_agentstate.show()
-    initial_physical_state = jnp.zeros((config.d, 1))
+    initial_physical_state = jnp.zeros((config.d, 1)).at[0].set(0.15)
 
     # Define loss function for grad and for reporting
     def loss_fn(p, dist_history, start_state):
@@ -192,14 +192,14 @@ def run_trial(
         #     jax_debug.print('agentstate.controller_t: {}', agentstate.controller_t)
         #     jax_debug.print('physical_state: {}', physical_state)
         # Get action from model
-        actions = model.apply(agentstate.params, get_features(config.m, agentstate.dist_history))
+        actions = model.apply(agentstate.params, jnp.concatenate([jnp.reshape(physical_state, (1, config.d, 1)), get_features(config.m, agentstate.dist_history)], axis=0))
         action = actions[0]
         # if config.debug:
         #     jax_debug.print('actions shape: {}', actions.shape)
         #     jax_debug.print('action: {}', action)
         # Step the environment
         key1, key2 = jax.random.split(key)
-        next_physical_state, output = step(
+        next_physical_state, output, _ = step(
             x=physical_state,
             u=action,
             sim=sim,

@@ -209,14 +209,14 @@ def main():
     key = jax.random.PRNGKey(config.seed)
 
     # Create simulation and cost functions
-    # sim = functools.partial(pendulum_sim, max_torque=config.max_torque, m=config.m, l=config.l, g=config.g, dt=config.dt)
-    key, A_B_key = jax.random.split(key)
-    A, B = create_random_system(A_B_key, config.d, config.n, config.min_eig, config.max_eig)
-    key, Q_R_key = jax.random.split(key)
-    Q, R = create_random_cost_matrices(Q_R_key, config.d, config.n)
-    sim = functools.partial(lds_sim, A=A, B=B)
-    output_map = functools.partial(lds_output, C=jnp.eye(config.d))  # Identity output map
-    cost_fn = functools.partial(quadratic_cost_evaluate, Q=Q, R=R)
+    sim = functools.partial(pendulum_sim, max_torque=config.max_torque, m=config.m, l=config.l, g=config.g, dt=config.dt)
+    # key, A_B_key = jax.random.split(key)
+    # A, B = create_random_system(A_B_key, config.d, config.n, config.min_eig, config.max_eig)
+    # key, Q_R_key = jax.random.split(key)
+    # Q, R = create_random_cost_matrices(Q_R_key, config.d, config.n)
+    # sim = functools.partial(lds_sim, A=A, B=B)
+    # output_map = functools.partial(lds_output, C=jnp.eye(config.d))  # Identity output map
+    # cost_fn = functools.partial(quadratic_cost_evaluate, Q=Q, R=R)
     # Create disturbance
     disturbance_params = config.disturbance_params[config.disturbance_type]
     if config.disturbance_type == 'sinusoidal':
@@ -224,11 +224,11 @@ def main():
     elif config.disturbance_type == 'gaussian':
         disturbance = lambda d, dist_std, t, key: gaussian_disturbance(d=d, dist_std=disturbance_params['std'], t=t, key=key)
     elif config.disturbance_type == 'zero':
-        disturbance = lambda d, dist_std, t, key: zero_disturbance(d=d, key=key)
+        disturbance = lambda d, dist_std, t, key: zero_disturbance(d=d, dist_std=dist_std, t=t, key=key)
     else:
         raise ValueError(f"Unknown disturbance type: {config.disturbance_type}")
-    # output_map = pendulum_output
-    # cost_fn = pendulum_cost_evaluate
+    output_map = pendulum_output
+    cost_fn = pendulum_cost_evaluate
 
     # Create optimizer
     optimizer = optax.chain(
