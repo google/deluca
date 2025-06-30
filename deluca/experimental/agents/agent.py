@@ -45,14 +45,16 @@ def policy_loss(
     get_features: Callable[[int, jnp.ndarray], jnp.ndarray],
     debug: bool = False,
 ) -> jnp.ndarray:
-    def evolve(state: jnp.ndarray, offset: int) -> Tuple[jnp.ndarray, int]:
+    def evolve(carry: Tuple[jnp.ndarray, float], offset: int) -> Tuple[jnp.ndarray, int]:
+        state, total_cost = carry
         slice = get_features(offset, dist_history)
         actions = apply_fn(params, jnp.concatenate([jnp.reshape(state, (1, d, 1)), slice], axis=0))
+        cost = cost_fn(state, actions[0])
         next_state = sim(state, actions[0]) + dist_history[-m + offset]
         # if debug:
         #     jax_debug.print('offset: {}, slice: {}, dist to add: {}', offset, slice, dist_history[-m + offset])
-        return next_state, None
-    final_state, _ = jax.lax.scan(evolve, start_state, jnp.arange(m-1))
+        return (next_state, total_cost+cost), None
+    (final_state, total_cost_evolve), _ = jax.lax.scan(evolve, (start_state, 0.0), jnp.arange(m-1))
     final_slice = get_features(m-1, dist_history)
     final_actions = apply_fn(params, jnp.concatenate([jnp.reshape(final_state, (1, d, 1)), final_slice], axis=0))
     # if debug:
@@ -65,7 +67,7 @@ def policy_loss(
         # if debug:
         #     jax_debug.print('state: {}, action: {}, dist: {}, next_state: {}', state, action, dist, next_state)
         return (next_state, total_cost+cost, jnp.zeros_like(dist)), None
-    (_, total_cost, _), _ = jax.lax.scan(collect_cost, (final_state, 0.0, dist_history[-1]), final_actions)
+    (_, total_cost, _), _ = jax.lax.scan(collect_cost, (final_state, total_cost_evolve, dist_history[-1]), final_actions)
     return total_cost
 
 

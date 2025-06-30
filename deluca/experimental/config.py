@@ -17,7 +17,7 @@ dt = 0.02
 # Model parameters
 model_type = 'fully_connected'  # 'fully_connected' or 'sequential' or 'grid'
 algorithm_type = 'gpc' # 'gpc' or 'sfc'
-m = 20
+m = 200
 k = 5 # Action horizon, must be <= m for GPC, and == h for SFC
 # For SFC
 h = 4
@@ -41,7 +41,7 @@ disturbance_params = {
 # Training parameters
 learning_rate = 1e-3
 R_M = 1.0
-num_steps = 1000
+num_steps = 5000
 gradient_updates_per_step = 100
 window_length = 100
 
