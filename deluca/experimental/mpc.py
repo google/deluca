@@ -268,7 +268,17 @@ def main():
     states.block_until_ready()
     print("--- MPC trials completed ---")
 
+    # Create arrays subdirectory if it doesn't exist
+    arrays_dir = os.path.join(results_dir, 'arrays')
+    os.makedirs(arrays_dir, exist_ok=True)
 
+    # Save losses and states data
+    losses_path = os.path.join(arrays_dir, "mpc_losses.npy")
+    states_path = os.path.join(arrays_dir, "mpc_states.npy")
+    jnp.save(losses_path, losses)
+    jnp.save(states_path, states)
+    print(f"MPC losses data saved to {losses_path}")
+    print(f"MPC states data saved to {states_path}")
 
     # --- Process and Plot Results ---
     mean_losses = jnp.mean(losses, axis=0)
@@ -294,30 +304,30 @@ def main():
     plt.savefig(filepath)
     print(f"Plot saved to {filepath}")
 
-    # # --- Plot State Trajectories ---
-    # mean_states = jnp.mean(states, axis=0)
+    # --- Plot State Trajectories ---
+    mean_states = jnp.mean(states, axis=0)
 
-    # fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
     
-    # # Theta plot
-    # ax1.plot(mean_states[:, 0, 0], label="Mean Theta", color="blue")
-    # ax1.set_ylabel('Theta (rad)')
-    # ax1.set_title("Pendulum State Over Time")
-    # ax1.legend()
-    # ax1.grid(True)
+    # Theta plot
+    ax1.plot(mean_states[:, 0, 0], label="Mean Theta", color="blue")
+    ax1.set_ylabel('Theta (rad)')
+    ax1.set_title("Pendulum State Over Time")
+    ax1.legend()
+    ax1.grid(True)
 
-    # # Theta_dot plot
-    # ax2.plot(mean_states[:, 1, 0], label="Mean Theta Dot", color="blue", linestyle='--')
-    # ax2.set_xlabel('Step')
-    # ax2.set_ylabel('Theta Dot (rad/s)')
-    # ax2.legend()
-    # ax2.grid(True)
+    # Theta_dot plot
+    ax2.plot(mean_states[:, 1, 0], label="Mean Theta Dot", color="blue", linestyle='--')
+    ax2.set_xlabel('Step')
+    ax2.set_ylabel('Theta Dot (rad/s)')
+    ax2.legend()
+    ax2.grid(True)
 
-    # # Save the state plot
-    # state_filename = "pendulum_state.png"
-    # state_filepath = os.path.join(results_dir, state_filename)
-    # plt.savefig(state_filepath)
-    # print(f"State plot saved to {state_filepath}")
+    # Save the state plot
+    state_filename = "pendulum_state.png"
+    state_filepath = os.path.join(results_dir, state_filename)
+    plt.savefig(state_filepath)
+    print(f"State plot saved to {state_filepath}")
 
 
 if __name__ == "__main__":

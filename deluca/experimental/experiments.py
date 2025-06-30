@@ -169,7 +169,7 @@ def run_trial(
     initial_physical_state = jnp.zeros((config.d, 1)).at[0].set(0.15)
 
     # Define loss function for grad and for reporting
-    def loss_fn(p, dist_history, start_state):
+    def loss_fn(p, dist_history, start_state, current_state):
         return policy_loss(
             apply_fn=model.apply,
             params=p,
@@ -177,6 +177,7 @@ def run_trial(
             m=config.m,
             dist_history=dist_history,
             start_state=start_state,
+            current_state=current_state,
             sim=sim,
             cost_fn=cost_fn,
             get_features=get_features,
@@ -224,16 +225,16 @@ def run_trial(
         # Update physical state for next iteration
         physical_state = next_physical_state
         # Compute loss for reporting
-        loss = loss_fn(agentstate.params, agentstate.dist_history, agentstate.state_history[0])
+        loss = loss_fn(agentstate.params, agentstate.dist_history, agentstate.state_history[0], agentstate.state_history[-1])
         
         new_carry = (agentstate, next_physical_state, key2)
-        return new_carry, loss
+        return new_carry, (loss, next_physical_state)
 
     # Run simulation with scan
     initial_carry = (initial_agentstate, initial_physical_state, loop_key)
-    (_, _, _), losses = jax.lax.scan(scan_body, initial_carry, jnp.arange(config.num_steps))
+    (_, _, _), (losses, states)= jax.lax.scan(scan_body, initial_carry, jnp.arange(config.num_steps))
     
-    return losses
+    return losses, states
 
 def main():
     parser = argparse.ArgumentParser(description='Run GPC/SFC experiments')
@@ -263,8 +264,9 @@ def main():
     jitted_vmapped_run_trial = jax.jit(vmapped_run_trial)
     
     print("Compiling and running trials... (this may take a moment)")
-    all_losses = jitted_vmapped_run_trial(trial_keys)
+    (all_losses, all_states) = jitted_vmapped_run_trial(trial_keys)
     all_losses.block_until_ready() # Wait for all computations to finish
+    all_states.block_until_ready() # Wait for all computations to finish
     print("--- All trials completed ---")
 
     # Compute mean and standard error
@@ -287,6 +289,11 @@ def main():
     print(f"Mean losses saved to {mean_path}")
     print(f"Std losses saved to {std_path}")
 
+    # Save all_states as a .npy file
+    states_path = os.path.join(arrays_dir, f"{base_name}_states.npy")
+    jnp.save(states_path, all_states)
+    print(f"States data saved to {states_path}")
+
     # Plot results
     plt.figure(figsize=(10, 6))
     plt.plot(mean_losses, label='Mean Loss')
@@ -307,6 +314,25 @@ def main():
     filepath = os.path.join(plots_dir, filename)
     plt.savefig(filepath)
     print(f"Plot saved to {filepath}")
+
+    # Plot state trajectories
+    mean_states = jnp.mean(all_states, axis=0).squeeze()
+    fig, axes = plt.subplots(config.d, 1, figsize=(10, 2 * config.d), sharex=True)
+    if config.d == 1:
+        axes = [axes]
+    for i in range(config.d):
+        axes[i].plot(mean_states[:, i], label=f'State[{i}]')
+        axes[i].set_ylabel(f'State[{i}]')
+        axes[i].grid(True)
+        axes[i].legend()
+    axes[-1].set_xlabel('Step')
+    fig.suptitle(f'{config.sim_type} {config.model_type} {config.algorithm_type} Mean State Trajectories')
+    
+    # Save the state trajectories figure
+    state_filename = f"{base_name}_states.png"
+    state_filepath = os.path.join(plots_dir, state_filename)
+    plt.savefig(state_filepath)
+    print(f"State trajectories plot saved to {state_filepath}")
 
 if __name__ == '__main__':
     main() 

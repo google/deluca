@@ -13,11 +13,11 @@ min_eig = 0.5
 max_eig = 0.9
 
 # Model parameters
-k = 25  # action horizon for MPC
+k = 5  # action horizon for MPC
 hidden_dims = [64, 64]
 
 # Disturbance parameters
-disturbance_type = 'zero'  # 'sinusoidal', 'gaussian', or 'zero'
+disturbance_type = 'gaussian'  # 'sinusoidal', 'gaussian', or 'zero'
 disturbance_params = {
     'sinusoidal': {
         'noise_amplitude': 0.1,
@@ -33,7 +33,7 @@ disturbance_params = {
 # Training parameters
 learning_rate = 1e-3
 R_M = 1.0 # For optimizer clipping
-num_steps = 500
+num_steps = 5000
 gradient_updates_per_step = 100
 
 # Experiment parameters

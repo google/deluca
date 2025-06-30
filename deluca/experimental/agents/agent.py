@@ -40,6 +40,7 @@ def policy_loss(
     m: int,
     dist_history: jnp.ndarray,
     start_state: jnp.ndarray,
+    current_state: jnp.ndarray,
     sim: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray],
     cost_fn: Callable[[jnp.ndarray, jnp.ndarray], float],
     get_features: Callable[[int, jnp.ndarray], jnp.ndarray],
@@ -91,7 +92,7 @@ def update_agentstate(
     state_history = agentstate.state_history.at[0].set(jax.lax.stop_gradient(next_state))
     state_history = jnp.roll(state_history, shift=-1, axis=0)
     
-    grads = grad_fn(agentstate.params, dist_history, state_history[0])
+    grads = grad_fn(agentstate.params, dist_history, state_history[0], state_history[-1])
     updates, new_opt_state = optimizer.update(grads, agentstate.opt_state, agentstate.params)
     new_params = optax.apply_updates(agentstate.params, updates)
     

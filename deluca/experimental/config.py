@@ -17,15 +17,15 @@ dt = 0.02
 # Model parameters
 model_type = 'fully_connected'  # 'fully_connected' or 'sequential' or 'grid'
 algorithm_type = 'gpc' # 'gpc' or 'sfc'
-m = 200
+m = 1000
 k = 5 # Action horizon, must be <= m for GPC, and == h for SFC
 # For SFC
-h = 4
+h = 20
 gamma = 0.9
-hidden_dims = [8]
+hidden_dims = [64, 64]
 
 # Disturbance parameters
-disturbance_type = 'zero'  # 'sinusoidal', 'gaussian', or 'zero'
+disturbance_type = 'gaussian'  # 'sinusoidal', 'gaussian', or 'zero'
 disturbance_params = {
     'sinusoidal': {
         'noise_amplitude': 1.0,
@@ -41,7 +41,7 @@ disturbance_params = {
 # Training parameters
 learning_rate = 1e-3
 R_M = 1.0
-num_steps = 5000
+num_steps = 2000
 gradient_updates_per_step = 100
 window_length = 100
 
