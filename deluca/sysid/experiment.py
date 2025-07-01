@@ -9,7 +9,13 @@ import optax
 # Add project root to path
 sys.path.append('../../')
 from deluca.experimental.enviornments.sim_and_output.lds import lds_sim
+from deluca.experimental.enviornments.sim_and_output.pendulum import pendulum_sim
+
 from deluca.experimental.agents.sfc import compute_filter_matrix
+from deluca.experimental.agents.mpc import MPCModel
+from deluca.experimental.enviornments.disturbances.sinusoidal import sinusoidal_disturbance
+from deluca.experimental.enviornments.disturbances.gaussian import gaussian_disturbance
+from deluca.experimental.enviornments.disturbances.zero import zero_disturbance
 
 def loss_fn(M_spectral, state, u_vector, filter_matrix):
     """
@@ -110,10 +116,14 @@ def run_offline_experiment(
     print("Training finished.")
 
     # 3. Plot and save the results
+    window_size = 100
+    windowed_loss = [sum(loss_history[i:i+window_size])/window_size 
+                    for i in range(0, len(loss_history)-window_size+1)]
+    
     plt.figure(figsize=(10, 6))
-    plt.plot(loss_history)
+    plt.plot(windowed_loss)
     plt.xlabel('Training Steps (x100)')
-    plt.ylabel('Loss')
+    plt.ylabel('Loss (100-step moving average)')
     plt.yscale('log')
     plt.title(f'Training Loss Over Time ({experiment_name})')
     plt.grid(True)
@@ -123,6 +133,114 @@ def run_offline_experiment(
     print(f"Loss plot saved to {filename}")
 
     return M_spectral_state, M_spectral_action
+
+
+def run_offline_eval(
+    key,
+    sim_fn,
+    M_spectral_state,
+    M_spectral_action,
+    experiment_name: str,
+    d_in: int,
+    d_out: int,
+    T_history: int = 100,
+    k_features: int = 24,
+    gamma: float = 0,
+    eval_steps: int = 1000,
+):
+    """
+    Evaluates the learned spectral model on a fresh trajectory without any training.
+    
+    Args:
+        key: Random key for generating test data
+        sim_fn: True system dynamics function
+        M_spectral_state: Learned spectral matrix for state dynamics
+        M_spectral_action: Learned spectral matrix for action dynamics
+        experiment_name: Name for saving plots
+        d_in: Input dimension
+        d_out: Output dimension
+        T_history: History length
+        k_features: Number of spectral features
+        gamma: Decay parameter for filter matrix
+        eval_steps: Number of evaluation steps
+    
+    Returns:
+        List of prediction losses over the evaluation trajectory
+    """
+    print(f"\n--- Starting Evaluation: {experiment_name} ---")
+    print(f"Evaluating for {eval_steps} steps...")
+    
+    # Compute filter matrix (same as used in training)
+    filter_matrix = compute_filter_matrix(m=T_history, h=k_features, gamma=gamma)
+    
+    # Initialize random starting state
+    key, subkey = jax.random.split(key)
+    state = jax.random.normal(subkey, (d_out, 1))
+    
+    # Initialize action and state history buffers
+    u_history = jnp.zeros((T_history, d_in, 1))
+    state_history = jnp.zeros((T_history, d_out, 1))
+    
+    loss_history = []
+    
+    def evolve_and_predict(carry, t):
+        state, u_history, state_history, key = carry
+        
+        # Generate random action
+        key, subkey = jax.random.split(key)
+        u = jax.random.normal(subkey, (d_in, 1))
+        
+        # Update action history
+        u_history = u_history.at[0].set(u)
+        u_history = jnp.roll(u_history, shift=-1, axis=0)
+        
+        # Update state history
+        state_history = state_history.at[0].set(state)
+        state_history = jnp.roll(state_history, shift=-1, axis=0)
+        
+        # Simulate true next state
+        next_state = sim_fn(state, u)
+        
+        # Make prediction using learned model
+        M_full_state = jnp.tensordot(filter_matrix, M_spectral_state, axes=[[1], [0]])
+        M_full_action = jnp.tensordot(filter_matrix, M_spectral_action, axes=[[1], [0]])
+        
+        y_hat_state = jnp.einsum('moi,mi1->o1', M_full_state, state_history)
+        y_hat_action = jnp.einsum('moi,mi1->o1', M_full_action, u_history)
+        y_hat = y_hat_state + y_hat_action
+        
+        # Compute prediction loss
+        loss = jnp.sum((next_state - y_hat)**2)
+        
+        new_carry = (next_state, u_history, state_history, key)
+        return new_carry, loss
+    
+    # Run evaluation using scan for efficiency
+    initial_carry = (state, u_history, state_history, key)
+    _, losses = jax.lax.scan(evolve_and_predict, initial_carry, jnp.arange(eval_steps))
+    
+    loss_history = losses.tolist()
+    
+    print(f"Evaluation finished. Mean loss: {jnp.mean(losses):.6f}")
+    
+    # 3. Plot and save the results
+    window_size = 100
+    windowed_loss = [sum(loss_history[i:i+window_size])/window_size 
+                    for i in range(0, len(loss_history)-window_size+1)]
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(windowed_loss)
+    plt.xlabel('Evaluation Steps')
+    plt.ylabel('Prediction Loss (100-step moving average)')
+    plt.yscale('log')
+    plt.title(f'Evaluation Loss Over Time ({experiment_name})')
+    plt.grid(True)
+    filename = f"spectral_sysid_{experiment_name.lower().replace(' ', '_')}_eval.png"
+    plt.savefig(filename)
+    plt.close()
+    print(f"Evaluation plot saved to {filename}")
+    
+    return loss_history
 
 
     
@@ -214,7 +332,15 @@ if __name__ == '__main__':
     key, subkey3 = jax.random.split(key)
     A = jnp.array([[0.9, 0.1], [0.1, 0.8]]) # Stable A matrix
     B = jnp.array([[1.0], [0.0]])
-    sim = lambda state, u: lds_sim(state, u, A=A, B=B)
+    # sim = lambda state, u: lds_sim(state, u, A=A, B=B)
+    
+    # Pendulum environment parameters
+    max_torque = 1.0
+    m = 1.0  # mass
+    l = 1.0  # length
+    g = 9.81
+    dt = 0.02
+    sim = lambda state, u: pendulum_sim(state, u, max_torque=max_torque, m=m, l=l, g=g, dt=dt)
 
     # run_sysid_experiment(
     #     key=subkey3,
@@ -227,7 +353,7 @@ if __name__ == '__main__':
     # ) 
     
     
-    run_offline_experiment(
+    M_spectral_state, M_spectral_action = run_offline_experiment(
         key=subkey3,
         sim_fn=sim,
         experiment_name="offline",
@@ -236,3 +362,20 @@ if __name__ == '__main__':
         T_history=M,
         k_features=K
     )
+    
+    # Evaluate the learned model on a fresh trajectory
+    key, eval_key = jax.random.split(key)
+    eval_losses = run_offline_eval(
+        key=eval_key,
+        sim_fn=sim,
+        M_spectral_state=M_spectral_state,
+        M_spectral_action=M_spectral_action,
+        experiment_name="offline_evaluation",
+        d_in=D_IN,
+        d_out=D_OUT,
+        T_history=M,
+        k_features=K,
+        eval_steps=2000
+    )
+    
+    
