@@ -13,6 +13,7 @@ from typing import Sequence, Optional
 sys.path.append('../../')
 from deluca.experimental.enviornments.sim_and_output.lds import lds_sim
 from deluca.experimental.enviornments.sim_and_output.pendulum import pendulum_sim
+from deluca.experimental.enviornments.cost_functions.pendulum_cost import pendulum_cost_evaluate
 
 from deluca.experimental.agents.sfc import compute_filter_matrix
 from deluca.experimental.agents.mpc import MPCModel
@@ -51,6 +52,34 @@ class SysIDModel(nn.Module):
         # Reshape to (d_out, 1)
         return y.reshape((self.d_out, 1))
     
+class PolicyModel(nn.Module):
+    """
+    Fully connected model that takes input of shape (d_out, 1) and outputs shape (k, d_in, 1).
+    If hidden_dims is None, it's a linear model.
+    """
+    d_out: int  # Input dimension
+    d_in: int  # Output dimension
+    k: int  # Number of actions
+    hidden_dims: Optional[Sequence[int]] = None
+    use_bias: bool = True
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        # x is of shape (d_out, 1)
+        # Flatten input to (d_out, 1)
+        x_flat = x.reshape(-1)
+        if self.hidden_dims is None:
+            # Linear layer
+            y = nn.Dense(self.k*self.d_in, use_bias=self.use_bias)(x_flat)  # output (1, d_out)
+        else:
+            # Neural network with hidden layers
+            y = x_flat
+            for hidden_dim in self.hidden_dims:
+                y = nn.Dense(hidden_dim, use_bias=self.use_bias)(y)
+                y = nn.relu(y)
+            y = nn.Dense(self.k*self.d_in, use_bias=self.use_bias)(y)  # output (1, d_out)
+        # Reshape to (k, d_in, 1)
+        return y.reshape((self.k, self.d_in, 1))
     
 def loss_fn(M_spectral, state, u_vector, filter_matrix):
     """
@@ -131,6 +160,45 @@ def create_update_step_nn_offline(model_state_apply, model_action_apply):
         return model_state_params, model_action_params, opt_state, loss
     
     return update_step_nn_offline
+
+def create_update_step_nn_wm_control(model_state_apply, model_action_apply, policy_apply):
+    """Creates a JIT-compiled update step with the model apply functions captured in closure."""
+    
+    def loss_fn_with_models(model_state_params, model_action_params, state, u_vector, state_vector, filter_matrix):
+        return loss_fn_nn_offline(model_state_params, model_action_params, state, u_vector, state_vector, filter_matrix, model_state_apply, model_action_apply)
+    
+    def loss_fn_policy(policy_params, model_state_params, model_action_params, state, u_vector, state_vector, filter_matrix):
+        actions = policy_apply(policy_params, state)
+        def collect_cost(carry, action):
+            state, total_cost, u_vector, state_vector = carry
+            next_state = model_state_apply(jax.lax.stop_gradient(model_state_params), state_vector) + model_action_apply(jax.lax.stop_gradient(model_action_params), u_vector)
+            cost = pendulum_cost_evaluate(state, action)
+            
+            # Update action history
+            u_vector = u_vector.at[0].set(action)
+            u_vector = jnp.roll(u_vector, shift=-1, axis=0)
+            
+            # Update state history
+            state_vector = state_vector.at[0].set(next_state)
+            state_vector = jnp.roll(state_vector, shift=-1, axis=0)
+            return (next_state, total_cost+cost, u_vector, state_vector), None
+        (_, total_cost, _, _), _ = jax.lax.scan(collect_cost, (state, 0.0, u_vector, state_vector), actions)
+        return total_cost
+    
+    @functools.partial(jax.jit, static_argnames=['optimizer'])
+    def update_step_nn_wm_control(model_state_params, model_action_params, policy_params, opt_state, optimizer, state, u_vector, state_vector, filter_matrix):
+        """Performs one step of gradient descent."""    
+        loss_wm, grads_wm = jax.value_and_grad(loss_fn_with_models, argnums=(0, 1))(model_state_params, model_action_params, state, u_vector, state_vector, filter_matrix)
+        updates_wm, opt_state = optimizer.update(grads_wm, opt_state, (model_state_params, model_action_params))
+        model_state_params, model_action_params = optax.apply_updates((model_state_params, model_action_params), updates_wm)
+        
+        loss_policy, grads_policy = jax.value_and_grad(loss_fn_policy, argnums=(0))(policy_params, state, u_vector, state_vector, filter_matrix)
+        updates_policy, opt_state = optimizer.update(grads_policy, opt_state, policy_params)
+        policy_params = optax.apply_updates(policy_params, updates_policy)
+        
+        return model_state_params, model_action_params, policy_params, opt_state, loss_wm, loss_policy
+    
+    return update_step_nn_wm_control
 
 def run_offline_experiment(
     key,
@@ -478,6 +546,102 @@ def run_sysid_experiment(
 
     return M_spectral
 
+def run_world_model_control_experiment(
+    key,
+    sim_fn,
+    experiment_name: str,
+    d_in: int,
+    d_out: int,
+    T_history: int = 100,
+    k_features: int = 24,
+    gamma: float = 0,
+    learning_rate: float = 1e-3,
+    training_steps: int = 20000,
+):
+    # 1. Initialize optimizer and parameters for the model we are training
+    optimizer = optax.adam(learning_rate=learning_rate)
+    filter_matrix = compute_filter_matrix(m=T_history, h=k_features, gamma=gamma)
+    
+    # key, subkey1, subkey2 = jax.random.split(key, 3)
+    # M_spectral_state = jax.random.normal(subkey1, (k_features, d_out, d_out)) * 0.1
+    # M_spectral_action = jax.random.normal(subkey2, (k_features, d_in, d_out)) * 0.1
+    
+    model_state = SysIDModel(h=k_features, d_in=d_out, d_out=d_out, hidden_dims=[16])
+    model_action = SysIDModel(h=k_features, d_in=d_in, d_out=d_out, hidden_dims=[16])
+    model_state_params = model_state.init(key, jnp.zeros((k_features, d_out, 1)))
+    model_action_params = model_action.init(key, jnp.zeros((k_features, d_in, 1)))
+    policy = PolicyModel(d_out=d_out, d_in=d_in, k=1, hidden_dims=[16])
+    policy_params = policy.init(key, jnp.zeros((d_out, 1)))
+    opt_state = optimizer.init((model_state_params, model_action_params, policy_params))
+
+    # Create the update step function with the model apply functions
+    update_step_nn_wm_control = create_update_step_nn_wm_control(model_state.apply, model_action.apply, policy.apply)
+
+    # Initialize state and history
+    key, subkey = jax.random.split(key)
+    
+    state = jax.random.normal(subkey, (d_out, 1))
+    loss_wm_history = []
+    loss_policy_history = []
+
+    print(f"\n--- Starting Experiment: {experiment_name} ---")
+    print(f"Training for {training_steps} steps...")
+    
+    def evolve_state(state, u):
+        return sim_fn(state, u), state
+    
+    for t in range(training_steps):
+        key, subkey = jax.random.split(key)
+        u_vector = policy.apply(policy_params, state)
+        final_state, state_vector = jax.lax.scan(evolve_state, state, u_vector)
+         # Perform one update step
+        model_state_params, model_action_params, policy_params, opt_state, loss_wm, loss_policy = update_step_nn_wm_control(
+            model_state_params, model_action_params, policy_params, opt_state, optimizer, final_state, u_vector, state_vector, filter_matrix
+        )
+        loss_wm_history.append(float(loss_wm))
+        loss_policy_history.append(float(loss_policy))
+        if t % 1000 == 0:
+            print(f"Step {t:5d}, Loss: {loss_wm:.6f}, Policy Loss: {loss_policy:.6f}")
+
+
+    print("Training finished.")
+
+    # 3. Plot and save the results
+    window_size = 100
+    windowed_loss_wm = [sum(loss_wm_history[i:i+window_size])/window_size 
+                    for i in range(0, len(loss_wm_history)-window_size+1)]
+    windowed_loss_policy = [sum(loss_policy_history[i:i+window_size])/window_size 
+                    for i in range(0, len(loss_policy_history)-window_size+1)]
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(windowed_loss_wm, label='World Model Loss')
+    plt.xlabel('Training Steps (x100)')
+    plt.ylabel('Loss (100-step moving average)')
+    plt.yscale('log')
+    plt.title(f'Training Loss Over Time ({experiment_name})')
+    plt.grid(True)
+    filename = f"spectral_sysid_wm_loss_{experiment_name.lower().replace(' ', '_')}.png"
+    plt.savefig(filename)
+    plt.close()
+    
+    print(f"World Model Loss plot saved to {filename}")
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(windowed_loss_policy, label='Policy Loss')
+    plt.xlabel('Training Steps (x100)')
+    plt.ylabel('Loss (100-step moving average)')
+    plt.yscale('log')
+    plt.title(f'Training Loss Over Time ({experiment_name})')
+    plt.grid(True)
+    filename = f"spectral_sysid_policy_loss_{experiment_name.lower().replace(' ', '_')}.png"
+    plt.savefig(filename)
+    plt.close()
+    
+    print(f"Policy Loss plot saved to {filename}")
+
+    return (model_state.apply, model_action.apply), (model_state_params, model_action_params)
+
+
 if __name__ == '__main__':
     # --- Configuration ---
     M = 100
@@ -514,31 +678,41 @@ if __name__ == '__main__':
     # ) 
     
     
-    (model_state_apply, model_action_apply), (model_state_params, model_action_params) = run_offline_experiment(
+    # (model_state_apply, model_action_apply), (model_state_params, model_action_params) = run_offline_experiment(
+    #     key=subkey3,
+    #     sim_fn=sim,
+    #     experiment_name="offline",
+    #     d_in=D_IN,
+    #     d_out=D_OUT,
+    #     T_history=M,
+    #     k_features=K
+    # )
+    
+    # # Evaluate the learned model on a fresh trajectory
+    # key, eval_key = jax.random.split(key)
+    # eval_losses = run_offline_eval_nn(
+    #     key=eval_key,
+    #     sim_fn=sim,
+    #     model_state_apply=model_state_apply,
+    #     model_action_apply=model_action_apply,
+    #     model_state_params=model_state_params,
+    #     model_action_params=model_action_params,
+    #     experiment_name="offline_nn_evaluation",
+    #     d_in=D_IN,
+    #     d_out=D_OUT,
+    #     T_history=M,
+    #     k_features=K,
+    #     eval_steps=2000
+    # )
+    
+    run_world_model_control_experiment(
         key=subkey3,
         sim_fn=sim,
-        experiment_name="offline",
+        experiment_name="world_model_control",
         d_in=D_IN,
         d_out=D_OUT,
         T_history=M,
         k_features=K
-    )
-    
-    # Evaluate the learned model on a fresh trajectory
-    key, eval_key = jax.random.split(key)
-    eval_losses = run_offline_eval_nn(
-        key=eval_key,
-        sim_fn=sim,
-        model_state_apply=model_state_apply,
-        model_action_apply=model_action_apply,
-        model_state_params=model_state_params,
-        model_action_params=model_action_params,
-        experiment_name="offline_nn_evaluation",
-        d_in=D_IN,
-        d_out=D_OUT,
-        T_history=M,
-        k_features=K,
-        eval_steps=2000
     )
     
     
