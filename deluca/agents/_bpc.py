@@ -82,7 +82,9 @@ class BPC(Agent):
         self.noise_history = jnp.zeros((H, self.d_state, 1))
 
         # past state and past action
-        self.state, self.action = jnp.zeros((self.d_state, 1)), jnp.zeros((self.d_action, 1))
+        self.state, self.action = jnp.zeros((self.d_state, 1)), jnp.zeros(
+            (self.d_action, 1)
+        )
 
         self.eps = generate_uniform((H, H, self.d_action, self.d_state))
         self.eps_bias = generate_uniform((H, self.d_action, 1))
@@ -129,7 +131,9 @@ class BPC(Agent):
         delta_M = self.grad(self.M, self.noise_history, cost)
         self.M -= lr * delta_M
 
-        self.eps = self.eps.at[0].set(generate_uniform((self.H, self.d_action, self.d_state)))
+        self.eps = self.eps.at[0].set(
+            generate_uniform((self.H, self.d_action, self.d_state))
+        )
         self.eps = np.roll(self.eps, -1, axis=0)
 
         self.M += self.delta * self.eps[-1]
@@ -149,4 +153,6 @@ class BPC(Agent):
         Returns:
             jnp.ndarray
         """
-        return -self.K @ state + jnp.tensordot(self.M, self.noise_history, axes=([0, 2], [0, 1]))
+        return -self.K @ state + jnp.tensordot(
+            self.M, self.noise_history, axes=([0, 2], [0, 1])
+        )

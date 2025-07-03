@@ -20,56 +20,61 @@ import jax.numpy as jnp
 
 
 class CompositeState(deluca.Obj):
-  """Combined state of two controller states."""
-  base_state: deluca.Obj
-  resid_state: deluca.Obj
+    """Combined state of two controller states."""
 
-  @property
-  def time(self):
-    return self.base_state.time
+    base_state: deluca.Obj
+    resid_state: deluca.Obj
 
-  @property
-  def steps(self):
-    return self.base_state.steps
+    @property
+    def time(self):
+        return self.base_state.time
 
-  @property
-  def dt(self):
-    return self.base_state.dt
+    @property
+    def steps(self):
+        return self.base_state.steps
+
+    @property
+    def dt(self):
+        return self.base_state.dt
 
 
 class CompositeController(core.Controller):
-  """Controller comprised of a base controller along with a residual controller.
+    """Controller comprised of a base controller along with a residual controller.
 
-  Only the residual controller is trainable.
-  """
-  base_controller: core.Controller = deluca.field(jaxed=False)
-  resid_controller: core.Controller = deluca.field(jaxed=True)
-  use_leaky_clamp: bool = deluca.field(True, jaxed=False)
-  clip: float = deluca.field(100.0, jaxed=False)
+    Only the residual controller is trainable.
+    """
 
-  def init(self, waveform=None):
-    return CompositeState.create(
-        self.base_controller.init(waveform),
-        self.resid_controller.init(waveform))
+    base_controller: core.Controller = deluca.field(jaxed=False)
+    resid_controller: core.Controller = deluca.field(jaxed=True)
+    use_leaky_clamp: bool = deluca.field(True, jaxed=False)
+    clip: float = deluca.field(100.0, jaxed=False)
 
-  @jax.jit
-  def __call__(self, controller_state: CompositeState, obs):
-    base_state, u_in_base = self.base_controller(controller_state.base_state,
-                                                 obs)
-    resid_state, u_in_resid = self.resid_controller(
-        controller_state.resid_state, obs)
+    def init(self, waveform=None):
+        return CompositeState.create(
+            self.base_controller.init(waveform), self.resid_controller.init(waveform)
+        )
 
-    u_in = u_in_base + u_in_resid
+    @jax.jit
+    def __call__(self, controller_state: CompositeState, obs):
+        base_state, u_in_base = self.base_controller(controller_state.base_state, obs)
+        resid_state, u_in_resid = self.resid_controller(
+            controller_state.resid_state, obs
+        )
 
-    # Implementing "leaky" clamp to solve the zero gradient problem
-    if self.use_leaky_clamp:
-      u_in = jax.lax.cond(u_in.squeeze() < 0.0,
-                          lambda x: x * 0.01,
-                          lambda x: x, u_in.squeeze())
-      u_in = jax.lax.cond(u_in.squeeze() > self.clip,
-                          lambda x: self.clip + x * 0.01,
-                          lambda x: x, u_in.squeeze())
-    else:
-      u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float32), self.clip).squeeze()
+        u_in = u_in_base + u_in_resid
 
-    return CompositeState.create(base_state, resid_state), u_in
+        # Implementing "leaky" clamp to solve the zero gradient problem
+        if self.use_leaky_clamp:
+            u_in = jax.lax.cond(
+                u_in.squeeze() < 0.0, lambda x: x * 0.01, lambda x: x, u_in.squeeze()
+            )
+            u_in = jax.lax.cond(
+                u_in.squeeze() > self.clip,
+                lambda x: self.clip + x * 0.01,
+                lambda x: x,
+                u_in.squeeze(),
+            )
+        else:
+            u_in = jax.lax.clamp(0.0, u_in.astype(jnp.float32), self.clip).squeeze()
+
+        return CompositeState.create(base_state, resid_state), u_in

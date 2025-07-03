@@ -36,7 +36,16 @@ def f_at_x(env, X, U, H=None):
 
 
 def rollout(
-    env, U_old, k=None, K=None, X_old=None, alpha=1.0, D=None, F=None, H=None, start_state=None,
+    env,
+    U_old,
+    k=None,
+    K=None,
+    X_old=None,
+    alpha=1.0,
+    D=None,
+    F=None,
+    H=None,
+    start_state=None,
 ):
     """
     Arg List
@@ -69,7 +78,9 @@ def rollout(
             X[h + 1], instant_cost, _, _ = env.step(U[h])
             X[h + 1] += D[h]
         else:
-            X[h + 1] = X_old[h + 1] + F[h][0] @ (X[h] - X_old[h]) + F[h][1] @ (U[h] - U_old[h])
+            X[h + 1] = (
+                X_old[h + 1] + F[h][0] @ (X[h] - X_old[h]) + F[h][1] @ (U[h] - U_old[h])
+            )
             instant_cost = env.c(X[h], U[h], h)
 
         cost += instant_cost

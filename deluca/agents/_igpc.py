@@ -23,11 +23,18 @@ from deluca.utils.planning import rollout
 # from deluca.agents._ilqr import LQR
 
 
-def counterfact_loss(E, off, W, H, M, x, t, env_sim, U_old, k, K, X_old, D, F, w_is, alpha, C):
+def counterfact_loss(
+    E, off, W, H, M, x, t, env_sim, U_old, k, K, X_old, D, F, w_is, alpha, C
+):
     y, cost = x, 0
     for h in range(H):
         u_delta = jnp.tensordot(E, W[h : h + M], axes=([0, 2], [0, 1])) + off
-        u = U_old[t + h] + alpha * k[t + h] + K[t + h] @ (y - X_old[t + h]) + C * u_delta
+        u = (
+            U_old[t + h]
+            + alpha * k[t + h]
+            + K[t + h] @ (y - X_old[t + h])
+            + C * u_delta
+        )
         cost = env_sim.c(y, u)
 
         if w_is == "de":
@@ -81,7 +88,23 @@ def rolls_by_igpc(env_true, env_sim, U_old, k, K, X_old, D, F, alpha, w_is, ref_
         W = jnp.roll(W, -1, axis=0)
         if h >= H:
             delta_E, delta_off = grad_loss(
-                E, off, W, H, M, X[h - H], h - H, env_sim, U_old, k, K, X_old, D, F, w_is, alpha, C,
+                E,
+                off,
+                W,
+                H,
+                M,
+                X[h - H],
+                h - H,
+                env_sim,
+                U_old,
+                k,
+                K,
+                X_old,
+                D,
+                F,
+                w_is,
+                alpha,
+                C,
             )
             E -= lr / h * delta_E
             off -= lr / h * delta_off
@@ -90,7 +113,17 @@ def rolls_by_igpc(env_true, env_sim, U_old, k, K, X_old, D, F, alpha, w_is, ref_
 
 
 def igpc_closed(
-    env_true, env_sim, U, T, k=None, K=None, X=None, w_is="de", lr=None, ref_alpha=1.0, log=None
+    env_true,
+    env_sim,
+    U,
+    T,
+    k=None,
+    K=None,
+    X=None,
+    w_is="de",
+    lr=None,
+    ref_alpha=1.0,
+    log=None,
 ):
     alpha, r = ref_alpha, 1
     X, U, c = rollout(env_true, U, k, K, X)
@@ -101,7 +134,9 @@ def igpc_closed(
         k, K = LQR(F, C)
         for alphaC in alpha * 1.1 * 1.1 ** (-jnp.arange(10) ** 2):
             r += 1
-            XC, UC, cC = rolls_by_igpc(env_true, env_sim, U, k, K, X, D, F, alphaC, w_is, lr)
+            XC, UC, cC = rolls_by_igpc(
+                env_true, env_sim, U, k, K, X, D, F, alphaC, w_is, lr
+            )
             if cC <= c:
                 X, U, c, alpha = XC, UC, cC, alphaC
                 print(f"(iGPC): t = {t}, r = {r}, c = {c}, alpha = {alpha}")
@@ -118,12 +153,26 @@ class IGPCInner:
         self.env_true = env_true
         self.env_sim = env_sim
 
-    def train(self, T, U_init=None, k=None, K=None, X=None, w_is="de", lr=None, ref_alpha=1.0):
+    def train(
+        self, T, U_init=None, k=None, K=None, X=None, w_is="de", lr=None, ref_alpha=1.0
+    ):
         self.log = []
         if U_init is None:
-            U_init = [jnp.zeros(self.env_true.action_dim) for _ in range(self.env_true.H)]
+            U_init = [
+                jnp.zeros(self.env_true.action_dim) for _ in range(self.env_true.H)
+            ]
         X, U, k, K, c = igpc_closed(
-            self.env_true, self.env_sim, U_init, T, k, K, X, w_is, lr, ref_alpha, self.log
+            self.env_true,
+            self.env_sim,
+            U_init,
+            T,
+            k,
+            K,
+            X,
+            w_is,
+            lr,
+            ref_alpha,
+            self.log,
         )
         return X, U, k, K, c, self.log
 
@@ -148,7 +197,9 @@ class IGPC(Agent):
         self.env_true = env_true
         self.env_sim = env_sim
         igpc_agent = IGPCInner(self.env_true, self.env_sim)
-        X, U, k, K, c, log = igpc_agent.train(train_steps, U_init, k, K, X, w_is, lr, ref_alpha)
+        X, U, k, K, c, log = igpc_agent.train(
+            train_steps, U_init, k, K, X, w_is, lr, ref_alpha
+        )
         self.U = jnp.array(U)
         self.X = jnp.array(X)
         self.k = jnp.array(k)

@@ -23,22 +23,23 @@ import jax.numpy as jnp
 
 
 class Expiratory(Controller):
-  """Expiratory."""
-  waveform: BreathWaveform = deluca.field(jaxed=False)
+    """Expiratory."""
 
-  # TODO(dsuo): Handle dataclass initialization of jax objects
-  def setup(self):
-    if self.waveform is None:
-      self.waveform = BreathWaveform.create()
+    waveform: BreathWaveform = deluca.field(jaxed=False)
 
-  @jax.jit
-  def __call__(self, state, obs, *args, **kwargs):
-    time = obs.time
-    u_out = jax.lax.cond(
-        self.waveform.is_in(time), lambda x: 0, lambda x: 1,
-        jnp.zeros_like(time))
-    new_dt = jnp.max(jnp.array([DEFAULT_DT, time - proper_time(state.time)]))
-    new_time = time
-    new_steps = state.steps + 1
-    state = state.replace(time=new_time, steps=new_steps, dt=new_dt)
-    return state, u_out
+    # TODO(dsuo): Handle dataclass initialization of jax objects
+    def setup(self):
+        if self.waveform is None:
+            self.waveform = BreathWaveform.create()
+
+    @jax.jit
+    def __call__(self, state, obs, *args, **kwargs):
+        time = obs.time
+        u_out = jax.lax.cond(
+            self.waveform.is_in(time), lambda x: 0, lambda x: 1, jnp.zeros_like(time)
+        )
+        new_dt = jnp.max(jnp.array([DEFAULT_DT, time - proper_time(state.time)]))
+        new_time = time
+        new_steps = state.steps + 1
+        state = state.replace(time=new_time, steps=new_steps, dt=new_dt)
+        return state, u_out

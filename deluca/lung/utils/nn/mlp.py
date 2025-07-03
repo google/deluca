@@ -21,22 +21,21 @@ import jax
 
 
 class MLP(nn.Module):
-  """multilayered perceptron."""
-  hidden_dim: int = 10
-  out_dim: int = 1
-  n_layers: int = 2
-  droprate: float = 0.0
-  activation_fn: Callable = nn.relu
+    """multilayered perceptron."""
 
-  @nn.compact
-  def __call__(self, x):
-    for i in range(self.n_layers - 1):
-      x = nn.Dense(
-          features=self.hidden_dim, use_bias=True, name=f"MLP_fc{i}")(
-              x)
-      x = nn.Dropout(
-          rate=self.droprate, deterministic=False)(
-              x, rng=jax.random.PRNGKey(0))
-      x = self.activation_fn(x)
-    x = nn.Dense(features=self.out_dim, use_bias=True, name=f"MLP_fc{i + 1}")(x)
-    return x.squeeze()  # squeeze for consistent shape w/ boundary model output
+    hidden_dim: int = 10
+    out_dim: int = 1
+    n_layers: int = 2
+    droprate: float = 0.0
+    activation_fn: Callable = nn.relu
+
+    @nn.compact
+    def __call__(self, x):
+        for i in range(self.n_layers - 1):
+            x = nn.Dense(features=self.hidden_dim, use_bias=True, name=f"MLP_fc{i}")(x)
+            x = nn.Dropout(rate=self.droprate, deterministic=False)(
+                x, rng=jax.random.PRNGKey(0)
+            )
+            x = self.activation_fn(x)
+        x = nn.Dense(features=self.out_dim, use_bias=True, name=f"MLP_fc{i + 1}")(x)
+        return x.squeeze()  # squeeze for consistent shape w/ boundary model output

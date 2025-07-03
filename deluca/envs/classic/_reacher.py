@@ -23,108 +23,119 @@ import jax.numpy as jnp
 
 
 class ReacherState(Obj):
-  """ReacherState.
+    """ReacherState.
 
-  Attributes:
-    arr:
-    h:
-  """
-  arr: jnp.ndarray = field(jaxed=True)
-  h: float = field(0.0, jaxed=True)
-
-  def flatten(self):
-    """flatten.
-
-    Returns:
-
-    """
-    return self.arr
-
-  # TODO(dsuo): this should be a classmethod.
-  def unflatten(self, arr):
-    """unflatten.
-
-    Args:
+    Attributes:
       arr:
-
-    Returns:
-
+      h:
     """
-    return ReacherState(arr=arr, h=self.h)
+
+    arr: jnp.ndarray = field(jaxed=True)
+    h: float = field(0.0, jaxed=True)
+
+    def flatten(self):
+        """flatten.
+
+        Returns:
+
+        """
+        return self.arr
+
+    # TODO(dsuo): this should be a classmethod.
+    def unflatten(self, arr):
+        """unflatten.
+
+        Args:
+          arr:
+
+        Returns:
+
+        """
+        return ReacherState(arr=arr, h=self.h)
 
 
 class Reacher(Env):
-  """Reacher."""
-  m1: float = field(1.0, jaxed=False)
-  m2: float = field(1.0, jaxed=False)
-  l1: float = field(1.0, jaxed=False)
-  l2: float = field(1.0, jaxed=False)
-  g: float = field(0.0, jaxed=False)
-  max_torque: float = field(1.0, jaxed=False)
-  dt: float = field(0.01, jaxed=False)
-  H: int = field(200, jaxed=False)
-  goal_coord: jnp.ndarray = field(jaxed=False)
-  state_dim: float = field(6, jaxed=False)
-  action_dim: float = field(2, jaxed=False)
+    """Reacher."""
 
-  def init(self):
-    """init.
+    m1: float = field(1.0, jaxed=False)
+    m2: float = field(1.0, jaxed=False)
+    l1: float = field(1.0, jaxed=False)
+    l2: float = field(1.0, jaxed=False)
+    g: float = field(0.0, jaxed=False)
+    max_torque: float = field(1.0, jaxed=False)
+    dt: float = field(0.01, jaxed=False)
+    H: int = field(200, jaxed=False)
+    goal_coord: jnp.ndarray = field(jaxed=False)
+    state_dim: float = field(6, jaxed=False)
+    action_dim: float = field(2, jaxed=False)
 
-    Returns:
+    def init(self):
+        """init.
 
-    """
-    initial_th = (jnp.pi / 4, jnp.pi / 2)
-    state = ReacherState(
-        arr=jnp.array([
-            *initial_th,
-            0.0,
-            0.0,
-            self.l1 * jnp.cos(initial_th[0]) +
-            self.l2 * jnp.cos(initial_th[0] + initial_th[1]) -
-            self.goal_coord[0],
-            self.l1 * jnp.sin(initial_th[0]) +
-            self.l2 * jnp.sin(initial_th[0] + initial_th[1]) -
-            self.goal_coord[1],
-        ]))
-    return state, state
+        Returns:
 
-  def setup(self):
-    if self.goal_coord is None:
-      self.goal_coord = jnp.array([0., 1.8])
+        """
+        initial_th = (jnp.pi / 4, jnp.pi / 2)
+        state = ReacherState(
+            arr=jnp.array(
+                [
+                    *initial_th,
+                    0.0,
+                    0.0,
+                    self.l1 * jnp.cos(initial_th[0])
+                    + self.l2 * jnp.cos(initial_th[0] + initial_th[1])
+                    - self.goal_coord[0],
+                    self.l1 * jnp.sin(initial_th[0])
+                    + self.l2 * jnp.sin(initial_th[0] + initial_th[1])
+                    - self.goal_coord[1],
+                ]
+            )
+        )
+        return state, state
 
-  def __call__(self, state, action):
-    """__call__.
+    def setup(self):
+        if self.goal_coord is None:
+            self.goal_coord = jnp.array([0.0, 1.8])
 
-    Args:
-      state:
-      action:
+    def __call__(self, state, action):
+        """__call__.
 
-    Returns:
+        Args:
+          state:
+          action:
 
-    """
-    m1, m2, l1, l2, g = self.m1, self.m2, self.l1, self.l2, self.g
-    th1, th2, dth1, dth2, Dx, Dy = state.arr
-    t1, t2 = action
+        Returns:
 
-    a11 = (m1 + m2) * l1**2 + m2 * l2**2 + 2 * m2 * l1 * l2 * jnp.cos(th2)
-    a12 = m2 * l2**2 + m2 * l1 * l2 * jnp.cos(th2)
-    a22 = m2 * l2**2
-    b1 = (
-        t1 + m2 * l1 * l2 * (2 * dth1 + dth2) * dth2 * jnp.sin(th2) -
-        m2 * l2 * g * jnp.sin(th1 + th2) - (m1 + m2) * l1 * g * jnp.sin(th1))
-    b2 = t2 - m2 * l1 * l2 * dth1**2 * jnp.sin(th2) - m2 * l2 * g * jnp.sin(
-        th1 + th2)
-    A, b = jnp.array([[a11, a12], [a12, a22]]), jnp.array([b1, b2])
-    ddth1, ddth2 = jnp.linalg.inv(A) @ b
+        """
+        m1, m2, l1, l2, g = self.m1, self.m2, self.l1, self.l2, self.g
+        th1, th2, dth1, dth2, Dx, Dy = state.arr
+        t1, t2 = action
 
-    th1, th2 = th1 + dth1 * self.dt, th2 + dth2 * self.dt
-    dth1, dth2 = dth1 + ddth1 * self.dt, dth2 + ddth2 * self.dt
-    Dx, Dy = (
-        l1 * jnp.cos(th1) + l2 * jnp.cos(th1 + th2) - self.goal_coord[0],
-        l1 * jnp.sin(th1) + l2 * jnp.sin(th1 + th2) - self.goal_coord[1],
-    )
+        a11 = (m1 + m2) * l1**2 + m2 * l2**2 + 2 * m2 * l1 * l2 * jnp.cos(th2)
+        a12 = m2 * l2**2 + m2 * l1 * l2 * jnp.cos(th2)
+        a22 = m2 * l2**2
+        b1 = (
+            t1
+            + m2 * l1 * l2 * (2 * dth1 + dth2) * dth2 * jnp.sin(th2)
+            - m2 * l2 * g * jnp.sin(th1 + th2)
+            - (m1 + m2) * l1 * g * jnp.sin(th1)
+        )
+        b2 = (
+            t2
+            - m2 * l1 * l2 * dth1**2 * jnp.sin(th2)
+            - m2 * l2 * g * jnp.sin(th1 + th2)
+        )
+        A, b = jnp.array([[a11, a12], [a12, a22]]), jnp.array([b1, b2])
+        ddth1, ddth2 = jnp.linalg.inv(A) @ b
 
-    arr = jnp.array([th1, th2, dth1, dth2, Dx, Dy])
-    new_state = state.replace(arr=arr, h=state.h + 1)
+        th1, th2 = th1 + dth1 * self.dt, th2 + dth2 * self.dt
+        dth1, dth2 = dth1 + ddth1 * self.dt, dth2 + ddth2 * self.dt
+        Dx, Dy = (
+            l1 * jnp.cos(th1) + l2 * jnp.cos(th1 + th2) - self.goal_coord[0],
+            l1 * jnp.sin(th1) + l2 * jnp.sin(th1 + th2) - self.goal_coord[1],
+        )
 
-    return new_state, arr
+        arr = jnp.array([th1, th2, dth1, dth2, Dx, Dy])
+        new_state = state.replace(arr=arr, h=state.h + 1)
+
+        return new_state, arr

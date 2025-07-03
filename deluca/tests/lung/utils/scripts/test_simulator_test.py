@@ -27,70 +27,85 @@ import jax.numpy as jnp
 
 class TestSimulatorTest(chex.TestCase):
 
-  def setUp(self):
-    super().setUp()
-    result = {}
-    u_in = jnp.array([1 for i in range(29)] + [0 for i in range(29)] +
-                     [1 for i in range(29)] + [0])
-    u_out = jnp.array([0 for i in range(29)] + [1 for i in range(29)] +
-                      [0 for i in range(29)] + [1])
-    pressure = jnp.array([1 for i in range(29)] + [0 for i in range(29)] +
-                         [1 for i in range(29)] + [0])
-    target = jnp.array([1 for i in range(29)] + [0 for i in range(29)] +
-                       [1 for i in range(29)] + [0])
-    u_in = jnp.abs(u_in + jax.random.normal(jax.random.PRNGKey(0), (88,)))
-    u_out = jnp.abs(u_out + jax.random.normal(jax.random.PRNGKey(1), (88,)))
-    pressure = jnp.abs(pressure +
-                       jax.random.normal(jax.random.PRNGKey(2), (88,)))
-    target = jnp.abs(target + jax.random.normal(jax.random.PRNGKey(3), (88,)))
+    def setUp(self):
+        super().setUp()
+        result = {}
+        u_in = jnp.array(
+            [1 for i in range(29)]
+            + [0 for i in range(29)]
+            + [1 for i in range(29)]
+            + [0]
+        )
+        u_out = jnp.array(
+            [0 for i in range(29)]
+            + [1 for i in range(29)]
+            + [0 for i in range(29)]
+            + [1]
+        )
+        pressure = jnp.array(
+            [1 for i in range(29)]
+            + [0 for i in range(29)]
+            + [1 for i in range(29)]
+            + [0]
+        )
+        target = jnp.array(
+            [1 for i in range(29)]
+            + [0 for i in range(29)]
+            + [1 for i in range(29)]
+            + [0]
+        )
+        u_in = jnp.abs(u_in + jax.random.normal(jax.random.PRNGKey(0), (88,)))
+        u_out = jnp.abs(u_out + jax.random.normal(jax.random.PRNGKey(1), (88,)))
+        pressure = jnp.abs(pressure + jax.random.normal(jax.random.PRNGKey(2), (88,)))
+        target = jnp.abs(target + jax.random.normal(jax.random.PRNGKey(3), (88,)))
 
-    timeseries = {
-        'timestamp': jnp.ndarray([0.03 * i for i in range(88)]),
-        'pressure': pressure,
-        'flow': jnp.ndarray([0 for i in range(88)]),
-        'target': target,
-        'u_in': u_in,
-        'u_out': u_out
-    }
-    result['timeseries'] = timeseries
-    paths = [result for i in range(10)]
-    self.dataset = BreathDataset.from_paths(paths, clip=(0, None))
+        timeseries = {
+            "timestamp": jnp.ndarray([0.03 * i for i in range(88)]),
+            "pressure": pressure,
+            "flow": jnp.ndarray([0 for i in range(88)]),
+            "target": target,
+            "u_in": u_in,
+            "u_out": u_out,
+        }
+        result["timeseries"] = timeseries
+        paths = [result for i in range(10)]
+        self.dataset = BreathDataset.from_paths(paths, clip=(0, None))
 
-    params = None
-    u_window = 5
-    p_window = 3
-    num_boundary_models = 0
-    boundary_out_dim = 1
-    boundary_hidden_dim = 100
-    reset_scaled_peep = get_initial_pressure(self.dataset, 'train')
-    default_model_name = 'MLP'
-    default_model_parameters = {
-        'hidden_dim': 10,
-        'out_dim': 1,
-        'n_layers': 4,
-        'droprate': 0.0,
-        'activation_fn': nn.relu
-    }
-    self.sim = LearnedLung.create(
-        params=params,
-        u_window=u_window,
-        p_window=p_window,
-        u_normalizer=self.dataset.u_normalizer,
-        p_normalizer=self.dataset.p_normalizer,
-        default_model_name=default_model_name,
-        default_model_parameters=default_model_parameters,
-        num_boundary_models=num_boundary_models,
-        boundary_out_dim=boundary_out_dim,
-        boundary_hidden_dim=boundary_hidden_dim,
-        reset_normalized_peep=reset_scaled_peep,
-    )
+        params = None
+        u_window = 5
+        p_window = 3
+        num_boundary_models = 0
+        boundary_out_dim = 1
+        boundary_hidden_dim = 100
+        reset_scaled_peep = get_initial_pressure(self.dataset, "train")
+        default_model_name = "MLP"
+        default_model_parameters = {
+            "hidden_dim": 10,
+            "out_dim": 1,
+            "n_layers": 4,
+            "droprate": 0.0,
+            "activation_fn": nn.relu,
+        }
+        self.sim = LearnedLung.create(
+            params=params,
+            u_window=u_window,
+            p_window=p_window,
+            u_normalizer=self.dataset.u_normalizer,
+            p_normalizer=self.dataset.p_normalizer,
+            default_model_name=default_model_name,
+            default_model_parameters=default_model_parameters,
+            num_boundary_models=num_boundary_models,
+            boundary_out_dim=boundary_out_dim,
+            boundary_hidden_dim=boundary_hidden_dim,
+            reset_normalized_peep=reset_scaled_peep,
+        )
 
-  # compute open loop score
-  def test_test_simulator(self):
-    open_loop_summary = test_simulator(self.sim, self.dataset)
-    score = open_loop_summary['mae'].mean()
-    self.assertTrue(jnp.allclose(float(score), 0.82767105))
+    # compute open loop score
+    def test_test_simulator(self):
+        open_loop_summary = test_simulator(self.sim, self.dataset)
+        score = open_loop_summary["mae"].mean()
+        self.assertTrue(jnp.allclose(float(score), 0.82767105))
 
 
-if __name__ == '__main__':
-  absltest.main()
+if __name__ == "__main__":
+    absltest.main()

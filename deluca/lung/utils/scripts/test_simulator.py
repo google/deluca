@@ -23,28 +23,27 @@ import jax.numpy as jnp
 
 
 def rollout(model, data):
-  """rollout over data."""
-  test_u_ins, test_pressures = data
-  t = len(test_u_ins)
-  controller = Predestined.create(u_ins=test_u_ins)
-  run_data = run_controller_scan(
-      controller, T=t, abort=70, use_tqdm=False, env=model)
-  analyzer = Analyzer(run_data)
-  preds = analyzer.pressure
-  truth = test_pressures
-  loss = jnp.abs(preds - truth).mean()
-  return loss
+    """rollout over data."""
+    test_u_ins, test_pressures = data
+    t = len(test_u_ins)
+    controller = Predestined.create(u_ins=test_u_ins)
+    run_data = run_controller_scan(controller, T=t, abort=70, use_tqdm=False, env=model)
+    analyzer = Analyzer(run_data)
+    preds = analyzer.pressure
+    truth = test_pressures
+    loss = jnp.abs(preds - truth).mean()
+    return loss
 
 
 def test_simulator(sim, dataset, key="test"):
-  """open loop test using vmap."""
-  # run u_ins, get pressures, check with true trajectory
+    """open loop test using vmap."""
+    # run u_ins, get pressures, check with true trajectory
 
-  if isinstance(dataset, str):
-    dataset = pickle.load(open(dataset, "rb"))
+    if isinstance(dataset, str):
+        dataset = pickle.load(open(dataset, "rb"))
 
-  test_summary = {}
-  x_test, y_test = dataset.data[key]
-  score = map_rollout_over_batch(sim, (x_test, y_test), rollout)
-  test_summary["mae"] = score
-  return test_summary
+    test_summary = {}
+    x_test, y_test = dataset.data[key]
+    score = map_rollout_over_batch(sim, (x_test, y_test), rollout)
+    test_summary["mae"] = score
+    return test_summary

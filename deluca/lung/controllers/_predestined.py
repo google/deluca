@@ -23,17 +23,18 @@ import jax.numpy as jnp
 
 
 class Predestined(Controller):
-  """predestined controller."""
-  time: float = deluca.field(jaxed=False)
-  steps: int = deluca.field(jaxed=False)
-  dt: float = deluca.field(jaxed=False)
-  u_ins: jnp.ndarray = deluca.field(jaxed=False)
+    """predestined controller."""
 
-  def __call__(self, state, obs, *args, **kwargs):
-    action = jax.lax.dynamic_slice(self.u_ins, (state.steps.astype(int),), (1,))
-    time = obs.time
-    new_dt = jnp.max(jnp.array([DEFAULT_DT, time - proper_time(state.time)]))
-    new_time = time
-    new_steps = state.steps + 1
-    state = state.replace(time=new_time, steps=new_steps, dt=new_dt)
-    return state, action
+    time: float = deluca.field(jaxed=False)
+    steps: int = deluca.field(jaxed=False)
+    dt: float = deluca.field(jaxed=False)
+    u_ins: jnp.ndarray = deluca.field(jaxed=False)
+
+    def __call__(self, state, obs, *args, **kwargs):
+        action = jax.lax.dynamic_slice(self.u_ins, (state.steps.astype(int),), (1,))
+        time = obs.time
+        new_dt = jnp.max(jnp.array([DEFAULT_DT, time - proper_time(state.time)]))
+        new_time = time
+        new_steps = state.steps + 1
+        state = state.replace(time=new_time, steps=new_steps, dt=new_dt)
+        return state, action

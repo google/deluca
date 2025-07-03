@@ -70,22 +70,28 @@ class GRC(Agent):
         """
 
         self.A, self.B, self.C = A, B, C  # System Dynamics
-        self.d, self.n, self.p = self.A.shape[0], self.B.shape[1], self.C.shape[0] # State, Action, Observation Dimensions
-        self.cost_fn = cost_fn or quad_loss # Cost Function
+        self.d, self.n, self.p = (
+            self.A.shape[0],
+            self.B.shape[1],
+            self.C.shape[0],
+        )  # State, Action, Observation Dimensions
+        self.cost_fn = cost_fn or quad_loss  # Cost Function
 
         self.m = m
         self.R_M = R_M
         self.lr = lr
         self.decay = decay
-        
+
         self.t = 0  # Time Counter (for decaying learning rate)
-        self.M = init_scale*jax.random.normal(key, shape=(self.m, self.n, self.p))
+        self.M = init_scale * jax.random.normal(key, shape=(self.m, self.n, self.p))
 
         self.z = jnp.zeros((self.d, 1))
-        self.ynat_history = jnp.zeros((2*self.m, self.p, 1))
+        self.ynat_history = jnp.zeros((2 * self.m, self.p, 1))
 
         def last_m_ynats():
-            return jax.lax.dynamic_slice(self.ynat_history, (self.m, 0, 0), (self.m, self.p, 1))
+            return jax.lax.dynamic_slice(
+                self.ynat_history, (self.m, 0, 0), (self.m, self.p, 1)
+            )
 
         self.last_m_ynats = last_m_ynats
 
@@ -98,13 +104,14 @@ class GRC(Agent):
             def evolve(delta, h):
                 return self.A @ delta + self.B @ action(h), None
 
-            final_delta, _ = jax.lax.scan(evolve, jnp.zeros((self.d, 1)), jnp.arange(self.m))
+            final_delta, _ = jax.lax.scan(
+                evolve, jnp.zeros((self.d, 1)), jnp.arange(self.m)
+            )
             final_y = self.C @ final_delta + ynats[-1]
             return self.cost_fn(final_y, action(self.m))
 
         self.policy_loss = policy_loss
         self.grad = jit(grad(policy_loss, (0)))
-
 
     def __call__(self, y: jnp.ndarray) -> jnp.ndarray:
         """
@@ -143,7 +150,7 @@ class GRC(Agent):
 
         norm = jnp.linalg.norm(self.M)
         scale = jnp.minimum(1.0, self.R_M / (norm + 1e-8))
-        self.M = scale*self.M
+        self.M = scale * self.M
 
         self.t += 1
 
@@ -158,5 +165,5 @@ class GRC(Agent):
             jnp.ndarray
         """
         window = self.last_m_ynats()
-        contribs = jnp.einsum('mnp,mp1->mn1', self.M, window)
+        contribs = jnp.einsum("mnp,mp1->mn1", self.M, window)
         return jnp.sum(contribs, axis=0)

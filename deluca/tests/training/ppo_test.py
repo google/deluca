@@ -22,9 +22,9 @@ from deluca.tests.training.ppo_run import run_balloon_lung
 
 class PpoTest(chex.TestCase):
 
-  def test_will_it_run(self):
-    run_balloon_lung()
+    def test_will_it_run(self):
+        run_balloon_lung()
 
 
-if __name__ == '__main__':
-  absltest.main()
+if __name__ == "__main__":
+    absltest.main()

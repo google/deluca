@@ -33,7 +33,7 @@ class LQG(Agent):
         Q: jnp.ndarray = None,
         R: jnp.ndarray = None,
         W: jnp.ndarray = None,
-        V: jnp.ndarray = None
+        V: jnp.ndarray = None,
     ) -> None:
         """
         Description: Initialize the dynamics of the model.
@@ -49,20 +49,34 @@ class LQG(Agent):
         """
 
         self.A, self.B, self.C = A, B, C  # System Dynamics
-        self.d, self.n, self.p = self.A.shape[0], self.B.shape[1], self.C.shape[0] # State, Action, Observation Dimensions
+        self.d, self.n, self.p = (
+            self.A.shape[0],
+            self.B.shape[1],
+            self.C.shape[0],
+        )  # State, Action, Observation Dimensions
 
         if Q is None:
-          Q = jax.numpy.identity(self.d)
+            Q = jax.numpy.identity(self.d)
         if R is None:
-          R = jax.numpy.identity(self.n)
+            R = jax.numpy.identity(self.n)
         if W is None:
-          W = jax.numpy.identity(self.d)
+            W = jax.numpy.identity(self.d)
         if V is None:
-          V = jax.numpy.identity(self.p)
+            V = jax.numpy.identity(self.p)
 
-        self.P = jnp.array(solve_discrete_are(np.asarray(A), np.asarray(B), np.asarray(Q), np.asarray(R)))
-        self.K = jnp.linalg.inv(self.B.T @ self.P @ self.B + R) @ (self.B.T @ self.P @ self.A)
-        Sigma = jnp.array(solve_discrete_are(np.asarray(A).T, np.asarray(C).T, np.asarray(W), np.asarray(V)))
+        self.P = jnp.array(
+            solve_discrete_are(
+                np.asarray(A), np.asarray(B), np.asarray(Q), np.asarray(R)
+            )
+        )
+        self.K = jnp.linalg.inv(self.B.T @ self.P @ self.B + R) @ (
+            self.B.T @ self.P @ self.A
+        )
+        Sigma = jnp.array(
+            solve_discrete_are(
+                np.asarray(A).T, np.asarray(C).T, np.asarray(W), np.asarray(V)
+            )
+        )
         self.L = Sigma @ C.T @ jnp.linalg.inv(C @ Sigma @ C.T + V)
 
         self.x_hat = jnp.zeros((self.d, 1))
@@ -83,6 +97,5 @@ class LQG(Agent):
         self.x_hat = self.A @ self.x_hat + self.B @ u + self.L @ residual
         return u
 
-
     def update(self, y: jnp.ndarray, u: jnp.ndarray) -> None:
-      return None
+        return None

@@ -51,7 +51,6 @@ class BraxEnv(Env):
 
     def setup(self):
         """setup."""
-        
 
     def init(self, rng: jax.Array):
         """init.
@@ -92,10 +91,10 @@ class BraxEnv(Env):
             self.states.append(state.pipeline_state)
 
         return state, state.obs
-    
+
     @property
     def action_size(self) -> int:
-      return self.env.action_size
+        return self.env.action_size
 
     def render(self):
         """render.

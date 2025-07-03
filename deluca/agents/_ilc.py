@@ -22,7 +22,9 @@ from deluca.utils.planning import rollout
 # from deluca.agents._ilqr import LQR
 
 
-def iLC_closed(env_true, env_sim, U, T, k=None, K=None, X=None, ref_alpha=1.0, log=None):
+def iLC_closed(
+    env_true, env_sim, U, T, k=None, K=None, X=None, ref_alpha=1.0, log=None
+):
     alpha, r = ref_alpha, 1
     X, U, c = rollout(env_true, U, k, K, X)
     print("initial cost:" + str(c))
@@ -51,7 +53,9 @@ class ILCInner:
     def train(self, T, U_init=None, k=None, K=None, X=None, ref_alpha=1.0):
         self.log = []
         if U_init is None:
-            U_init = [jnp.zeros(self.env_true.action_dim) for _ in range(self.env_true.H)]
+            U_init = [
+                jnp.zeros(self.env_true.action_dim) for _ in range(self.env_true.H)
+            ]
         X, U, k, K, c = iLC_closed(
             self.env_true, self.env_sim, U_init, T, k, K, X, ref_alpha, self.log
         )
@@ -63,7 +67,15 @@ class ILC(Agent):
         self.reset()
 
     def train(
-        self, env_true, env_sim, train_steps, U_init=None, k=None, K=None, X=None, ref_alpha=1.0
+        self,
+        env_true,
+        env_sim,
+        train_steps,
+        U_init=None,
+        k=None,
+        K=None,
+        X=None,
+        ref_alpha=1.0,
     ):
         self.env_true = env_true
         self.env_sim = env_sim

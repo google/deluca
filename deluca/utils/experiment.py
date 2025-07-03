@@ -47,7 +47,7 @@ ctx._force_start_method("spawn")
 
 def runner(args: Tuple[Callable, Dict[Any, Any]]) -> Any:
     """Runner function for process pool
-    
+
     Args:
         args: A pair where the first element is the function to run and
         the second element is a dictionary of kwargs
@@ -114,7 +114,7 @@ class experiment:
 
     def _validate(self):
         """Validate an experiment's argnames and arglists against _func's arguments
-        
+
         Notes:
             * Each decorated call to @experiment must specify arguments disjoint with
             every other call to @experiment (i.e., can't have a call "a,b,c" and "b")
@@ -128,7 +128,9 @@ class experiment:
         for spec in self._spec:
             for argname in spec[0]:
                 if argname in argnames:
-                    raise ValueError("Found duplicate argname {} in {}".format(argname, spec))
+                    raise ValueError(
+                        "Found duplicate argname {} in {}".format(argname, spec)
+                    )
                 argnames.add(argname)
 
         func_fullargspec = inspect.getfullargspec(self._func)
@@ -167,7 +169,9 @@ class experiment:
     def _generate_arglists(self):
         """Create a generator to pass function and arguments to a multiprocessing pool"""
 
-        argnames = [item for sublist in [spec[0] for spec in self._spec] for item in sublist]
+        argnames = [
+            item for sublist in [spec[0] for spec in self._spec] for item in sublist
+        ]
         arglists = product(*[spec[1] for spec in self._spec])
         for arglist in arglists:
             flattened = []

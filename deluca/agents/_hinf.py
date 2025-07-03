@@ -113,7 +113,9 @@ def solve_hinf(
         gamma = 0.5 * (gamma_high + gamma_low)
         M[T] = Q
         for t in range(T - 1, -1, -1):
-            Lambda = jnp.eye(n) + (B @ inv(R) @ B.T - gamma ** (-2) * jnp.eye(n)) @ M[t + 1]
+            Lambda = (
+                jnp.eye(n) + (B @ inv(R) @ B.T - gamma ** (-2) * jnp.eye(n)) @ M[t + 1]
+            )
             M[t] = Q + A.T @ M[t + 1] @ inv(Lambda) @ A
 
             K[t] = -inv(R) @ B.T @ M[t + 1] @ inv(Lambda) @ A
@@ -131,10 +133,10 @@ def is_psd(P: jnp.ndarray, gamma: Real) -> bool:
     Description: check if a matrix is positive semi-definite
 
     Args:
-        P (jnp.ndarray): 
-        gamma (Real): 
+        P (jnp.ndarray):
+        gamma (Real):
 
     Returns:
-        bool: 
+        bool:
     """
-    return jnp.all(jnp.linalg.eigvals(P) < gamma ** 2 + 1e-5)
+    return jnp.all(jnp.linalg.eigvals(P) < gamma**2 + 1e-5)

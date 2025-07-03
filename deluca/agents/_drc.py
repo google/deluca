@@ -22,7 +22,8 @@ from jax import grad
 from jax import jit
 
 from deluca.core import Agent
-#from deluca.utils import Random
+
+# from deluca.utils import Random
 
 
 def quad_loss(x: jnp.ndarray, u: jnp.ndarray) -> Real:
@@ -75,9 +76,9 @@ class DRC(Agent):
 
         cost_fn = cost_fn or quad_loss
 
-#        self.random = Random(seed)
+        #        self.random = Random(seed)
         key = jax.random.PRNGKey(0)
-  
+
         d_state, d_action = B.shape  # State & Action Dimensions
 
         C = jnp.identity(d_state) if C is None else C

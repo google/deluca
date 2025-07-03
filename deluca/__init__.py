@@ -29,11 +29,11 @@ __version__ = "0.0.17"
 
 __all__ = [
     "Agent",
-    "AgentState", 
+    "AgentState",
     "Disturbance",
     "Env",
     "Obj",
     "field",
     "load",
     "save",
-] 
+]
