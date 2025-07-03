@@ -13,50 +13,86 @@
 # limitations under the License.
 
 """Brax implementation of a pendulum."""
-import brax
+from brax.envs.base import PipelineEnv, State
+from brax.io import mjcf
+import jax
+import jax.numpy as jp
 
 from deluca.envs._brax import BraxEnv
 
 
-class Pendulum2D(BraxEnv):
-  """Example here:
+class Pendulum2D(PipelineEnv):
+    """2D Pendulum environment using Brax PipelineEnv."""
 
-  https://colab.sandbox.google.com/drive/1iBumRjVMfsIjnGrzsmOvGypSjWsdsupC
-  """
+    XML_CONFIG = """
+<mujoco model="pendulum2d">
+  <option timestep="0.01" />
+  <worldbody>
+    <body name="anchor" pos="0 0 0">
+      <geom type="capsule" size="0.5 0.5" mass="1" />
+      <joint type="hinge" name="joint1" axis="0 1 0" pos="0 0 -2.5" range="-180 180" stiffness="10000" damping="20" />
+      <body name="middle" pos="0 0 -2.5">
+        <geom type="capsule" size="0.5 1" mass="1" />
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="joint1" joint="joint1" gear="1" />
+  </actuator>
+</mujoco>
+"""
 
-  def setup(self):
-    """setup."""
-    pendulum = brax.Config(dt=0.01, substeps=100)
+    @classmethod
+    def create(cls):
+        env = BraxEnv.from_env(cls())
+        env.unfreeze()
+        return env
 
-    # start with a frozen anchor at the root of the pendulum
-    anchor = pendulum.bodies.add(name='anchor', mass=1.0)
-    anchor.frozen.all = True
-    anchor.inertia.x, anchor.inertia.y, anchor.inertia.z = 1, 1, 1
+    def __init__(self, backend="generalized", **kwargs):
+        """Initialize the Pendulum2D environment."""
+        sys = mjcf.loads(self.XML_CONFIG)
+        super().__init__(sys=sys, backend=backend, **kwargs)
 
-    ball = pendulum.bodies.add(name='ball', mass=1)
-    ball.inertia.x, ball.inertia.y, ball.inertia.z = 1, 1, 1
-    cap = ball.colliders.add().capsule
-    cap.radius, cap.length = 0.5, 1
+    def reset(self, rng: jax.Array) -> State:
+        """Resets the environment to an initial state."""
+        _, rng1, rng2 = jax.random.split(rng, 3)
 
-    # now add a middle and bottom ball to the pendulum
-    pendulum.bodies.append(ball)
-    pendulum.bodies[1].name = 'middle'
+        q = self.sys.init_q + jax.random.uniform(
+            rng1, (self.sys.q_size(),), minval=-0.01, maxval=0.01
+        )
+        qd = jax.random.normal(rng2, (self.sys.qd_size(),)) * 0.01
+        pipeline_state = self.pipeline_init(q, qd)
 
-    # connect anchor to middle
-    joint = pendulum.joints.add(
-        name='joint1',
-        parent='anchor',
-        child='middle',
-        stiffness=10000,
-        angular_damping=20)
-    joint.angle_limit.add(min=-180, max=180)
-    joint.child_offset.z = -2.5
-    joint.rotation.z = 90
+        obs = self._get_obs(pipeline_state)
+        reward, done = jp.zeros(2)
+        metrics = {}
 
-    # gravity is -9.8 m/s^2 in z dimension
-    pendulum.gravity.z = -9.8
+        return State(pipeline_state, obs, reward, done, metrics)
 
-    # ignore collisions
-    pendulum.collide_include.add()
+    def step(self, state: State, action: jax.Array) -> State:
+        """Run one timestep of the environment's dynamics."""
+        pipeline_state = self.pipeline_step(state.pipeline_state, action)
 
-    self.sys = brax.System(pendulum)
+        obs = self._get_obs(pipeline_state)
+        # Simple reward: negative distance from upright position
+        angle = pipeline_state.q[0]  # Assuming first joint is the pendulum angle
+        reward = -jp.abs(angle)  # Reward for being close to 0 (upright)
+        done = jp.float32(0)  # No termination condition for now
+
+        return state.replace(
+            pipeline_state=pipeline_state, obs=obs, reward=reward, done=done
+        )
+
+    @property
+    def action_size(self):
+        return 1
+
+    def _get_obs(self, pipeline_state) -> jax.Array:
+        """Observe pendulum state."""
+        return jp.concatenate(
+            [
+                jp.sin(pipeline_state.q),  # sin of angle
+                jp.cos(pipeline_state.q),  # cos of angle
+                jp.clip(pipeline_state.qd, -10, 10),  # angular velocity
+            ]
+        )

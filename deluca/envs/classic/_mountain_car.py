@@ -31,59 +31,68 @@ import jax.numpy as jnp
 
 
 class MountainCar(Env):
-  """MountainCar."""
-  key: jnp.ndarray = field(jaxed=False)
-  goal_velocity: float = field(0.0, jaxed=False)
-  min_action: float = field(-1.0, jaxed=False)
-  max_action: float = field(1.0, jaxed=False)
-  min_position: float = field(-1.2, jaxed=False)
-  max_position: float = field(0.6, jaxed=False)
-  max_speed: float = field(0.07, jaxed=False)
-  goal_position: float = field(0.5, jaxed=False)
-  power = 0.0015
+    """MountainCar."""
 
-  low_state: jnp.ndarray = field(jaxed=False)
-  high_state: jnp.ndarray = field(jaxed=False)
+    key: jnp.ndarray = field(jaxed=False)
+    goal_velocity: float = field(0.0, jaxed=False)
+    min_action: float = field(-1.0, jaxed=False)
+    max_action: float = field(1.0, jaxed=False)
+    min_position: float = field(-1.2, jaxed=False)
+    max_position: float = field(0.6, jaxed=False)
+    max_speed: float = field(0.07, jaxed=False)
+    goal_position: float = field(0.5, jaxed=False)
+    power = 0.0015
 
-  def setup(self):
-    """setup."""
-    self.low_state = jnp.array([self.min_position, -self.max_speed])
-    self.high_state = jnp.array([self.max_position, self.max_speed])
-    if self.key is None:
-      self.key = jax.random.PRNGKey(0)
+    low_state: jnp.ndarray = field(jaxed=False)
+    high_state: jnp.ndarray = field(jaxed=False)
 
-  def init(self):
-    """init.
+    def setup(self):
+        """setup."""
+        self.low_state = jnp.array([self.min_position, -self.max_speed])
+        self.high_state = jnp.array([self.max_position, self.max_speed])
+        if self.key is None:
+            self.key = jax.random.PRNGKey(0)
 
-    Returns:
+    def init(self):
+        """init.
 
-    """
-    state = jnp.array(
-        [jax.random.uniform(self.key, min_val=-0.6, maxval=0.4), 0])
-    return state, state
+        Returns:
 
-  def __call__(self, state, action):
-    """__call__.
+        """
+        state = jnp.array([jax.random.uniform(self.key, minval=-0.6, maxval=0.4), 0])
+        return state, state
 
-    Args:
-      state:
-      action:
+    def __call__(self, state, action):
+        """__call__.
 
-    Returns:
+        Args:
+          state:
+          action:
 
-    """
-    position, velocity = state
+        Returns:
 
-    force = jnp.minimum(jnp.maximum(action, self.min_action), self.max_action)
+        """
+        position, velocity = state
 
-    velocity += force * self.power - 0.0025 * jnp.cos(3 * position)
-    velocity = jnp.clip(velocity, -self.max_speed, self.max_speed)
+        force = jnp.minimum(jnp.maximum(action, self.min_action), self.max_action)
 
-    position += velocity
-    position = jnp.clip(position, self.min_position, self.max_position)
-    reset_velocity = (position == self.min_position) & (velocity < 0)
-    velocity = jax.lax.cond(reset_velocity[0], velocity, lambda x: jnp.zeros(
-        (1,)), velocity, lambda x: x)
-    new_state = jnp.reshape(jnp.array([position, velocity]), (2,))
+        velocity += force * self.power - 0.0025 * jnp.cos(3 * position)
+        velocity = jnp.clip(velocity, -self.max_speed, self.max_speed)
 
-    return new_state, new_state
+        position += velocity
+        position = jnp.clip(position, self.min_position, self.max_position)
+        reset_velocity = (position == self.min_position) & (velocity < 0)
+        velocity = jax.lax.cond(
+            reset_velocity[0],
+            velocity,
+            lambda x: jnp.zeros((1,)),
+            velocity,
+            lambda x: x,
+        )
+        new_state = jnp.reshape(jnp.array([position, velocity]), (2,))
+
+        return new_state, new_state
+
+    @property
+    def action_size(self) -> int:
+        return 1

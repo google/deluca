@@ -98,6 +98,10 @@ class Acrobot(Env):
             new_state[3],
         ]),
     )
+  
+  @property
+  def action_size(self) -> int:
+    return 1
 
   def _dsdt(self, augmented_state, t):
     m1 = self.LINK_MASS_1

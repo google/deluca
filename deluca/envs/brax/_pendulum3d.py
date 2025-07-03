@@ -13,70 +13,36 @@
 # limitations under the License.
 
 """Brax implementation of a pendulum."""
-import brax
-
+from brax.io import mjcf
 from deluca.envs._brax import BraxEnv
 
 
 class Pendulum3D(BraxEnv):
-  """Example here:
-  https://colab.sandbox.google.com/drive/1rlIZUTFc5B2R_mYT7Ukf4Y4Q3-BGQDrN
-  """
+    """3D Pendulum environment using Brax."""
 
-  def setup(self):
-    """setup."""
-    pendulum = brax.Config(dt=0.01, substeps=100)
+    XML_CONFIG = """
+<mujoco model="pendulum3d">
+    <option timestep="0.01" />
+    <worldbody>
+    <body name="anchor" pos="0 0 0">
+    <geom type="capsule" size="0.5 0.5" mass="1" />
+    <joint type="ball" name="joint1" pos="0 0 0" range="-180 180" stiffness="10000" damping="0" />
+    <body name="rod" pos="-2.5 0 0">
+        <geom type="capsule" size="0.1 5" mass="1" euler="0 90 0" />
+        <joint type="ball" name="joint2" pos="2.5 0 -2.5" range="-180 180" stiffness="10000" damping="0" />
+        <body name="pen" pos="2.5 0 -5">
+        <geom type="capsule" size="0.1 5" mass="1" />
+        </body>
+    </body>
+    </body>
+    </worldbody>
+    <actuator>
+    <motor name="joint1" joint="joint1" gear="1" />
+    <motor name="joint2" joint="joint2" gear="1" />
+    </actuator>
+</mujoco>
+"""
 
-    rod_length = 5
-    rod_radius = 0.1
-    pen_length = 5
-    pen_radius = 0.1
-
-    # start with a frozen anchor at the root of the pendulum
-    anchor = pendulum.bodies.add(name='anchor', mass=1.0)
-    anchor.frozen.all = True
-    anchor.inertia.x, anchor.inertia.y, anchor.inertia.z = 1, 1, 1
-    anchor.colliders.add()
-    anchor.colliders[0].capsule.radius = 0.5
-    anchor.colliders[0].capsule.length = 1.0
-
-    rod = pendulum.bodies.add(name='rod', mass=1.0)
-    rod.inertia.x, rod.inertia.y, rod.inertia.z = 1, 1, 1
-    cap = rod.colliders.add().capsule
-    cap.radius, cap.length = rod_radius, rod_length
-    rod.colliders[0].rotation.y = 90
-
-    pen = pendulum.bodies.add(name='pen', mass=1.0)
-    pen.inertia.x, pen.inertia.y, pen.inertia.z = 1, 1, 1
-    cap = pen.colliders.add().capsule
-    cap.radius, cap.length = pen_radius, pen_length
-
-    joint = pendulum.joints.add(
-        name='joint1',
-        parent='anchor',
-        child='rod',
-        stiffness=10000,
-        angular_damping=0)
-    joint.angle_limit.add(min=-180, max=180)
-    joint.angle_limit.add(min=-180, max=180)
-    joint.child_offset.x = -rod_length / 2
-    joint.rotation.y = 90
-
-    joint = pendulum.joints.add(
-        name='joint2',
-        parent='rod',
-        child='pen',
-        stiffness=10000,
-        angular_damping=0)
-    joint.angle_limit.add(min=-180, max=180)
-    joint.child_offset.z = -pen_length / 2
-    joint.parent_offset.x = pen_length / 2
-    joint.rotation.x = 90
-
-    # gravity is -9.8 m/s^2 in z dimension
-    pendulum.gravity.z = -9.8
-
-    # ignore collisions
-    pendulum.collide_include.add()
-
-    self.sys = brax.System(pendulum)
+    def __init__(self):
+        """Load the XML config in the constructor."""
+        self.sys = mjcf.loads(self.XML_CONFIG)

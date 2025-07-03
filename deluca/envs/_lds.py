@@ -71,6 +71,8 @@ class LDS(Env):
     self.disturbance.init(self.d)
     self.key = key
 
+    return self.x
+
   def __call__(self, u, key = None):
     if key is None:
       self.key, subkey = jax.random.split(self.key, 2)
@@ -81,6 +83,10 @@ class LDS(Env):
     y = self.C @ self.x
     self.t += 1
     return y
+  
+  @property
+  def action_size(self) -> int:
+    return self.n
 
 
   def generate_random_trajectory(self, trajectory_length = 1000, key=None):

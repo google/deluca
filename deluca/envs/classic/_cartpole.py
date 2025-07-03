@@ -78,3 +78,7 @@ class Cartpole(Env):
                     [self.dt / (self.M * self.l)]]),)
     arr = (A @ state.arr + B @ (action + state.offset),)
     return state.replace(arr=arr, h=state.h + 1), arr
+  
+  @property
+  def action_size(self) -> int:
+    return 1

@@ -19,15 +19,17 @@ TODO(dsuo)
 
 """
 import dataclasses
-import inspect
 import os
 from abc import abstractmethod
+from typing import TypeVar, Generic, List, Tuple
 
 import pickle
 import flax
+import flax.struct
 import jax
 
-import deluca
+# Type variable for observation type
+T = TypeVar('T')
 
 
 def save(obj, path):
@@ -108,15 +110,20 @@ class Obj:
     return jax.tree_util.tree_flatten(self)[0]
 
 
-class Env(Obj):
+class Env(Obj, Generic[T]):
 
   @abstractmethod
-  def init(self):
+  def init(self, *args, **kwargs) -> T:
     """Return an initial observation"""
 
   @abstractmethod
-  def __call__(self, state, action, *args, **kwargs):
+  def __call__(self, state, action, *args, **kwargs) -> T:
     """Return an updated observation after taking input action"""
+
+  @property
+  @abstractmethod
+  def action_size(self) -> int:
+    """Return the size of the action space"""
 
 
 class AgentState(Obj):
@@ -137,18 +144,9 @@ class Agent(Obj):
 class Disturbance(Obj):
 
   @abstractmethod
-  def init(self, *args):
+  def init(self, *args, **kwargs):
     """Initializes disturbance class"""
 
   @abstractmethod
-  def __call__(self, *args, **kwargs):
+  def __call__(self, *args, **kwargs) -> jax.Array:
     """Returns the next disturbance"""
-
-
-deluca.field = field
-deluca.Obj = Obj
-deluca.Env = Env
-deluca.Agent = Agent
-deluca.save = save
-deluca.load = load
-deluca.Disturbance = Disturbance
