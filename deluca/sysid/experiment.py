@@ -171,7 +171,11 @@ def create_update_step_nn_wm_control(model_state_apply, model_action_apply, poli
         actions = policy_apply(policy_params, state)
         def collect_cost(carry, action):
             state, total_cost, u_vector, state_vector = carry
-            next_state = model_state_apply(jax.lax.stop_gradient(model_state_params), state_vector) + model_action_apply(jax.lax.stop_gradient(model_action_params), u_vector)
+            # Apply filter to get features
+            filtered_state_vector = jnp.tensordot(filter_matrix, state_vector, axes=[[0], [0]])
+            filtered_u_vector = jnp.tensordot(filter_matrix, u_vector, axes=[[0], [0]])
+            
+            next_state = model_state_apply(jax.lax.stop_gradient(model_state_params), filtered_state_vector) + model_action_apply(jax.lax.stop_gradient(model_action_params), filtered_u_vector)
             cost = pendulum_cost_evaluate(state, action)
             
             # Update action history
@@ -185,18 +189,19 @@ def create_update_step_nn_wm_control(model_state_apply, model_action_apply, poli
         (_, total_cost, _, _), _ = jax.lax.scan(collect_cost, (state, 0.0, u_vector, state_vector), actions)
         return total_cost
     
-    @functools.partial(jax.jit, static_argnames=['optimizer'])
-    def update_step_nn_wm_control(model_state_params, model_action_params, policy_params, opt_state, optimizer, state, u_vector, state_vector, filter_matrix):
+    @functools.partial(jax.jit, static_argnames=['optimizer_wm', 'optimizer_policy'])
+    def update_step_nn_wm_control(model_state_params, model_action_params, policy_params, opt_state_wm, opt_state_policy, optimizer_wm, optimizer_policy, state, final_state, u_history, state_history, u_vector, state_vector, filter_matrix):
         """Performs one step of gradient descent."""    
-        loss_wm, grads_wm = jax.value_and_grad(loss_fn_with_models, argnums=(0, 1))(model_state_params, model_action_params, state, u_vector, state_vector, filter_matrix)
-        updates_wm, opt_state = optimizer.update(grads_wm, opt_state, (model_state_params, model_action_params))
+        loss_wm, grads_wm = jax.value_and_grad(loss_fn_with_models, argnums=(0, 1))(model_state_params, model_action_params, final_state, u_vector, state_vector, filter_matrix)
+        updates_wm, opt_state_wm = optimizer_wm.update(grads_wm, opt_state_wm, (model_state_params, model_action_params))
         model_state_params, model_action_params = optax.apply_updates((model_state_params, model_action_params), updates_wm)
         
-        loss_policy, grads_policy = jax.value_and_grad(loss_fn_policy, argnums=(0))(policy_params, state, u_vector, state_vector, filter_matrix)
-        updates_policy, opt_state = optimizer.update(grads_policy, opt_state, policy_params)
+        # Re-enable policy update with proper gradient handling
+        loss_policy, grads_policy = jax.value_and_grad(loss_fn_policy, argnums=0)(policy_params, model_state_params, model_action_params, state, u_history, state_history, filter_matrix)
+        updates_policy, opt_state_policy = optimizer_policy.update(grads_policy, opt_state_policy, policy_params)
         policy_params = optax.apply_updates(policy_params, updates_policy)
         
-        return model_state_params, model_action_params, policy_params, opt_state, loss_wm, loss_policy
+        return model_state_params, model_action_params, policy_params, opt_state_wm, opt_state_policy, loss_wm, loss_policy
     
     return update_step_nn_wm_control
 
@@ -559,7 +564,8 @@ def run_world_model_control_experiment(
     training_steps: int = 20000,
 ):
     # 1. Initialize optimizer and parameters for the model we are training
-    optimizer = optax.adam(learning_rate=learning_rate)
+    optimizer_wm = optax.adam(learning_rate=learning_rate)
+    optimizer_policy = optax.adam(learning_rate=learning_rate)
     filter_matrix = compute_filter_matrix(m=T_history, h=k_features, gamma=gamma)
     
     # key, subkey1, subkey2 = jax.random.split(key, 3)
@@ -572,7 +578,8 @@ def run_world_model_control_experiment(
     model_action_params = model_action.init(key, jnp.zeros((k_features, d_in, 1)))
     policy = PolicyModel(d_out=d_out, d_in=d_in, k=1, hidden_dims=[16])
     policy_params = policy.init(key, jnp.zeros((d_out, 1)))
-    opt_state = optimizer.init((model_state_params, model_action_params, policy_params))
+    opt_state_wm = optimizer_wm.init((model_state_params, model_action_params))
+    opt_state_policy = optimizer_policy.init(policy_params)
 
     # Create the update step function with the model apply functions
     update_step_nn_wm_control = create_update_step_nn_wm_control(model_state.apply, model_action.apply, policy.apply)
@@ -581,6 +588,11 @@ def run_world_model_control_experiment(
     key, subkey = jax.random.split(key)
     
     state = jax.random.normal(subkey, (d_out, 1))
+    
+    # Initialize action and state history buffers
+    u_history = jnp.zeros((T_history, d_in, 1))
+    state_history = jnp.zeros((T_history, d_out, 1))
+    
     loss_wm_history = []
     loss_policy_history = []
 
@@ -592,12 +604,24 @@ def run_world_model_control_experiment(
     
     for t in range(training_steps):
         key, subkey = jax.random.split(key)
-        u_vector = policy.apply(policy_params, state)
+        u_vector = policy.apply(policy_params, state) # shape (k, d_in, 1)
         final_state, state_vector = jax.lax.scan(evolve_state, state, u_vector)
+        
+        temp_u_vector = jnp.concatenate([u_history, u_vector], axis=0)[-T_history:]
+        temp_state_vector = jnp.concatenate([state_history, state_vector], axis=0)[-T_history:]
          # Perform one update step
-        model_state_params, model_action_params, policy_params, opt_state, loss_wm, loss_policy = update_step_nn_wm_control(
-            model_state_params, model_action_params, policy_params, opt_state, optimizer, final_state, u_vector, state_vector, filter_matrix
+        model_state_params, model_action_params, policy_params, opt_state_wm, opt_state_policy, loss_wm, loss_policy = update_step_nn_wm_control(
+            model_state_params, model_action_params, policy_params, opt_state_wm, opt_state_policy, optimizer_wm, optimizer_policy, state, final_state, u_history, state_history, temp_u_vector, temp_state_vector, filter_matrix
         )
+        
+        u_history = u_history.at[0].set(u_vector[0])
+        u_history = jnp.roll(u_history, shift=-1, axis=0)
+        
+        next_state = sim_fn(state, u_vector[0])
+        state_history = state_history.at[0].set(state)
+        state_history = jnp.roll(state_history, shift=-1, axis=0)
+        state = next_state
+        
         loss_wm_history.append(float(loss_wm))
         loss_policy_history.append(float(loss_policy))
         if t % 1000 == 0:
