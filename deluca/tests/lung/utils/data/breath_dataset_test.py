@@ -24,48 +24,62 @@ import jax.numpy as jnp
 
 class BreathDatasetTest(chex.TestCase):
 
-  def setUp(self):
-    super().setUp()
-    result = {}
-    u_in = jnp.array([1 for i in range(29)] +
-                     [0 for i in range(29)] +
-                     [1 for i in range(29)] + [0])
-    u_out = jnp.array([0 for i in range(29)] +
-                      [1 for i in range(29)] +
-                      [0 for i in range(29)] + [1])
-    pressure = jnp.array([1 for i in range(29)] +
-                         [0 for i in range(29)] +
-                         [1 for i in range(29)] + [0])
-    target = jnp.array([1 for i in range(29)] +
-                       [0 for i in range(29)] +
-                       [1 for i in range(29)] + [0])
-    timeseries = {
-        'timestamp': jnp.ndarray([0.03 * i for i in range(88)]),
-        'pressure': pressure,
-        'flow': jnp.ndarray([0 for i in range(88)]),
-        'target': target,
-        'u_in': u_in,
-        'u_out': u_out
-    }
-    result['timeseries'] = timeseries
-    paths = [result for i in range(10)]
-    self.dataset = BreathDataset.from_paths(paths, clip=(0, None))
+    def setUp(self):
+        super().setUp()
+        result = {}
+        u_in = jnp.array(
+            [1 for i in range(29)]
+            + [0 for i in range(29)]
+            + [1 for i in range(29)]
+            + [0]
+        )
+        u_out = jnp.array(
+            [0 for i in range(29)]
+            + [1 for i in range(29)]
+            + [0 for i in range(29)]
+            + [1]
+        )
+        pressure = jnp.array(
+            [1 for i in range(29)]
+            + [0 for i in range(29)]
+            + [1 for i in range(29)]
+            + [0]
+        )
+        target = jnp.array(
+            [1 for i in range(29)]
+            + [0 for i in range(29)]
+            + [1 for i in range(29)]
+            + [0]
+        )
+        timeseries = {
+            "timestamp": jnp.ndarray([0.03 * i for i in range(88)]),
+            "pressure": pressure,
+            "flow": jnp.ndarray([0 for i in range(88)]),
+            "target": target,
+            "u_in": u_in,
+            "u_out": u_out,
+        }
+        result["timeseries"] = timeseries
+        paths = [result for i in range(10)]
+        self.dataset = BreathDataset.from_paths(paths, clip=(0, None))
 
-  def test_get_shuffled_and_batched_data(self):
-    prng_key = jax.random.PRNGKey(0)
-    batch_size = 2
-    x, y, prng_key = get_shuffled_and_batched_data(
-        self.dataset, batch_size, 'train', prng_key)
-    u_in = jnp.array([1 for i in range(29)])
-    p = jnp.array([1 for i in range(29)])
-    self.assertEqual(x.shape, (9, 2, 29))
-    self.assertEqual(y.shape, (9, 2, 29))
-    assert jnp.allclose(u_in, x[0, 0])
-    assert jnp.allclose(p, y[0, 0])
+    def test_get_shuffled_and_batched_data(self):
+        prng_key = jax.random.PRNGKey(0)
+        batch_size = 2
+        x, y, prng_key = get_shuffled_and_batched_data(
+            self.dataset, batch_size, "train", prng_key
+        )
+        u_in = jnp.array([1 for i in range(29)])
+        p = jnp.array([1 for i in range(29)])
+        self.assertEqual(x.shape, (9, 2, 29))
+        self.assertEqual(y.shape, (9, 2, 29))
+        assert jnp.allclose(u_in, x[0, 0])
+        assert jnp.allclose(p, y[0, 0])
 
-  def test_get_initial_pressure(self):
-    p_0 = get_initial_pressure(self.dataset, 'train')
-    jnp.isnan(p_0)  # nan since std = 0.
+    def test_get_initial_pressure(self):
+        p_0 = get_initial_pressure(self.dataset, "train")
+        jnp.isnan(p_0)  # nan since std = 0.
 
-if __name__ == '__main__':
-  absltest.main()
+
+if __name__ == "__main__":
+    absltest.main()

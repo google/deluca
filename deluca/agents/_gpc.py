@@ -119,7 +119,9 @@ class GPC(Agent):
                 """Evolve function"""
                 return self.A @ state + self.B @ action(state, h) + w[h + H], None
 
-            final_state, _ = jax.lax.scan(evolve, np.zeros((d_state, 1)), np.arange(H - 1))
+            final_state, _ = jax.lax.scan(
+                evolve, np.zeros((d_state, 1)), np.arange(H - 1)
+            )
             return cost_fn(final_state, action(final_state, HH - 1))
 
         self.policy_loss = policy_loss
@@ -176,4 +178,6 @@ class GPC(Agent):
         Returns:
             jnp.ndarray
         """
-        return -self.K @ state + jnp.tensordot(self.M, self.last_h_noises(), axes=([0, 2], [0, 1]))
+        return -self.K @ state + jnp.tensordot(
+            self.M, self.last_h_noises(), axes=([0, 2], [0, 1])
+        )

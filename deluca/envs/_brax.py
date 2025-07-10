@@ -14,77 +14,95 @@
 
 """Wrapper for Brax systems."""
 
+from typing import List
 import brax
-from brax import envs as brax_envs
-from brax.io import html
+from brax.envs import PipelineEnv
+from brax.base import State as BraxState
+from brax.io import html, mjcf
 from deluca.core import Env
 from deluca.core import field
 from IPython.display import HTML
 
+import jax
+
 # pylint:disable=protected-access
 
+
 class BraxEnv(Env):
-  """Brax."""
-  sys: brax.System = field(jaxed=False)
-  env: brax_envs.Env = field(jaxed=False)
+    """Brax."""
 
-  @classmethod
-  def from_env(cls, env):
-    return cls.create(env=env, sys=env.sys)
+    env: PipelineEnv = field(jaxed=False)
+    states: List[BraxState] = field(jaxed=False)
 
-  @classmethod
-  def from_name(cls, name):
-    return cls.from_env(brax_envs.create(env_name=name))
+    @classmethod
+    def from_env(cls, env: PipelineEnv):
+        lenv = cls.create(env=env)
+        lenv.unfreeze()
+        return lenv
 
-  @classmethod
-  def from_config(cls, config):
-    return cls.create(sys=brax.System(config))
+    # @classmethod
+    # def from_name(cls, name):
+    #   return cls.from_env(PipelineEnv.create(env_name=name))
 
-  def setup(self):
-    """setup."""
-    if self.sys is None:
-      raise ValueError("BraxEnv requires `sys` or `env` field specified.")
+    # NOTE Seems like Config is no longer supported, you should import from XML.
+    # @classmethod
+    # def from_config(cls, config):
+    #   return cls.create(sys=brax.System(config))
 
-  def init(self, rng=None):
-    """init.
+    def setup(self):
+        """setup."""
 
-    Returns:
+    def init(self, rng: jax.Array):
+        """init.
 
-    """
-    if self.env is None:
-      state = self.sys.default_qp()
-      obs = state if self.env is None else self.env._get_obs(
-          state, self.sys.info(state))
-      return state, obs
-    else:
-      state = self.env.reset(rng=rng)
-      return state.qp, state.obs
+        Returns:
 
-  def reset(self, rng=None):
-    return self.init(rng=rng)
+        """
+        return self.reset(rng)
 
-  def __call__(self, state, action):
-    """__call__.
+    def reset(self, rng: jax.Array):
+        """reset.
 
-    Args:
-      state:
-      action:
+        Returns:
 
-    Returns:
+        """
+        state = self.env.reset(rng=rng)
 
-    """
-    state, info = self.sys.step(state, action)
-    obs = state if self.env is None else self.env._get_obs(
-        state, info)
-    return state, obs
+        if state.pipeline_state is not None:
+            self.states = [state.pipeline_state]
+        else:
+            self.states = []
 
-  def render(self, states):
-    """render.
+        return state, state.obs
 
-    Args:
-      states:
+    def __call__(self, state, action):
+        """__call__.
 
-    Returns:
+        Args:
+          state:
+          action:
 
-    """
-    return HTML(html.render(self.sys, states))
+        Returns:
+
+        """
+        state = self.env.step(state, action)
+
+        if state.pipeline_state is not None:
+            self.states.append(state.pipeline_state)
+
+        return state, state.obs
+
+    @property
+    def action_size(self) -> int:
+        return self.env.action_size
+
+    def render(self):
+        """render.
+
+        Args:
+          states:
+
+        Returns:
+
+        """
+        return self.env.render(self.states)

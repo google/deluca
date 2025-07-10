@@ -21,14 +21,14 @@ from deluca.core import AgentState
 
 
 class Predestined(Agent):
-  time: float = deluca.field(jaxed=False)
-  steps: int = deluca.field(jaxed=False)
-  u: jnp.ndarray = deluca.field(jaxed=False)
+    time: float = deluca.field(jaxed=False)
+    steps: int = deluca.field(jaxed=False)
+    u: jnp.ndarray = deluca.field(jaxed=False)
 
-  def __call__(self, state, obs, *args, **kwargs):
-    action = jax.lax.dynamic_slice(self.u, (state.steps.astype(int),), (1,))
-    time = obs.time
-    new_time = time
-    new_steps = state.steps + 1
-    state = state.replace(time=new_time, steps=new_steps)
-    return state, action
+    def __call__(self, state, obs, *args, **kwargs):
+        action = jax.lax.dynamic_slice(self.u, (state.steps.astype(int),), (1,))
+        time = obs.time
+        new_time = time
+        new_steps = state.steps + 1
+        state = state.replace(time=new_time, steps=new_steps)
+        return state, action

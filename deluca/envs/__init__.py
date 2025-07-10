@@ -20,6 +20,9 @@ from deluca.envs.classic._mountain_car import MountainCar
 from deluca.envs.classic._pendulum import Pendulum
 from deluca.envs.classic._planar_quadrotor import PlanarQuadrotor
 from deluca.envs.classic._reacher import Reacher
+from deluca.envs.brax._pendulum2d import Pendulum2D
+
+from deluca.envs._lds import LDS, SinusDisturbance, ZeroDisturbance, GaussianDisturbance
 
 __all__ = [
     "BraxEnv",
@@ -29,4 +32,9 @@ __all__ = [
     "Pendulum",
     "PlanarQuadrotor",
     "Reacher",
+    "Pendulum2D",
+    "LDS",
+    "SinusDisturbance",
+    "ZeroDisturbance",
+    "GaussianDisturbance",
 ]

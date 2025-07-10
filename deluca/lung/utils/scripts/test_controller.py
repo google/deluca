@@ -22,25 +22,25 @@ import jax.numpy as jnp
 
 @jax.jit
 def test_controller(controller, sim, pips, peep):
-  """Test controller."""
-  # new_controller = controller.replace(use_leaky_clamp=False)
-  score = 0.0
-  horizon = 29
-  for pip in pips:
-    waveform = BreathWaveform.create(peep=peep, pip=pip)
-    result = run_controller_scan(
-        controller,
-        T=horizon,
-        abort=horizon,
-        env=sim,
-        waveform=waveform,
-        init_controller=True,
-    )
-    analyzer = Analyzer(result)
-    preds = analyzer.pressure  # shape = (29,)
-    truth = analyzer.target  # shape = (29,)
-    # print('preds.shape: %s', str(preds.shape))
-    # print('truth.shape: %s', str(truth.shape))
-    score += jnp.abs(preds - truth).mean()
-  score = score / len(pips)
-  return score
+    """Test controller."""
+    # new_controller = controller.replace(use_leaky_clamp=False)
+    score = 0.0
+    horizon = 29
+    for pip in pips:
+        waveform = BreathWaveform.create(peep=peep, pip=pip)
+        result = run_controller_scan(
+            controller,
+            T=horizon,
+            abort=horizon,
+            env=sim,
+            waveform=waveform,
+            init_controller=True,
+        )
+        analyzer = Analyzer(result)
+        preds = analyzer.pressure  # shape = (29,)
+        truth = analyzer.target  # shape = (29,)
+        # print('preds.shape: %s', str(preds.shape))
+        # print('truth.shape: %s', str(truth.shape))
+        score += jnp.abs(preds - truth).mean()
+    score = score / len(pips)
+    return score

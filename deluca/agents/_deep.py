@@ -84,7 +84,9 @@ class Deep(Agent):
         self.current_episode_length = 0
         self.current_episode_reward = 0
         self.episode_rewards = jnp.zeros(self.max_episode_length)
-        self.episode_grads = jnp.zeros((self.max_episode_length, self.W.shape[0], self.W.shape[1]))
+        self.episode_grads = jnp.zeros(
+            (self.max_episode_length, self.W.shape[0], self.W.shape[1])
+        )
 
         # dummy values for attrs, needed to inform scan of traced shapes
         self.state = jnp.zeros((self.env_state_size,))
@@ -146,14 +148,18 @@ class Deep(Agent):
         dlog = dsoftmax / self.probs[self.action]
         grad = self.state.reshape(-1, 1) @ dlog.reshape(1, -1)
 
-        self.episode_rewards = self.episode_rewards.at[self.current_episode_length].set(reward)
-        self.episode_grads = self.episode_grads.at[self.current_episode_length].set(grad)
+        self.episode_rewards = self.episode_rewards.at[self.current_episode_length].set(
+            reward
+        )
+        self.episode_grads = self.episode_grads.at[self.current_episode_length].set(
+            grad
+        )
         self.current_episode_length += 1
 
     def update(self) -> None:
         """
         Description: update weights
-        
+
         Args:
             None
 
@@ -166,7 +172,7 @@ class Deep(Agent):
             self.W += self.lr * self.episode_grads[i] + jnp.sum(
                 jnp.array(
                     [
-                        r * (self.gamma ** r)
+                        r * (self.gamma**r)
                         for r in self.episode_rewards[i : self.current_episode_length]
                     ]
                 )

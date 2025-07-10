@@ -27,7 +27,11 @@ class LQR(Agent):
     # TODO: need to address problem of LQR with jax.lax.scan
 
     def __init__(
-        self, A: jnp.ndarray, B: jnp.ndarray, Q: jnp.ndarray = None, R: jnp.ndarray = None
+        self,
+        A: jnp.ndarray,
+        B: jnp.ndarray,
+        Q: jnp.ndarray = None,
+        R: jnp.ndarray = None,
     ) -> None:
         """
         Description: Initialize the infinite-time horizon LQR.

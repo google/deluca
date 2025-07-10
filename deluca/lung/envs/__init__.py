@@ -19,5 +19,10 @@ from deluca.lung.envs._learned_lung import LearnedLung
 from deluca.lung.envs._learned_lung import LearnedLungObservation
 from deluca.lung.envs._single_comp_lung import SingleCompLung
 
-__all__ = ["LearnedLung", "LearnedLungObservation", "SingleCompLung",
-           "BalloonLung", "DelayLung"]
+__all__ = [
+    "LearnedLung",
+    "LearnedLungObservation",
+    "SingleCompLung",
+    "BalloonLung",
+    "DelayLung",
+]

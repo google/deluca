@@ -22,20 +22,19 @@ import jax.numpy as jnp
 
 class TransformTest(chex.TestCase):
 
-  def setUp(self):
-    super().setUp()
-    x = jnp.array([jnp.arange(5)])
-    self.transform = ShiftScaleTransform(x)
+    def setUp(self):
+        super().setUp()
+        x = jnp.array([jnp.arange(5)])
+        self.transform = ShiftScaleTransform(x)
 
-  def test_call(self):
-    v = jnp.array([2 for i in range(5)])
-    assert jnp.allclose(self.transform(v), jnp.zeros((5,)))
+    def test_call(self):
+        v = jnp.array([2 for i in range(5)])
+        assert jnp.allclose(self.transform(v), jnp.zeros((5,)))
 
-  def test_inverse(self):
-    v = jnp.zeros((5,))
-    assert jnp.allclose(
-        self.transform.inverse(v), jnp.array([2 for i in range(5)]))
+    def test_inverse(self):
+        v = jnp.zeros((5,))
+        assert jnp.allclose(self.transform.inverse(v), jnp.array([2 for i in range(5)]))
 
 
-if __name__ == '__main__':
-  absltest.main()
+if __name__ == "__main__":
+    absltest.main()

@@ -23,25 +23,32 @@ import jax.numpy as jnp
 
 
 class BangBang(Controller):
-  """bang bang controller."""
-  waveform: BreathWaveform = deluca.field(jaxed=False)
-  min_action: float = deluca.field(0.0, jaxed=False)
-  max_action: float = deluca.field(100.0, jaxed=False)
+    """bang bang controller."""
 
-  def setup(self):
-    if self.waveform is None:
-      self.waveform = BreathWaveform.create()
+    waveform: BreathWaveform = deluca.field(jaxed=False)
+    min_action: float = deluca.field(0.0, jaxed=False)
+    max_action: float = deluca.field(100.0, jaxed=False)
 
-  def __call__(self, controller_state, obs):
-    pressure, t = obs.predicted_pressure, obs.time
-    target = self.waveform.at(t)
-    action = jax.lax.cond(pressure < target, lambda x: self.max_action,
-                          lambda x: self.min_action, None)
-    # update controller_state
-    new_dt = jnp.max(
-        jnp.array([DEFAULT_DT, t - proper_time(controller_state.time)]))
-    new_time = t
-    new_steps = controller_state.steps + 1
-    controller_state = controller_state.replace(
-        time=new_time, steps=new_steps, dt=new_dt)
-    return controller_state, action
+    def setup(self):
+        if self.waveform is None:
+            self.waveform = BreathWaveform.create()
+
+    def __call__(self, controller_state, obs):
+        pressure, t = obs.predicted_pressure, obs.time
+        target = self.waveform.at(t)
+        action = jax.lax.cond(
+            pressure < target,
+            lambda x: self.max_action,
+            lambda x: self.min_action,
+            None,
+        )
+        # update controller_state
+        new_dt = jnp.max(
+            jnp.array([DEFAULT_DT, t - proper_time(controller_state.time)])
+        )
+        new_time = t
+        new_steps = controller_state.steps + 1
+        controller_state = controller_state.replace(
+            time=new_time, steps=new_steps, dt=new_dt
+        )
+        return controller_state, action

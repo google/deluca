@@ -17,25 +17,25 @@ import flax.linen as nn
 
 
 class ShallowBoundaryModel(nn.Module):
-  """Shallow boundary module."""
-  out_dim: int = 1
-  hidden_dim: int = 100
-  model_num: int = 0
+    """Shallow boundary module."""
 
-  @nn.compact
-  def __call__(self, x):
-    # need to flatten extra dimensions required by CNN and LSTM
-    x = x.squeeze()
-    x = nn.Dense(
-        features=self.hidden_dim,
-        use_bias=False,
-        name=f"shallow_fc{1}_model" + str(self.model_num),
-    )(
-        x)
-    x = nn.tanh(x)
-    x = nn.Dense(
-        features=self.out_dim,
-        use_bias=True,
-        name=f"shallow_fc{2}_model" + str(self.model_num))(
-            x)
-    return x.squeeze()  # squeeze for consistent shape w/ boundary model output
+    out_dim: int = 1
+    hidden_dim: int = 100
+    model_num: int = 0
+
+    @nn.compact
+    def __call__(self, x):
+        # need to flatten extra dimensions required by CNN and LSTM
+        x = x.squeeze()
+        x = nn.Dense(
+            features=self.hidden_dim,
+            use_bias=False,
+            name=f"shallow_fc{1}_model" + str(self.model_num),
+        )(x)
+        x = nn.tanh(x)
+        x = nn.Dense(
+            features=self.out_dim,
+            use_bias=True,
+            name=f"shallow_fc{2}_model" + str(self.model_num),
+        )(x)
+        return x.squeeze()  # squeeze for consistent shape w/ boundary model output
