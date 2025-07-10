@@ -65,7 +65,7 @@ class Acrobot(Env):
         if self.AVAIL_TORQUE is None:
             self.AVAIL_TORQUE = jnp.array([-1.0, 0.0, +1])
 
-    def init(self):
+    def init(self, key):
         # TODO(dsuo): to implement
         pass
 

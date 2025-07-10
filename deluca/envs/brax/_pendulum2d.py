@@ -79,7 +79,7 @@ class Pendulum2D(PipelineEnv):
         reward = -jp.abs(angle)  # Reward for being close to 0 (upright)
         done = jp.float32(0)  # No termination condition for now
 
-        return state.replace(
+        return state.replace( # type: ignore
             pipeline_state=pipeline_state, obs=obs, reward=reward, done=done
         )
 

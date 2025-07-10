@@ -53,13 +53,19 @@ class MountainCar(Env):
         if self.key is None:
             self.key = jax.random.PRNGKey(0)
 
-    def init(self):
+    def init(self, key):
         """init.
 
         Returns:
 
         """
-        state = jnp.array([jax.random.uniform(self.key, minval=-0.6, maxval=0.4), 0])
+
+        # Unfreeze
+        self.unfreeze()
+        self.key, subkey = jax.random.split(key)
+        state = jnp.array([jax.random.uniform(subkey, minval=-0.6, maxval=0.4), 0])
+        self.freeze()
+        
         return state, state
 
     def __call__(self, state, action):

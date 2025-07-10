@@ -134,7 +134,7 @@ class AgentState(Obj):
 class Agent(Obj):
 
     @abstractmethod
-    def __call__(self, state, obs, *args, **kwargs):
+    def __call__(self, state, obs, *args, **kwargs) -> jax.Array:
         """Return an updated state"""
 
     def init(self):
