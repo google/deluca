@@ -22,10 +22,11 @@ def compute_filter_matrix(T: int, h: int = 24) -> jnp.ndarray:
     i = jnp.arange(1, T + 1)
     j = jnp.arange(1, T + 1)
     I, J = jnp.meshgrid(i, j)
-    matrix = 2 / ( (I + J - 1) ** 3) - (I + J - 1))
-    
+    matrix = 2 / ( (I + J - 1) ** 3 - (I + J - 1))
+    matrix = scipy.linalg.hilbert(T)
     # Compute eigenvalues and eigenvectors
-    eigenvalues, eigenvectors = eigh(matrix)
+    matrix = np.float64(matrix)
+    eigenvalues, eigenvectors = scipy.linalg.eigh(matrix)
     
     # Sort in descending order and take top h
     idx = jnp.argsort(eigenvalues)[::-1][:h]
@@ -33,7 +34,7 @@ def compute_filter_matrix(T: int, h: int = 24) -> jnp.ndarray:
     eigenvectors = eigenvectors[:, idx]
     
     # Create filter matrix: eigenvalue^{1/4} * eigenvector
-    filter_matrix = eigenvectors * (eigenvalues ** 0.25)[None, :]
+    filter_matrix = eigenvectors * (np.abs(eigenvalues) ** 0.25)[None, :]
     
     return filter_matrix
 
