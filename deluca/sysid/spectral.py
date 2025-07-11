@@ -1,5 +1,4 @@
-"""SFC (Spectral Filter Control) implementation."""
-
+""" Specrtal learning implementation. """
 from functools import partial
 from typing import Callable
 
@@ -9,22 +8,21 @@ from jax import jit
 from jax.scipy.linalg import eigh
 
 
-def compute_filter_matrix(m: int, h: int, gamma: float) -> jnp.ndarray:
+def compute_filter_matrix(T: int, h: int = 24) -> jnp.ndarray:
     """Compute the spectral filter matrix.
     
     Args:
-        m: History length
+        T: Context length
         h: Number of eigenvectors to use
-        gamma: Decay rate between 0 and 1
-        
+                
     Returns:
-        Filter matrix of shape (h, m)
+        Filter matrix of shape (h * T)
     """
-    # Create the matrix with entries (1-gamma)^{i+j-1} / (i+j-1)
-    i = jnp.arange(1, m + 1)
-    j = jnp.arange(1, m + 1)
+    # Create the matrix with entries 2/ (i+j-1)^3 - (i+j-1)
+    i = jnp.arange(1, T + 1)
+    j = jnp.arange(1, T + 1)
     I, J = jnp.meshgrid(i, j)
-    matrix = ((1 - gamma) ** (I + J - 1)) / (I + J - 1)
+    matrix = 2 / ( (I + J - 1) ** 3) - (I + J - 1))
     
     # Compute eigenvalues and eigenvectors
     eigenvalues, eigenvectors = eigh(matrix)
