@@ -6,15 +6,15 @@ import jax
 import jax.numpy as jnp
 from flax.training import train_state
 import flax.linen as nn
-from typing import Callable, List, Tuple, Any
+from typing import Callable, List, Tuple
 import optax
 
 
-class EnvironmentPredictor(nn.Module):
+class _EnvironmentPredictor(nn.Module):
     """Neural network with two hidden layers to predict next observation from current observation and action."""
 
     hidden_size: int = 64
-    obs_dim: int = 2  # Default, will be set during initialization
+    obs_dim: int = 3
 
     @nn.compact
     def __call__(self, obs: jax.Array, action: jax.Array) -> jax.Array:
@@ -41,38 +41,27 @@ class NNLearner(Learner):
     batch_size: int = 32  # Add batch size parameter
     has_learned = False
     normalizer_functions: Tuple[
-        Callable[[jax.Array], jax.Array],
-        Callable[[jax.Array], jax.Array],
+        Callable[[jax.Array, jax.Array, jax.Array], jax.Array],
+        Callable[[jax.Array, jax.Array, jax.Array], jax.Array],
         Callable[[jax.Array], Tuple[jax.Array, jax.Array]],
-    ] = (lambda x: x, lambda x: x, lambda x: (x, x))
+    ] = (lambda x, mean, var: x, lambda x, mean, var: x, lambda x: (x, x))
 
     mean: jax.Array
     var: jax.Array
 
-    def __init__(self, env: Env, hidden_size: int = 64, learning_rate: float = 1e-3):
-        super().__init__(env)
+    def __init__(self, env: Env, hidden_size: int = 64, learning_rate: float = 1e-3, rng=jax.random.key(0)):
+        superkey, rng = jax.random.split(rng)
+        
+        super().__init__(env, superkey)
         self.hidden_size = hidden_size
         self.learning_rate = learning_rate
 
         # Get sample observation to determine dimensions
-        _, sample_obs = env.init(jax.random.key(0))
-        obs_dim = sample_obs.shape[-1] if sample_obs.ndim > 1 else sample_obs.shape[0]
+        self.model = _EnvironmentPredictor(hidden_size=hidden_size, obs_dim=self.obs_dim)
 
-        self.model = EnvironmentPredictor(hidden_size=hidden_size, obs_dim=obs_dim)
-
-        sample_action = jnp.zeros(env.action_size)
-
-        if sample_obs.ndim == 1:
-            sample_obs_batch = sample_obs[None, :]  # Add batch dimension
-            sample_action_batch = sample_action[None, :]  # Add batch dimension
-        else:
-            sample_obs_batch = sample_obs
-            sample_action_batch = sample_action
 
         # Initialize model parameters
-        self.params = self.model.init(
-            jax.random.key(0), sample_obs_batch, sample_action_batch
-        )["params"]
+        self.params = self.model.init(rng, jnp.zeros((1, self.obs_dim)), jnp.zeros((1, self.action_dim)))["params"]
 
         self.tx = optax.sgd(learning_rate, momentum=0.9)
         self.state = train_state.TrainState.create(
@@ -98,13 +87,10 @@ class NNLearner(Learner):
         state = state.apply_gradients(grads=grads)
         return state, loss
 
-    # TODO: Plot loss of each coord,
-    # TODO  normalization
-
     def learn(
         self,
         trajectories: Tuple[jax.Array, jax.Array, jax.Array],
-    ) -> Tuple[List[float], List[Tuple[float, jax.Array]]]:
+    ) -> Tuple[List[float], List[Tuple[float, List[float]]]]:
         """
         Learn from trajectories with batched training.
 
@@ -142,11 +128,12 @@ class NNLearner(Learner):
 
             task.update(text="Normalizing")
 
-            self.mean, self.var = compute_normalization(all_obs)
+            self.obs_mean, self.obs_var = compute_normalization(all_obs)
+            self.action_mean, self.action_var = compute_normalization(all_actions)
 
-            all_obs = normalize(all_obs)
-            all_actions = normalize(all_actions)
-            all_next_obs = normalize(all_next_obs)
+            all_obs = normalize(all_obs, self.obs_mean, self.obs_var)
+            all_actions = normalize(all_actions, self.action_mean, self.action_var)
+            all_next_obs = normalize(all_next_obs, self.obs_mean, self.obs_var)
 
             task.update(text="Batching")
 
@@ -199,7 +186,7 @@ class NNLearner(Learner):
                 )
                 test_loss = self.loss_fn_by_coord(test_pred, test_next_obs)
                 test_loss_mean = jnp.mean(test_loss)
-                test_losses.append((test_loss_mean, test_loss))
+                test_losses.append((test_loss_mean, test_loss.mean(axis=0)))
 
                 task.update(
                     increment=0,
@@ -210,14 +197,25 @@ class NNLearner(Learner):
 
         return train_losses, test_losses
 
-    def _test_unpacked(self, obses, actions, next_obses):
-        """
-        Test the learner on a batch of observations, actions, and next observations.
-        """
-        pred = self.state.apply_fn({"params": self.state.params}, obses, actions)
-        return float(self.loss_fn(pred, next_obses))
+    def test(self, trajectories: Tuple[jax.Array, jax.Array, jax.Array]) -> Tuple[float, List[float]]:
+        if not self.has_learned:
+            raise ValueError("NNLearner has not been trained yet")
+        
+        obs, actions, next_obs = trajectories
 
-    def predict(self, obs: jax.Array, action: jax.Array) -> jax.Array:
+        normalize, _, _ = self.normalizer_functions
+
+        obs = normalize(obs, self.obs_mean, self.obs_var)
+        actions = normalize(actions, self.action_mean, self.action_var)
+        next_obs = normalize(next_obs, self.obs_mean, self.obs_var)
+
+        pred = self.state.apply_fn({"params": self.state.params}, obs, actions)
+        error = self.loss_fn_by_coord(pred, next_obs)
+        loss_by_coord = error.mean(axis=(0, 1)) 
+
+        return loss_by_coord.mean(), loss_by_coord, (pred, next_obs) # type: ignore
+
+    def predict(self, obs: jax.Array, action: jax.Array) -> List[float]:
         """
         Predict the next observation given current observation and action.
 
@@ -229,7 +227,7 @@ class NNLearner(Learner):
             Predicted next observation
         """
         if not self.has_learned:
-            return obs
+            raise ValueError("NNLearner has not been trained yet")
 
         normalize, denormalize, _ = self.normalizer_functions
 
@@ -241,18 +239,24 @@ class NNLearner(Learner):
             obs_batch = obs
             action_batch = action
 
-        obs_batch = normalize(obs_batch)
-        action_batch = normalize(action_batch)
+        obs_batch = normalize(obs_batch, self.obs_mean, self.obs_var)
+        action_batch = normalize(action_batch, self.action_mean, self.action_var)
 
         result = self.state.apply_fn({"params": self.state.params}, obs_batch, action_batch)  # type: ignore
-        result = denormalize(result)
+        result = denormalize(result, self.obs_mean, self.obs_var)
 
         # Remove batch dimension if input was single observation
         if obs.ndim == 1:
-            return result[0]
-        return result  # type: ignore
+            return result[0] # type: ignore
+        return result # type: ignore
 
-    def default_normalizers(self):
+
+    def reset_env(self):
+        """Reset the environment to the provided state."""
+        pass
+
+    @staticmethod
+    def default_normalizers():
         """
         Returns (normalize, denormalize, compute_normalization)
         normalize: Normalize the data to have mean 0 and variance 1.
@@ -260,23 +264,23 @@ class NNLearner(Learner):
         compute_normalization: Compute the mean and variance of the data.
         """
         return (
-            self._default_normalizer,
-            self._default_denormalizer,
-            self._default_compute_normalization,
+            _default_normalizer,
+            _default_denormalizer,
+            _default_compute_normalization,
         )
 
-    @jax.jit
-    def _default_normalizer(self, x):
-        return nn.standardize(x, mean=self.mean, variance=self.var)
+@jax.jit
+def _default_normalizer(x, mean, var):
+    return nn.standardize(x, mean=mean, variance=var)
 
-    @jax.jit
-    def _default_denormalizer(self, x):
-        return x * self.var + self.mean
+@jax.jit
+def _default_denormalizer(x, mean, var):
+    std = jnp.sqrt(var)
+    return x * std + mean
 
-    @jax.jit
-    def _default_compute_normalization(self, x):
-        return (
-            jax.lax.pmean(x, axis_name="batch"),
-            jax.lax.pmean(x**2, axis_name="batch")
-            - jax.lax.pmean(x, axis_name="batch") ** 2,
-        )
+@jax.jit
+def _default_compute_normalization(x):
+    return (
+        jnp.mean(x, axis=0),
+        jnp.var(x, axis=0),
+    )

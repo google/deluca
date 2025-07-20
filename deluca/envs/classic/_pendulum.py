@@ -38,14 +38,14 @@ class Pendulum(Env):
     H: int = field(300, jaxed=False)
     goal_state: jnp.ndarray = field(jaxed=False)
 
-    def init(self):
+    def init(self, key):
         """init.
 
         Returns:
 
         """
         state = PendulumState(arr=jnp.array([0.0, 1.0, 0.0]))
-        return state, state
+        return state, state.arr
 
     def setup(self):
         if self.goal_state is None:
