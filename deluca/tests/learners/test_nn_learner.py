@@ -1,5 +1,6 @@
 # Learned Environments
 
+from deluca.envs._brax import BraxEnv
 from deluca.envs.classic._mountain_car import MountainCar
 from deluca.learners.nn_learner import NNLearner
 from deluca.envs import Pendulum2D
@@ -7,6 +8,8 @@ import jax
 import jax.numpy as jnp
 from deluca.agents import SimpleRandom
 import matplotlib.pyplot as plt
+
+from brax.envs import inverted_double_pendulum
 
 from deluca.utils.printing import Task
 
@@ -99,7 +102,7 @@ fig, axes = plt.subplots(3, 3, figsize=(15, 15))
 axes = axes.flatten()
 
 with Task("Testing NNLearner", 4) as task:
-    env = MountainCar().create()
+    env = BraxEnv.from_env(inverted_double_pendulum.InvertedDoublePendulum()) #MountainCar().create()
     agent = SimpleRandom(env.action_size, jax.random.key(18))
 
     learner = NNLearner(env)

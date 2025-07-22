@@ -1,7 +1,9 @@
 from brax.envs import PipelineEnv, inverted_double_pendulum
 from deluca.agents import SimpleRandom
 import jax
+from deluca.agents._grc import GRC
 from deluca.envs._brax import BraxEnv
+from deluca.envs._lds import LDS, SinusDisturbance
 from deluca.envs.brax._pendulum2d import Pendulum2D
 from deluca.learners import LinearLearner, SpectralLearner, NNLearner
 from deluca.core import Env
@@ -12,32 +14,7 @@ from matplotlib import colors as mcolors, cm
 import numpy as np
 from matplotlib.lines import Line2D
 
-class EnvWrapper(Env):
-    def __init__(self, env: PipelineEnv):
-        self.env = env
-
-    def init(self, rng):
-        return self.reset(rng)
-
-    def reset(self, rng):
-        state = self.env.reset(rng)
-        return state, state.obs
-
-    def __call__(self, state, action):
-        state = self.env.step(state, action)
-        return state, state.obs
-    
-    @property
-    def action_size(self):
-        return self.env.action_size
-    
-    def observation_size(self):
-        return self.env.observation_size
-    
-def test_learners(learners, m=30):
-    trajectories = nn.generate_trajectories(100, 100)
-    
-
+def test_learners(learners, trajectories, m=30):
     data = []
     with Task("Testing Learners", len(learners)) as task:
         for learner, name in learners:
@@ -182,29 +159,39 @@ def plot_learner_comparison(data, m=30, T: int | None = None):
     plt.show()
     
 
-env = Pendulum2D().create() # BraxEnv.from_env(inverted_double_pendulum.InvertedDoublePendulum())
+env = LDS()# BraxEnv.from_env(inverted_double_pendulum.InvertedDoublePendulum())
 # env.unfreeze()
-agent = SimpleRandom(env.action_size, jax.random.key(1214))
+
+d_obs = 2
+d_action = 3
+d_hidden = 10
+disturbance = SinusDisturbance()
+disturbance.init(d_hidden, 0.5)
+env.init(d_action,d_hidden, d_obs, disturbance = disturbance)
+
+agent = GRC(env.A, env.B, env.C)
 
 m = 30
+eta = 1e-3
 
-
-nn = NNLearner(env, learning_rate=1e-3)
-linear = LinearLearner(env, learning_rate=1e-3, m=m)
-spectral = SpectralLearner(env, m=m, rng=jax.random.key(2345))
+#nn = NNLearner(env, learning_rate=eta)
+linear = LinearLearner(env, learning_rate=eta, history_length=m)
+spectral = SpectralLearner(env, history_length=m, spectral_history_length=70, spectral_num_filters=m, rng=jax.random.key(2345), learning_rate=eta)
 
 
 # Doesn't matter which learner we use to generate trajectories
 
 with Task("Learner Comparison", 3) as task:
-    trajectories = nn.generate_trajectories(2000, 100) 
+    trajectories = linear.generate_trajectories(100, 300, agent=agent) 
     task.update()
     
-    nn.learn(trajectories)
+    #nn.learn(trajectories)
     linear.learn(trajectories)
     spectral.learn(trajectories)
 
     task.update()
 
-    test_learners([(nn, "NN"), (linear, "Linear"), (spectral, "Spectral")], m=m)
+    #test_learners([(nn, "NN"), (linear, "Linear"), (spectral, "Spectral")], m=m)
+    test_trajectories = linear.generate_trajectories(20, 200, agent=agent)
+    test_learners([(linear, "Linear"), (spectral, "Spectral")], test_trajectories, m=m)
 

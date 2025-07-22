@@ -16,16 +16,16 @@ class _LinearEnvironmentPredictor(nnx.Module):
     It uses a linear model to predict the next observation.
     """
 
-    def __init__(self, h: int, obs_dim: int, action_dim: int, expanded_features_dim = 0):
+    def __init__(self, history_length: int, obs_dim: int, action_dim: int, expanded_features_dim = 0):
         super().__init__()
-        self.h = h
+        self.history_length = history_length
         self.obs_dim = obs_dim
         self.action_dim = action_dim
 
         obs_dim_in = expanded_features_dim if expanded_features_dim > 0 else obs_dim
 
-        self.M = nnx.Param(jnp.zeros((h, obs_dim, obs_dim_in)))
-        self.N = nnx.Param(jnp.zeros((h, obs_dim, action_dim)))
+        self.M = nnx.Param(jnp.zeros((history_length, obs_dim, obs_dim_in)))
+        self.N = nnx.Param(jnp.zeros((history_length, obs_dim, action_dim)))
         self.b = nnx.Param(jnp.zeros(obs_dim))
 
     def __call__(self, obs_history: Array, action_history: Array) -> Array:
@@ -60,7 +60,30 @@ class _LinearEnvironmentPredictor(nnx.Module):
             y_out = y_out.squeeze(axis=0)
 
         return y_out
+    
+    def train_call(self, obs_history: Array, action_history: Array, beta):
+        original_shape = obs_history.shape
+        if len(obs_history.shape) == 2:
+            obs_history = obs_history[None, :, :]
+            action_history = action_history[None, :, :]
 
+        rho = 2 / self.history_length
+        
+        # Apply beta and rho factors to the matrices
+        M_weighted = beta * self.M * (1 - rho) ** jnp.arange(self.history_length)[:, None, None]
+        N_weighted = beta * self.N * (1 - rho) ** jnp.arange(self.history_length)[:, None, None]
+
+        # Use the same einsum approach as __call__
+        obs_contribution = jnp.einsum("ijk,bik->bj", M_weighted, obs_history)
+        action_contribution = jnp.einsum("ijk,bik->bj", N_weighted, action_history)
+        
+        y_out = obs_contribution + action_contribution + self.b[jnp.newaxis, :]
+
+        # If input was 2D, squeeze the output back to 2D
+        if len(original_shape) == 2:
+            y_out = y_out.squeeze(axis=0)
+
+        return y_out
 
 def _prepare_histories_static(
     obs: Array, actions: Array, next_obs: Array, h: int
@@ -125,14 +148,18 @@ class LinearLearner(Learner):
 
     learn_on_incomplete_histories: bool = False
     """If True, the learner will learn on histories that are shorter than h."""
+    
+    matrix_norm_target: float = 10.0
+    """Target norm for M and N matrices after each training step."""
 
     def __init__(
         self,
         env: Env,
         learning_rate: float = 1e-3,
         momentum: float = 0.9,
-        m: int = 30,
+        history_length: int = 30,
         expanded_features_dim: int = 0,
+        matrix_norm_target: float = 10.0,
     ):
         super().__init__(env)
 
@@ -141,15 +168,20 @@ class LinearLearner(Learner):
         # Allow for overriding the obs and action dimensions for spectral filtering
 
         self.model = _LinearEnvironmentPredictor(
-            h=m, obs_dim=self.obs_dim, action_dim=self.action_dim, expanded_features_dim=expanded_features_dim
+            history_length=history_length, obs_dim=self.obs_dim, action_dim=self.action_dim, expanded_features_dim=expanded_features_dim
         )
         self.optimizer = nnx.Optimizer(
-            self.model, optax.sgd(learning_rate, momentum=momentum)
+            self.model, optax.chain(
+                optax.sgd(learning_rate, momentum=momentum),
+                optax.clip_by_global_norm(10.0)
+            )
         )
-        self.m = m
 
-        self.prediction_obs_history = jnp.zeros((self.m, self.expanded_obs_dim))
-        self.prediction_action_history = jnp.zeros((self.m, self.action_dim))
+        self.history_length = history_length
+        self.matrix_norm_target = matrix_norm_target
+
+        self.prediction_obs_history = jnp.zeros((self.history_length, self.expanded_obs_dim))
+        self.prediction_action_history = jnp.zeros((self.history_length, self.action_dim))
 
         # Cache for JIT compiled functions with different shapes
         self._prepare_histories_cache = {}
@@ -157,7 +189,7 @@ class LinearLearner(Learner):
     def _get_prepare_histories_fn(self, shape_key):
         """Get or create a JIT compiled prepare_histories function for given shape."""
         if shape_key not in self._prepare_histories_cache:
-            prepare_fn = partial(_prepare_histories_static, h=self.m)
+            prepare_fn = partial(_prepare_histories_static, h=self.history_length)
             self._prepare_histories_cache[shape_key] = jax.jit(prepare_fn)
         return self._prepare_histories_cache[shape_key]
 
@@ -179,7 +211,7 @@ class LinearLearner(Learner):
             timestep_indices = jnp.tile(
                 jnp.arange(obs.shape[1]), obs.shape[0]
             )  # Flattened timestep indices
-            valid_mask = timestep_indices >= (self.m - 1)
+            valid_mask = timestep_indices >= (self.history_length - 1)
 
             # Apply mask to filter out incomplete histories
             obs_histories = obs_histories[valid_mask]
@@ -204,10 +236,10 @@ class LinearLearner(Learner):
 
         @nnx.jit
         def _learn_step(
-            model, optimizer, obs_history, action_history, next_obs
+            model: _LinearEnvironmentPredictor, optimizer, obs_history, action_history, next_obs
         ) -> Tuple[float, nnx.Module, nnx.Optimizer]:
             def loss_fn(model):
-                pred = model(obs_history, action_history)
+                pred = model.train_call(obs_history, action_history, 10.0)
 
                 loss = optax.squared_error(pred, next_obs).mean()
                 return loss
@@ -331,8 +363,8 @@ class LinearLearner(Learner):
         """
         Reset the prediction history to the provided initial obs and action.
         """
-        self.prediction_obs_history = jnp.zeros((self.m, self.obs_dim))
-        self.prediction_action_history = jnp.zeros((self.m, self.action_dim))
+        self.prediction_obs_history = jnp.zeros((self.history_length, self.obs_dim))
+        self.prediction_action_history = jnp.zeros((self.history_length, self.action_dim))
 
     def predict(self, obs: Array, action: Array) -> List[float]:
         """

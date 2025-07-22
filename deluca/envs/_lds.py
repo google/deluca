@@ -97,9 +97,9 @@ class LDS(Env):
         self.disturbance.init(self.d)
         self.key = key
 
-        return self.x
+        return self.x, self.C @ self.x
 
-    def __call__(self, u, key=None):
+    def __call__(self, _state, u, key=None):
         if key is None:
             self.key, subkey = jax.random.split(self.key, 2)
             w_t = self.disturbance(self.t, subkey)
@@ -108,11 +108,18 @@ class LDS(Env):
         self.x = self.A @ self.x + self.B @ u + w_t
         y = self.C @ self.x
         self.t += 1
-        return y
+
+        return self.x, y 
 
     @property
     def action_size(self) -> int:
         return self.n
+    
+    def reset(self, x0=None):
+        self.x = jnp.zeros((self.d, 1)) if x0 is None else jnp.array(x0)
+        self.t = 0
+
+        return self.x, self.C @ self.x
 
     def generate_random_trajectory(self, trajectory_length=1000, key=None):
         """generate_random_trajectory.
@@ -132,7 +139,7 @@ class LDS(Env):
         for i in range(trajectory_length):
             key, subkey1, subkey2 = jax.random.split(key, 3)
             rand_action = jax.random.normal(subkey1, (self.n, 1))
-            obs = self(rand_action, subkey2)
+            state, obs = self(rand_action, subkey2)
             results = results.at[i].set(
                 obs[0, 0]
             )  # first coordinate of the observation

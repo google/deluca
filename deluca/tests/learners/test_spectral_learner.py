@@ -6,7 +6,8 @@ import jax
 import jax.numpy as jnp
 from deluca.agents import SimpleRandom
 import matplotlib.pyplot as plt
-
+from deluca.envs._brax import BraxEnv
+from brax.envs import inverted_double_pendulum
 from deluca.learners.spectral_learner import SpectralLearner
 from deluca.utils.printing import Task
 
@@ -31,7 +32,7 @@ def print_test_losses(axes, test_losses, name):
     axes.legend()
 
 
-def compare_learned_env_with_true_env(env, agent, learner, name, axes, num_epochs=200):
+def compare_learned_env_with_true_env(env, agent, learner, name, axes, num_epochs=10):
     global seed
 
 
@@ -92,16 +93,16 @@ fig, axes = plt.subplots(3, 3, figsize=(15, 15))
 axes = axes.flatten()
 
 with Task("Testing Spectral Learner", 4) as task:
-    env = Pendulum2D().create()
+    env = Pendulum2D().create() #BraxEnv.from_env(inverted_double_pendulum.InvertedDoublePendulum())
     agent = SimpleRandom(env.action_size, jax.random.key(18))
 
-    learner = SpectralLearner(env, m=30, rng=jax.random.key(29))
+    learner = SpectralLearner(env, history_length=30, spectral_num_filters=24, spectral_history_length=100, rng=jax.random.key(29))
     # learner.normalizer_functions = LinearLearner.default_normalizers()
-    trajectories = learner.generate_trajectories(1250, 100)
+    trajectories = learner.generate_trajectories(10, 1000)
 
     task.update()
 
-    train_losses, test_losses = learner.learn((trajectories[0][:10], trajectories[1][:10], trajectories[2][:10]))
+    train_losses, test_losses = learner.learn((trajectories[0][:2], trajectories[1][:2], trajectories[2][:2]))
 
     # Plot losses for 10x10 trajectories
     axes[0].plot(train_losses)
@@ -117,7 +118,7 @@ with Task("Testing Spectral Learner", 4) as task:
 
     learner = LinearLearner(env)
     # learner.normalizer_functions = LinearLearner.default_normalizers()
-    train_losses, test_losses = learner.learn((trajectories[0][:101], trajectories[1][:101], trajectories[2][:101]))
+    train_losses, test_losses = learner.learn((trajectories[0][:5], trajectories[1][:5], trajectories[2][:5]))
 
     axes[1].plot(train_losses)
     axes[1].set_title("Losses for 100x100 trajectories (Spectral)")

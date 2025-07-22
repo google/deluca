@@ -120,6 +120,10 @@ class Env(Obj, Generic[T]):
     def __call__(self, state, action, *args, **kwargs) -> T:
         """Return an updated observation after taking input action"""
 
+    @abstractmethod
+    def reset(self) -> T:
+        """Reset the environment"""
+
     @property
     @abstractmethod
     def action_size(self) -> int:

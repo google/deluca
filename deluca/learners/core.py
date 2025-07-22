@@ -14,17 +14,20 @@ class Learner:
     def __init__(self, env: Env, rng=jax.random.key(0)):
         self.env = env
         self.rng, subkey = jax.random.split(rng)
-        _, sample_obs = env.init(subkey)
+        _, sample_obs = env.reset()
+
+        sample_obs = sample_obs.squeeze()
+
         self.obs_dim = (
             sample_obs.shape[-1] if sample_obs.ndim > 1 else sample_obs.shape[0]
         )
         self.action_dim = jnp.zeros(env.action_size).shape[0]
 
         # Reset the environment to the same state
-        self.env.init(subkey)
+        self.env.reset()
 
     def generate_trajectories(
-        self, N, T, key=jax.random.key(0)
+        self, N, T, agent=None, key=jax.random.key(0)
     ) -> Tuple[jax.Array, jax.Array, jax.Array]:
         """Generate N trajectories of length T. Use random policy for now."""
 
@@ -32,17 +35,23 @@ class Learner:
 
             def single_trajectory(trajectory_index, key):
                 rand_key, env_key = jax.random.split(key)
-                agent = SimpleRandom(
-                    self.env.action_size, rand_key
-                )  # TODO: agent should be passed in
-                state, obs = self.env.init(env_key)
+               
+                # Use agent from closure scope, not as a parameter
+                if agent is None:
+                    trajectory_agent = SimpleRandom(
+                        self.env.action_size, rand_key
+                    )
+                else:
+                    trajectory_agent = agent
+
+                state, obs = self.env.reset()
                 jax.debug.callback(lambda: task.update())
 
                 def step_fn(carry, _):
                     state, obs = carry
-                    action = agent(obs)
-                    state, new_obs = self.env(state, action[0])
-                    return (state, new_obs), (obs, action[0], new_obs)
+                    action = trajectory_agent(obs)
+                    state, new_obs = self.env(state, action)
+                    return (state, new_obs), (obs.squeeze(), action.squeeze(), new_obs.squeeze())
 
                 init_carry = (state, obs)
                 (final_state, final_obs), steps = jax.lax.scan(
@@ -51,8 +60,8 @@ class Learner:
 
                 return steps
 
+            # Only vectorize over trajectory_index and key
             out = jax.vmap(single_trajectory)(jnp.arange(N), jax.random.split(key, N))
-
         return out
 
     @abstractmethod
