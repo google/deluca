@@ -13,25 +13,23 @@
 # limitations under the License.
 
 """deluca.agents._grc"""
-from numbers import Real
 from typing import Callable
 
 import jax
 import jax.numpy as jnp
-import numpy as np
-from jax import grad
-from jax import jit
+
+from jax import grad, jit, Array
 
 from deluca.core import Agent
 
 
-def quad_loss(y: jnp.ndarray, u: jnp.ndarray) -> Real:
+def quad_loss(y: Array, u: Array) -> Array:
     """
     Quadratic loss.
 
     Args:
-        x (jnp.ndarray):
-        u (jnp.ndarray):
+        y (Array):
+        u (Array):
 
     Returns:
         Real
@@ -42,30 +40,30 @@ def quad_loss(y: jnp.ndarray, u: jnp.ndarray) -> Real:
 class GRC(Agent):
     def __init__(
         self,
-        A: jnp.ndarray,
-        B: jnp.ndarray,
-        C: jnp.ndarray,
-        cost_fn: Callable[[jnp.ndarray, jnp.ndarray], Real] = None,
+        A: Array,
+        B: Array,
+        C: Array,
+        rng: Array,
+        cost_fn: Callable[[Array, Array], Array] = quad_loss,
         R_M: float = 10.0,
-        key: jax.random.key = jax.random.PRNGKey(0),
         init_scale: float = 1.0,
         m: int = 10,
-        lr: Real = 0.005,
+        lr: float = 0.005,
         decay: bool = True,
     ) -> None:
         """
         Description: Initialize the dynamics of the model.
 
         Args:
-            A (jnp.ndarray): system dynamics
-            B (jnp.ndarray): system dynamics
-            C (jnp.ndarray): system dynamics
-            cost_fn (Callable[[jnp.ndarray, jnp.ndarray], Real]):
+            A (Array): system dynamics
+            B (Array): system dynamics
+            C (Array): system dynamics
+            cost_fn (Callable[[Array, Array], Array]):
             R_M (float): Diameter of the learnable parameters M
             key (jax.random.key): random key
             init_scale (float): Initial scale of the learnable parameters
             m (postive int): history of the controller
-            lr (Real): learning rate
+            lr (float): learning rate
             decay (bool): whether to decay the learning rate
         """
 
@@ -75,7 +73,7 @@ class GRC(Agent):
             self.B.shape[1],
             self.C.shape[0],
         )  # State, Action, Observation Dimensions
-        self.cost_fn = cost_fn or quad_loss  # Cost Function
+        self.cost_fn = cost_fn  # Cost Function
 
         self.m = m
         self.R_M = R_M
@@ -83,7 +81,7 @@ class GRC(Agent):
         self.decay = decay
 
         self.t = 0  # Time Counter (for decaying learning rate)
-        self.M = init_scale * jax.random.normal(key, shape=(self.m, self.n, self.p))
+        self.M = init_scale * jax.random.normal(rng, shape=(self.m, self.n, self.p))
 
         self.z = jnp.zeros((self.d, 1))
         self.ynat_history = jnp.zeros((2 * self.m, self.p, 1))
@@ -113,34 +111,37 @@ class GRC(Agent):
         self.policy_loss = policy_loss
         self.grad = jit(grad(policy_loss, (0)))
 
-    def __call__(self, y: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, obs, rng) -> Array:
         """
         Description: Return the action based on current observation and internal parameters.
 
         Args:
-            y (jnp.ndarray): current observation
+            y (Array): current observation
 
         Returns:
-           jnp.ndarray: action to take
+           Array: action to take
         """
 
-        u = self.get_action(y)
-        self.update(y, u)
+        window = self.last_m_ynats()
+        contribs = jnp.einsum("mnp,mp1->mn1", self.M, window)
+        u =  jnp.sum(contribs, axis=0)
+        
+        self.update(obs, u)
         return u
 
-    def update(self, y: jnp.ndarray, u: jnp.ndarray) -> None:
+    def update(self, obs: Array, action: Array) -> None:
         """
         Description: update agent internal state.
 
         Args:
-            y (jnp.ndarray):
-            u (jnp.ndarray):
+            obs (Array):
+            action (Array):
 
         Returns:
             None
         """
-        self.z = self.A @ self.z + self.B @ u
-        y_nat = y - self.C @ self.z
+        self.z = self.A @ self.z + self.B @ action
+        y_nat = obs - self.C @ self.z
         self.ynat_history = self.ynat_history.at[0].set(y_nat)
         self.ynat_history = jnp.roll(self.ynat_history, -1, axis=0)
 
@@ -153,17 +154,3 @@ class GRC(Agent):
         self.M = scale * self.M
 
         self.t += 1
-
-    def get_action(self, y: jnp.ndarray) -> jnp.ndarray:
-        """
-        Description: get action from observation.
-
-        Args:
-            y (jnp.ndarray):
-
-        Returns:
-            jnp.ndarray
-        """
-        window = self.last_m_ynats()
-        contribs = jnp.einsum("mnp,mp1->mn1", self.M, window)
-        return jnp.sum(contribs, axis=0)

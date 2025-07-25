@@ -73,9 +73,9 @@ class BraxEnv(Env):
         else:
             self.states = []
 
-        return state, state.obs
+        return 0, state, state.obs
 
-    def __call__(self, state, action):
+    def __call__(self, t, state, action, rng):
         """__call__.
 
         Args:
@@ -90,11 +90,15 @@ class BraxEnv(Env):
         if state.pipeline_state is not None:
             self.states.append(state.pipeline_state)
 
-        return state, state.obs
+        return t + 1, state, state.obs
 
     @property
     def action_size(self) -> int:
         return self.env.action_size
+    
+    @property
+    def observation_size(self) -> int:
+        return self.env.observation_size
 
     def render(self):
         """render.

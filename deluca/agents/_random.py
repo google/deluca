@@ -41,13 +41,12 @@ class SimpleRandom(Agent):
     This agent return a normally distributed action.
     """
 
-    def __init__(self, n: int, key=jax.random.key(0)):
+    def __init__(self, n: int, rng):
         self.n = n
-        self.key = key
+        self.rng = rng
 
-    def __call__(self, _obs: jnp.ndarray):
-        self.key, subkey = jax.random.split(self.key)
-        return jax.random.normal(subkey, shape=(self.n, 1))
+    def __call__(self, _obs: jnp.ndarray, rng):
+        return jax.random.normal(rng, shape=(self.n, 1)) * 0.1
 
     def update(self, obs: jnp.ndarray, action: jnp.ndarray) -> None:
         return None

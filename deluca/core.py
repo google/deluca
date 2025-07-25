@@ -27,6 +27,8 @@ import pickle
 import flax
 import flax.struct
 import jax
+import jax.numpy as jnp
+from jax import Array
 
 # Type variable for observation type
 T = TypeVar("T")
@@ -109,25 +111,55 @@ class Obj:
         """Expose a default flatten method"""
         return jax.tree_util.tree_flatten(self)[0]
 
-
-class Env(Obj, Generic[T]):
-
-    @abstractmethod
-    def init(self, *args, **kwargs) -> T:
-        """Return an initial observation"""
+@flax.struct.dataclass
+class Env(Obj):
 
     @abstractmethod
-    def __call__(self, state, action, *args, **kwargs) -> T:
-        """Return an updated observation after taking input action"""
+    def __init__(self, rng: Array, *args, **kwargs) -> None:
+        """Initializes the environment.
+        
+        Args:
+            key: random key
+        """
+
+    
+    @abstractmethod
+    def __call__(self, t: float, state: Array, action: Array, rng: Array) -> Tuple[float, Array, Array]:
+        """
+        Args:
+            t: time
+            state: current state
+            action: current action
+            key: random key
+
+        Returns:
+            t: time (input t + 1)
+            state: updated state
+            obs: updated observation
+        """
 
     @abstractmethod
-    def reset(self) -> T:
-        """Reset the environment"""
+    def reset(self, rng: Array) -> Tuple[float, Array, Array]:
+        """Resets the environment to its initial state. 
+        
+        Args:
+            key: random key
+
+        Returns:
+            t: time = 0
+            state: initial state
+            obs: initial observation
+        """
 
     @property
     @abstractmethod
     def action_size(self) -> int:
         """Return the size of the action space"""
+
+    @property
+    @abstractmethod
+    def observation_size(self) -> int:
+        """Return the size of the observation space"""
 
 
 class AgentState(Obj):
@@ -138,19 +170,19 @@ class AgentState(Obj):
 class Agent(Obj):
 
     @abstractmethod
-    def __call__(self, state, obs, *args, **kwargs) -> jax.Array:
+    def __call__(self, obs, rng: Array) -> jax.Array:
         """Return an updated state"""
 
-    def init(self):
+    def init(self, rng: Array):
         return AgentState()
 
 
 class Disturbance(Obj):
 
     @abstractmethod
-    def init(self, *args, **kwargs):
+    def init(self, rng: Array, *args, **kwargs):
         """Initializes disturbance class"""
 
     @abstractmethod
-    def __call__(self, *args, **kwargs) -> jax.Array:
+    def __call__(self, t: float, rng: Array) -> jax.Array:
         """Returns the next disturbance"""

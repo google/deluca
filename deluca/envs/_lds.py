@@ -55,19 +55,20 @@ class SinusDisturbance(Disturbance):
 class LDS(Env):
     """LDS."""
 
-    def init(
+    def __init__(
         self,
+        rng: jax.Array,
         d_in=1,
         d_hidden=25,
         d_out=1,
         A=None,
         B=None,
         C=None,
-        key=jax.random.PRNGKey(0),
         x0=None,
         disturbance=None,
     ):
-        key, subkey1, subkey2, subkey3 = jax.random.split(key, 4)
+        subkey1, subkey2, subkey3 = jax.random.split(rng, 3)
+        
         self.A = (
             jnp.array(A)
             if A is not None
@@ -88,38 +89,42 @@ class LDS(Env):
         self.d = self.A.shape[0]
         self.n = self.B.shape[1]
         self.p = self.C.shape[0]
-        self.x = jnp.zeros((self.d, 1)) if x0 is None else jnp.array(x0)
+        self.x0 = x0
+        state = jnp.zeros((self.d, 1)) if x0 is None else jnp.array(x0)
         self.t = 0
         if disturbance is None:
             self.disturbance = GaussianDisturbance()
         else:
             self.disturbance = disturbance
         self.disturbance.init(self.d)
-        self.key = key
 
-        return self.x, self.C @ self.x
+    def __call__(self, t, state, action, rng):
+        w_t = self.disturbance(t, rng)
+        new_state = self.A @ state + self.B @ action + w_t
+        y = self.C @ new_state
 
-    def __call__(self, _state, u, key=None):
-        if key is None:
-            self.key, subkey = jax.random.split(self.key, 2)
-            w_t = self.disturbance(self.t, subkey)
-        else:
-            w_t = self.disturbance(self.t, key)
-        self.x = self.A @ self.x + self.B @ u + w_t
-        y = self.C @ self.x
-        self.t += 1
+        return t + 1, new_state, y 
+    
+    @jax.jit
+    def _step(A, B, C, t, state, action, disturbance, rng):
+        w_t = disturbance(t, rng)
+        new_state = A @ state + B @ action + w_t
+        y = C @ new_state
+        return t + 1, new_state, y 
 
-        return self.x, y 
 
+    @property
+    def observation_size(self) -> int:
+        return self.p
+    
     @property
     def action_size(self) -> int:
         return self.n
     
-    def reset(self, x0=None):
-        self.x = jnp.zeros((self.d, 1)) if x0 is None else jnp.array(x0)
-        self.t = 0
+    def reset(self, rng):
+        state = self.x0 if self.x0 is not None else jnp.zeros((self.d, 1))
 
-        return self.x, self.C @ self.x
+        return 0, state, self.C @ state
 
     def generate_random_trajectory(self, trajectory_length=1000, key=None):
         """generate_random_trajectory.
@@ -139,7 +144,7 @@ class LDS(Env):
         for i in range(trajectory_length):
             key, subkey1, subkey2 = jax.random.split(key, 3)
             rand_action = jax.random.normal(subkey1, (self.n, 1))
-            state, obs = self(rand_action, subkey2)
+            _, _, obs = self(i, rand_action, subkey2, key)
             results = results.at[i].set(
                 obs[0, 0]
             )  # first coordinate of the observation
@@ -157,5 +162,3 @@ class LDS(Env):
         print(self.n, self.d, self.p)
         print("A, B, C are: ")
         print(self.A, self.B, self.C)
-        print("state is:")
-        print(self.x)

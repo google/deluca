@@ -68,7 +68,7 @@ class MountainCar(Env):
         
         return state, state
 
-    def __call__(self, state, action):
+    def __call__(self, t, state, action, key):
         """__call__.
 
         Args:
@@ -97,7 +97,7 @@ class MountainCar(Env):
         )
         new_state = jnp.reshape(jnp.array([position, velocity]), (2,))
 
-        return new_state, new_state
+        return t + 1, new_state, new_state
 
     @property
     def action_size(self) -> int:
