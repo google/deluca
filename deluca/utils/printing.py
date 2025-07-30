@@ -197,8 +197,11 @@ class Task:
 
         if self.done and self.level == 0:
             count_str = f"{bracket_color}[Completed {self.total}]{self.RESET_COLOR}"
-            print(f"{status_char} {self.name} {progress_bar} {count_str}")
-            lines = []
+            # Directly write the final line and clear any remaining characters on the line
+            sys.stdout.write(f"{status_char} {self.name} {progress_bar} {count_str}")
+            sys.stdout.write("\033[K\n")  # Clear the rest of the line, then newline
+            sys.stdout.flush()
+            lines = []  # Ensure no further processing for this task in the current render cycle
             return
         else:
             count_str = f"{bracket_color}[{count_color}{self.current}/{self.total}{bracket_color}]{self.RESET_COLOR}"

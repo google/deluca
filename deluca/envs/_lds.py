@@ -90,7 +90,6 @@ class LDS(Env):
         self.n = self.B.shape[1]
         self.p = self.C.shape[0]
         self.x0 = x0
-        state = jnp.zeros((self.d, 1)) if x0 is None else jnp.array(x0)
         self.t = 0
         if disturbance is None:
             self.disturbance = GaussianDisturbance()
@@ -104,14 +103,6 @@ class LDS(Env):
         y = self.C @ new_state
 
         return t + 1, new_state, y 
-    
-    @jax.jit
-    def _step(A, B, C, t, state, action, disturbance, rng):
-        w_t = disturbance(t, rng)
-        new_state = A @ state + B @ action + w_t
-        y = C @ new_state
-        return t + 1, new_state, y 
-
 
     @property
     def observation_size(self) -> int:

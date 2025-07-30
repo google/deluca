@@ -23,6 +23,9 @@ class Memory:
     obs_memory: Array
     action_memory: Array
 
+    _filtered_obs_memory: Array
+    _filtered_action_memory: Array
+
     filter: Filter | None
 
     def __init__(
@@ -52,15 +55,35 @@ class Memory:
         self.obs_memory = jnp.zeros((real_history_length, obs_dim))
         self.action_memory = jnp.zeros((real_history_length, action_dim))
 
+        self._filtered_obs_memory = jnp.zeros((real_history_length, filter.filtered_obs_dim if filter is not None else obs_dim))
+        self._filtered_action_memory = jnp.zeros((real_history_length, filter.filtered_action_dim if filter is not None else action_dim))
+
     def store(self, obs: Array, action: Array):
         """
         Store the observation and action in the memory. The most recent observation is stored at the last index of the memory.
         """
+
+        # Remove singleton dimension from obs and action
+        obs = jnp.squeeze(obs, -1)
+        action = jnp.squeeze(action, -1)
+
         self.obs_memory = jnp.roll(self.obs_memory, -1, axis=0)
         self.action_memory = jnp.roll(self.action_memory, -1, axis=0)
 
         self.obs_memory = self.obs_memory.at[-1].set(obs)
         self.action_memory = self.action_memory.at[-1].set(action)
+
+        if self.filter is None:
+            self._filtered_obs_memory = self.obs_memory
+            self._filtered_action_memory = self.action_memory
+        else:
+            self._filtered_obs_memory = jnp.roll(self._filtered_obs_memory, -1, axis=0)
+            self._filtered_action_memory = jnp.roll(self._filtered_action_memory, -1, axis=0)
+
+            filtered_obs, filtered_action = self.filter(self.obs_memory[-self.filter.filter_history_length:], self.action_memory[-self.filter.filter_history_length:])
+
+            self._filtered_obs_memory = self._filtered_obs_memory.at[-1].set(filtered_obs)
+            self._filtered_action_memory = self._filtered_action_memory.at[-1].set(filtered_action)
 
     def reset(self):
         """
@@ -79,15 +102,9 @@ class Memory:
             action_history: Array
         """
 
-        obs_history = self.obs_memory
-        action_history = self.action_memory
-
-        if self.filter is not None:
-            obs_history, action_history = self.filter(obs_history, action_history)
-
         return (
-            obs_history[-self._history_length :],
-            action_history[-self._history_length :],
+            self._filtered_obs_memory[-self._history_length :],
+            self._filtered_action_memory[-self._history_length :],
         )
    
     def from_trajectories(

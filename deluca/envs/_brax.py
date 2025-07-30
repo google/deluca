@@ -14,83 +14,48 @@
 
 """Wrapper for Brax systems."""
 
+import functools
 from typing import List
-import brax
-from brax.envs import PipelineEnv
-from brax.base import State as BraxState
-from brax.io import html, mjcf
+from brax.envs import create, Env as InternalBraxEnv, State, PipelineEnv
+from brax.envs.base import Observation, ObservationSize
 from deluca.core import Env
 from deluca.core import field
-from IPython.display import HTML
+
 
 import jax
+from jax import Array
+import jax.numpy as jnp
+from brax.io import html
 
-# pylint:disable=protected-access
-
+from IPython.display import HTML
 
 class BraxEnv(Env):
     """Brax."""
 
-    env: PipelineEnv = field(jaxed=False)
-    states: List[BraxState] = field(jaxed=False)
+    env: PipelineEnv
 
-    @classmethod
-    def from_env(cls, env: PipelineEnv):
-        lenv = cls.create(env=env)
-        lenv.unfreeze()
-        return lenv
-
-    # @classmethod
-    # def from_name(cls, name):
-    #   return cls.from_env(PipelineEnv.create(env_name=name))
-
-    # NOTE Seems like Config is no longer supported, you should import from XML.
-    # @classmethod
-    # def from_config(cls, config):
-    #   return cls.create(sys=brax.System(config))
-
-    def setup(self):
-        """setup."""
-
-    def init(self, rng: jax.Array):
-        """init.
-
-        Returns:
-
-        """
-        return self.reset(rng)
+    def __init__(self, rng: jax.Array, env_name: str, **kwargs):
+        self.env = create(env_name, **kwargs) # type: ignore
 
     def reset(self, rng: jax.Array):
-        """reset.
-
-        Returns:
-
-        """
         state = self.env.reset(rng=rng)
 
-        if state.pipeline_state is not None:
-            self.states = [state.pipeline_state]
-        else:
-            self.states = []
+        obs = _obs_to_array(state.obs)
+        obs = jnp.expand_dims(obs, -1) # Add singleton dimension
 
-        return 0, state, state.obs
+        return 0, state, obs
 
     def __call__(self, t, state, action, rng):
-        """__call__.
-
-        Args:
-          state:
-          action:
-
-        Returns:
-
-        """
+        # Flatten action
+        action = jnp.squeeze(action, -1)
         state = self.env.step(state, action)
 
-        if state.pipeline_state is not None:
-            self.states.append(state.pipeline_state)
+        obs = _obs_to_array(state.obs)
+        obs = jnp.expand_dims(obs, -1) # Add singleton dimension
 
-        return t + 1, state, state.obs
+        t = jax.lax.cond(state.info['episode_done'], lambda _: 0, lambda _: t + 1, operand=None)
+
+        return t, state, obs
 
     @property
     def action_size(self) -> int:
@@ -98,15 +63,23 @@ class BraxEnv(Env):
     
     @property
     def observation_size(self) -> int:
-        return self.env.observation_size
-
-    def render(self):
-        """render.
-
-        Args:
-          states:
-
-        Returns:
-
+        return _obs_size_to_int(self.env.observation_size)
+      
+    def render(self, states: List[State]):
         """
-        return self.env.render(self.states)
+        Returns an HTML string of the rendered environment.
+        """
+        return html.render(self.env.sys, [s.pipeline_state for s in states]) # type: ignore
+
+
+def _obs_size_to_int(obs_size: ObservationSize) -> int:
+    if isinstance(obs_size, int):
+        return obs_size
+    else:
+        return sum([sum(s) if isinstance(s, tuple) else s for s in obs_size.values()])
+
+def _obs_to_array(obs: Observation) -> Array:
+    if isinstance(obs, jax.Array):
+        return obs
+    else:
+        return jnp.concatenate([obs[k] for k in sorted(obs.keys())])

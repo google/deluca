@@ -1,6 +1,5 @@
-from .nn_learner import NNLearner
-from .linear_learner import LinearLearner
-from .spectral_learner import SpectralLearner
 from .core import Learner, LearnedEnv
+from .feedforward import FFLearner
+from .linear import LinearLearner
 
-__all__ = ["NNLearner", "Learner", "LearnedEnv", "LinearLearner", "SpectralLearner"]
+__all__ = ["Learner", "LearnedEnv", "FFLearner", "LinearLearner"]

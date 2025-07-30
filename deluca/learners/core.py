@@ -7,6 +7,7 @@ import chex
 from deluca.agents._random import SimpleRandom
 from deluca.core import Env
 from deluca.learners.memory import Memory
+from deluca.normalizers.core import Normalizers, WithoutNormalization
 from deluca.utils.printing import Task
 from abc import abstractmethod
 import jax.numpy as jnp
@@ -14,9 +15,8 @@ from jax import Array
 import flax.nnx as nnx
 import optax
 
-from jax.experimental.host_callback import id_tap
-
 Histories = Tuple[Array, Array, Array]
+
 
 @flax.struct.dataclass
 class LearnerSettings:
@@ -27,77 +27,70 @@ class LearnerSettings:
     num_epochs: int
     holdout_ratio: float
 
-    learning_rate: float
-    momentum: float
+    optimizer_fn: optax.GradientTransformation
+    loss_fn: Callable[[Array, Array], Array | chex.Array]
+    train_kwargs: Dict[str, Any] | None
 
-    train_kwargs: Dict[str, Any] | None = None
 
 DefaultSettings = LearnerSettings(
     learn_on_incomplete_histories=False,
     holdout_ratio=0.8,
-    learning_rate=1e-3,
-    momentum=0.9,
     batch_size=32,
     batches_per_test=10,
     num_epochs=5,
+    optimizer_fn=optax.adam(learning_rate=1e-3),
+    loss_fn=lambda pred, next_obs: optax.squared_error(pred, next_obs),
+    train_kwargs=None,
 )
+
 
 class LearnerModel(nnx.Module):
     @abstractmethod
-    def __call__(self, obs: Array, action: Array) -> Array:
+    def __call__(self, obs: Array, action: Array, rng: Array) -> Array:
         """Predict the next observation given the history of most recent observations and actions."""
-    
+
     @abstractmethod
-    def _train_call(self, obs: Array, action: Array) -> Array:
+    def _train_call(self, obs: Array, action: Array, rng: Array) -> Array:
         """Separate function if needed for training."""
-
-
-
-class Normalizers:
-    @abstractmethod
-    def normalize_obs(
-        self, obs: Array
-    ) -> Array:
-        """Normalize the input observation Array."""
-
-    @abstractmethod
-    def normalize_action(
-        self, action: Array
-    ) -> Array:
-        """Normalize the input action Array."""
-
-    @abstractmethod
-    def denormalize_obs(
-        self, obs: Array
-    ) -> Array:
-        """Denormalize the input observation Array."""
-
-    @abstractmethod
-    def denormalize_action(
-        self, action: Array
-    ) -> Array:
-        """Denormalize the input action Array."""
-
-    @abstractmethod
-    def compute_normalization(self, obses: Array, actions: Array) -> None:
-        """Compute the normalization of the input."""
 
 
 class Learner:
     name: str
 
     model: LearnerModel
-    memory: Memory
+
+    obs_dim_in: int
+    action_dim_in: int
+    obs_dim_out: int
+    action_dim_out: int
+    history_length: int
 
     normalizers: Normalizers
     optimizer: nnx.Optimizer
-    loss_fn: Callable[[Array, Array], Array | chex.Array] # Optax functions return chex.Array which works with jax.Array, but Python typing doesn't realize it lol
+    loss_fn: Callable[
+        [Array, Array], Array | chex.Array
+    ]  # Optax functions return chex.Array which works with jax.Array, but Python typing doesn't realize it lol
 
-    def __init__(self, memory: Memory, settings: LearnerSettings, rng: Array, normalizers: Normalizers | None = None):
-        self.memory = memory
+    def __init__(
+        self,
+        memory: Memory,
+        settings: LearnerSettings,
+        rng: Array,
+        normalizers: Normalizers | None = None,
+    ):
+        self.obs_dim_in = memory.obs_dim_in
+        self.action_dim_in = memory.action_dim_in
+        self.obs_dim_out = memory.obs_dim_out
+        self.action_dim_out = memory.action_dim_out
+        self.history_length = memory.history_length
+
         self.settings = settings
 
         self.normalizers = normalizers or WithoutNormalization()
+        self.optimizer = nnx.Optimizer(
+            self.model,
+            self.settings.optimizer_fn,
+        )
 
     def train(self, histories: Histories, rng: Array) -> Tuple[Array, Array]:
         """Train the learned environment from the histories. Histories are a tuple of (obs, action, next_obs)
@@ -108,13 +101,15 @@ class Learner:
             train_losses: List of losses for each epoch
             test_losses: List of (mean_loss, loss_by_coord) for each epoch
         """
-        assert len(histories) == 3, "Histories must be a tuple of (obs, actions, next_obs)"
+        assert (
+            len(histories) == 3
+        ), "Histories must be a tuple of (obs, actions, next_obs)"
 
         obs, actions, next_obs = histories
 
         # For training, we need to compute the normalization of the observations and actions (e.g. mean and std)
         # These values will be stored and used for denormalization during prediction.
-        self.normalizers.compute_normalization(histories[0], histories[1])
+        self.normalizers.compute_normalization(obs, actions)
 
         histories = self._preprocess_histories(histories)
 
@@ -135,43 +130,62 @@ class Learner:
         padding = self.settings.batch_size - num_histories % self.settings.batch_size
         num_batches = (num_histories + padding) // self.settings.batch_size
         if padding > 0:
-            train_obs = jnp.concatenate([train_obs, jnp.zeros((padding, obs.shape[1], obs.shape[2]))])
-            train_actions = jnp.concatenate([train_actions, jnp.zeros((padding, actions.shape[1], actions.shape[2]))])
-            train_next_obs = jnp.concatenate([train_next_obs, jnp.zeros((padding, next_obs.shape[1]))])
+            train_obs = jnp.concatenate(
+                [train_obs, jnp.zeros((padding, obs.shape[1], obs.shape[2]))]
+            )
+            train_actions = jnp.concatenate(
+                [
+                    train_actions,
+                    jnp.zeros((padding, actions.shape[1], actions.shape[2])),
+                ]
+            )
+            train_next_obs = jnp.concatenate(
+                [train_next_obs, jnp.zeros((padding, next_obs.shape[1]))]
+            )
 
-        train_obs = train_obs.reshape(num_batches, self.settings.batch_size, -1, train_obs.shape[-1])
-        train_actions = train_actions.reshape(num_batches, self.settings.batch_size, -1, train_actions.shape[-1])
-        train_next_obs = train_next_obs.reshape(num_batches, self.settings.batch_size, train_next_obs.shape[-1])
-        
+        train_obs = train_obs.reshape(
+            num_batches, self.settings.batch_size, -1, train_obs.shape[-1]
+        )
+        train_actions = train_actions.reshape(
+            num_batches, self.settings.batch_size, -1, train_actions.shape[-1]
+        )
+        train_next_obs = train_next_obs.reshape(
+            num_batches, self.settings.batch_size, train_next_obs.shape[-1]
+        )
+
         # Exposing settings for closure with jitted functions
-        loss_fn = self.loss_fn
+        loss_fn = self.settings.loss_fn
         batches_per_test = self.settings.batches_per_test
 
-
         @nnx.jit
-        def _test_step(model, test_obs, test_actions, test_next_obs):
-            test_pred = model(test_obs, test_actions)
+        def _test_step(model, test_obs, test_actions, test_next_obs, rng):
+            test_pred = model(test_obs, test_actions, rng)
             test_loss = jnp.mean(loss_fn(test_pred, test_next_obs))
             return test_loss
 
         @nnx.jit
-        def _train_batch(model, optimizer, batch):
+        def _train_batch(model, optimizer, batch, rng):
             obs_batch, actions_batch, next_obs_batch = batch
-            
+
             def loss_step(model: LearnerModel):
-                pred = model._train_call(obs_batch, actions_batch)
+                pred = model._train_call(obs_batch, actions_batch, rng)
                 loss = loss_fn(pred, next_obs_batch)
                 return jnp.mean(loss)
-            
+
             train_loss, grads = nnx.value_and_grad(loss_step)(model)
             optimizer.update(grads)
 
             return train_loss
 
         train_losses = jnp.empty((self.settings.num_epochs, num_batches))
-        test_losses = jnp.empty((self.settings.num_epochs, num_batches // batches_per_test))
+        test_losses = jnp.empty(
+            (self.settings.num_epochs, num_batches // batches_per_test)
+        )
 
-        with Task(f"{self.name} Training for {self.settings.num_epochs} epochs", self.settings.num_epochs) as e_task:
+        with Task(
+            f"{self.name} Training for {self.settings.num_epochs} epochs",
+            self.settings.num_epochs,
+        ) as e_task:
             for e in range(self.settings.num_epochs):
 
                 # Shuffle the batches
@@ -181,47 +195,77 @@ class Learner:
                 train_actions = train_actions[batch_indices]
                 train_next_obs = train_next_obs[batch_indices]
 
-                with Task(f"Training with {num_batches} batches", num_batches) as b_task:
-                    for b in range(num_batches):
-                        train_loss = _train_batch(self.model, self.optimizer, (train_obs[b], train_actions[b], train_next_obs[b]))
+                with Task(
+                    f"Training with {num_batches} batches", num_batches
+                ) as b_task:
+                    for b, train_key in enumerate(jax.random.split(rng, num_batches)):
+                        train_loss = _train_batch(
+                            self.model,
+                            self.optimizer,
+                            (train_obs[b], train_actions[b], train_next_obs[b]),
+                            train_key,
+                        )
                         train_losses = train_losses.at[e, b].set(train_loss)
 
                         b_task.update()
 
                         if b % batches_per_test == 0:
-                            test_loss = _test_step(self.model, test_obs[b], test_actions[b], test_next_obs[b])
-                            test_losses = test_losses.at[e, b // batches_per_test].set(test_loss)
-                            b_task.update(increment=0, text=f"Batch {b} Losses: Train {train_loss:.5f} | Test {test_loss:.5f}")
-                   
-                
+                            test_loss = _test_step(
+                                self.model,
+                                test_obs[b],
+                                test_actions[b],
+                                test_next_obs[b],
+                                train_key,
+                            )
+                            test_losses = test_losses.at[e, b // batches_per_test].set(
+                                test_loss
+                            )
+                            b_task.update(
+                                increment=0,
+                                text=f"Batch {b} Losses: Train {train_loss:.5f} | Test {test_loss:.5f}",
+                            )
 
-                e_task.update(text=f"Epoch {e}: Train Loss Avg {jnp.mean(train_losses[e]):.5f}")
-            
+                e_task.update(
+                    text=f"Epoch {e}: Train Loss Avg {jnp.mean(train_losses[e]):.5f}"
+                )
+
         return train_losses, test_losses
-    
+
     def _preprocess_histories(self, histories: Histories) -> Histories:
         """
         Preprocess a collection of histories for training.
         """
 
-        assert len(histories) == 3, "Histories must be a tuple of (obs, actions, next_obs)"
-        
+        assert (
+            len(histories) == 3
+        ), "Histories must be a tuple of (obs, actions, next_obs)"
+
         obs, actions, next_obs = histories
 
         assert obs.ndim == actions.ndim == 3, "Histories must be 3D arrays"
         assert next_obs.ndim == 2, "next_obs must be a 2D array"
-        assert obs.shape[0] == actions.shape[0] == next_obs.shape[0], "obs, actions, and next_obs must have the same number of histories"
-        assert obs.shape[1] == actions.shape[1] == self.memory.history_length, "All histories must have length history_length"
-        assert obs.shape[2] == self.memory.obs_dim_in, "Observations must have obs_dim_in dimensions"
-        assert actions.shape[2] == self.memory.action_dim_in, "Actions must have action_dim_in dimensions"
-        assert next_obs.shape[1] == self.memory.obs_dim_out, "Next observations must have obs_dim_out dimensions"
+        assert (
+            obs.shape[0] == actions.shape[0] == next_obs.shape[0]
+        ), "obs, actions, and next_obs must have the same number of histories"
+        assert (
+            obs.shape[1] == actions.shape[1] == self.history_length
+        ), "All histories must have length history_length"
+        assert (
+            obs.shape[2] == self.obs_dim_in
+        ), "Observations must have obs_dim_in dimensions"
+        assert (
+            actions.shape[2] == self.action_dim_in
+        ), "Actions must have action_dim_in dimensions"
+        assert (
+            next_obs.shape[1] == self.obs_dim_out
+        ), "Next observations must have obs_dim_out dimensions"
 
         # Normalization
         obs = self.normalizers.normalize_obs(obs)
         actions = self.normalizers.normalize_action(actions)
         next_obs = self.normalizers.normalize_obs(next_obs)
-        
-        return obs, actions, next_obs  
+
+        return obs, actions, next_obs
 
     def _preprocess_history(self, history: Tuple[Array, Array]) -> Tuple[Array, Array]:
         """
@@ -229,42 +273,57 @@ class Learner:
         For prediction, we expect a history to be a tuple of (obs_history, action_history)
         """
 
-        assert len(history) == 2, "History must be a tuple of (obs_history, action_history)"
+        assert (
+            len(history) == 2
+        ), "History must be a tuple of (obs_history, action_history)"
 
         obs_history, action_history = history
 
-        assert obs_history.ndim == action_history.ndim and obs_history.ndim in [2, 3], "Histories must be 2D or 3D (batched) arrays"
+        assert obs_history.ndim == action_history.ndim and obs_history.ndim in [
+            2,
+            3,
+        ], "Histories must be 2D or 3D (batched) arrays"
 
         hist_index = 0 if obs_history.ndim == 2 else 1
 
-        assert obs_history.shape[hist_index] == action_history.shape[hist_index] == self.memory.history_length, "obs and actions must have length history_length"
-        assert obs_history.shape[hist_index + 1] == self.memory.obs_dim_in, "obs must have obs_dim_in dimensions"
-        assert action_history.shape[hist_index + 1] == self.memory.action_dim_in, "actions must have action_dim_in dimensions"
-        
-        
+        assert (
+            obs_history.shape[hist_index]
+            == action_history.shape[hist_index]
+            == self.history_length
+        ), "obs and actions must have length history_length"
+        assert (
+            obs_history.shape[hist_index + 1] == self.obs_dim_in
+        ), "obs must have obs_dim_in dimensions"
+        assert (
+            action_history.shape[hist_index + 1] == self.action_dim_in
+        ), "actions must have action_dim_in dimensions"
+
         obs_history = self.normalizers.normalize_obs(obs_history)
         action_history = self.normalizers.normalize_action(action_history)
 
         return obs_history, action_history
-    
+
     def _postprocess_prediction(self, pred_obs: Array) -> Array:
         """
-        Postprocess the prediction (e.g. denormalize)
+        Postprocess the prediction (e.g. denormalize and add back singleton dimension)
         """
 
-        return self.normalizers.denormalize_obs(pred_obs)
-        
-    def predict(self, obs_history: Array, action_history: Array) -> Array:
+        pred_obs = self.normalizers.denormalize_obs(pred_obs)
+
+        return jnp.expand_dims(pred_obs, -1)
+
+    def predict(self, obs_history: Array, action_history: Array, rng: Array) -> Array:
         """Predict the next observation given the history of most recent observations and actions.
         Note: if histories are longer than history_length, the oldest observations and actions are ignored.
         """
 
-        obs_history, action_history = self._preprocess_history((obs_history, action_history))
+        obs_history, action_history = self._preprocess_history(
+            (obs_history, action_history)
+        )
 
-        pred_obs = self.model(obs_history, action_history)
+        pred_obs = self.model(obs_history, action_history, rng)
 
         return self._postprocess_prediction(pred_obs)
-
 
     @abstractmethod
     def reset_env(self) -> None:
@@ -281,7 +340,9 @@ class Learner:
         Returns:
             LearnedEnv: The learned environment.
         """
-        return LearnedEnv(initial_obs, self.memory.action_dim_out, self.predict, self.reset_env)
+        return LearnedEnv(
+            initial_obs, self.action_dim_out, self.predict, self.reset_env
+        )
 
 
 class LearnedEnv(Env):
@@ -289,7 +350,7 @@ class LearnedEnv(Env):
         self,
         init_obs: Array,
         action_dim: int,
-        predict: Callable[[Array, Array], Array],
+        predict: Callable[[Array, Array, Array], Array],
         reset_env: Callable[[], None],
     ):
         self.predict = predict
@@ -300,71 +361,26 @@ class LearnedEnv(Env):
     def init(self):
         return self.init_obs
 
-    def __call__(self, t, obs, action, _rng):
+    def __call__(self, t, obs, action, rng):
         """
         Args:
             t: This parameter is included to conform to the Deluca Env interface. It is not used.
             obs: The current observation of the environment. Note: normal environments take the entire state, but we only need the observation.
             action: The current action of the environment.
-            rng: Also not used as predictor is deterministic.
+            rng: The random key for the predictor.
 
         Returns:
             t: The next time step.
             new_state: Since a learned environment trains only with observations, it has no conception of the latent state. Instead, we return the observation as the state.
             new_obs: The next observation of the environment.
         """
-        new_obs = self.predict(obs, action)
+        new_obs = self.predict(obs, action, rng)
         return t + 1, new_obs, new_obs
 
     def reset(self, rng):
         self.reset_env()
-        return 0, Array([]), self.predict(self.init_obs, jnp.zeros((self.action_dim,)))
-
-
-class WithoutNormalization(Normalizers):
-    def normalize_obs(self, obs: Array) -> Array:
-        return obs
-
-    def normalize_action(self, action: Array) -> Array:
-        return action
-
-    def denormalize_obs(self, obs: Array) -> Array:
-        return obs
-
-    def denormalize_action(self, action: Array) -> Array:
-        return action
-
-    def compute_normalization(self, obses, actions):
-        pass
-
-
-class DefaultNormalizers(Normalizers):
-    _eps: float = 1e-8
-
-    def normalize_obs(
-        self,
-        obs: Array,
-    ) -> Array:
-        return (obs - self.obs_mean) / (self.obs_std + self._eps)
-
-    def normalize_action(
-        self, action: Array
-    ) -> Array:
-        return (action - self.action_mean) / (self.action_std + self._eps)
-
-    def denormalize_obs(
-        self,
-        obs: Array,
-    ) -> Array:
-        return obs * (self.obs_std + self._eps) + self.obs_mean
-
-    def denormalize_action(
-        self, action: Array
-    ) -> Array:
-        return action * (self.action_std + self._eps) + self.action_mean
-
-    def compute_normalization(self, obses: Array, actions: Array) -> None:
-        self.obs_mean = jnp.mean(obses, axis=0)
-        self.obs_std = jnp.sqrt(jnp.var(obses, axis=0))
-        self.action_mean = jnp.mean(actions, axis=0)
-        self.action_std = jnp.sqrt(jnp.var(actions, axis=0))
+        return (
+            0,
+            Array([]),
+            self.predict(self.init_obs, jnp.zeros((self.action_dim,)), rng),
+        )

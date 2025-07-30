@@ -3,13 +3,13 @@ from deluca.agents._random import SimpleRandom
 from deluca.agents._zero import Zero
 from deluca.envs.brax._pendulum2d import Pendulum2D
 from deluca.filters.spectral import SpectralFilter
-from deluca.learners.ff_learner import (
+from deluca.learners.feedforward import (
     FFLearner,
     FFLearnerSettings,
     DefaultSettings as FFLearnerDefaultSettings,
 )
 from deluca.learners.core import Learner
-from deluca.learners.n_linear_learner import (
+from deluca.learners.linear import (
     LinearLearner,
     LinearLearnerSettings,
     DefaultSettings as LinearDefaultSettings,
@@ -18,6 +18,7 @@ from deluca.learners.util import generate_simple_trajectories, generate_trajecto
 from deluca.learners.memory import Memory
 from deluca.envs._lds import LDS, SinusDisturbance, ZeroDisturbance
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 import flax.nnx as nnx
@@ -26,14 +27,16 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 
-def pred_vs_true_plot(learner: Learner, histories, ax):
+def pred_vs_true_plot(learner: Learner, history_length: int, histories, ax, rng):
     """
     Plot the predicted vs true next observations as a scatter plot on the given axis.
     """
     obs, actions, next_obs = histories
 
     # Get predictions from the learner
-    pred = learner.predict(obs, actions)
+    pred = learner.predict(obs, actions, rng)
+
+    pred = jnp.squeeze(pred, -1)
 
     assert (
         pred.shape[-1] == next_obs.shape[-1]
@@ -42,7 +45,7 @@ def pred_vs_true_plot(learner: Learner, histories, ax):
     true = next_obs.reshape(-1, next_obs.shape[-1])
     pred = pred.reshape(-1, pred.shape[-1])
 
-    hfi = learner.memory.history_length
+    hfi = history_length
     colors = [
         "red",
         "blue",
@@ -54,6 +57,20 @@ def pred_vs_true_plot(learner: Learner, histories, ax):
         "gray",
         "olive",
         "cyan",
+        "lime",
+        "teal",
+        "indigo",
+        "violet",
+        "coral",
+        "maroon",
+        "navy",
+        "gold",
+        "silver",
+        "black",
+        "white",
+        "coral",
+        "maroon",
+        "navy",
     ]
     alphas = np.linspace(0.2, 0.85, true.shape[0] - hfi).tolist()
 
@@ -108,9 +125,9 @@ def plot_losses(learner: Learner, train_losses, test_losses, batches_per_test, a
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-d_obs = 2
+d_obs = 5
 d_action = 3
-d_hidden = 10
+d_hidden = 20
 disturbance = SinusDisturbance()
 disturbance.init(d_hidden)
 
@@ -119,13 +136,14 @@ rng = jax.random.key(5)
 # Set up environment and agent
 rng, env_key, agent_key = jax.random.split(rng, 3)
 env = LDS(env_key, d_action, d_hidden, d_obs, disturbance=disturbance)
-agent = SimpleRandom(env.action_size, rng=agent_key) # GRC(env.A, env.B, env.C, rng=agent_key)
+agent = GRC(env.A, env.B, env.C, rng=agent_key)
 
 # Give agent a chance to learn
 rng, env_key, agent_key = jax.random.split(rng, 3)
 t, state, obs = env.reset(env_key)
 
-for i in range(100):  # TODO: This seems to do nothing -- agent problems
+# Train agent
+for i in range(100): 
     action = agent(obs, agent_key)
     t, state, obs = env(t, state, action, env_key)
 
@@ -160,7 +178,7 @@ spectral_filter = SpectralFilter(
 
 # Set up learner
 settings = FFLearnerDefaultSettings
-memory = Memory(30, env.observation_size, env.action_size)
+memory = Memory(30, env.observation_size, env.action_size, filter=spectral_filter)
 
 train_histories = memory.from_trajectories((train_obs, train_actions, train_next_obs))
 test_histories = memory.from_trajectories((test_obs, test_actions, test_next_obs))
@@ -176,15 +194,15 @@ linear_train_losses, linear_test_losses = linear_learner.train(train_histories, 
 fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
 if memory.filter is not None:
-    fig.suptitle(f"With filter: {memory.filter.__class__.__name__}")
+    fig.suptitle(f"With filter: {memory.filter.__class__.__name__} (d_hidden={d_hidden})")
 else:
     fig.suptitle("No Filter")
 
 plot_losses(ff_learner, ff_train_losses, ff_test_losses, settings.batches_per_test, axes[0, 0])
 plot_losses(linear_learner, linear_train_losses, linear_test_losses, settings.batches_per_test, axes[0, 1])
 
-pred_vs_true_plot(ff_learner, test_histories, axes[1, 0])
-pred_vs_true_plot(linear_learner, test_histories, axes[1, 1])
+pred_vs_true_plot(ff_learner, memory.history_length, test_histories, axes[1, 0], rng)
+pred_vs_true_plot(linear_learner, memory.history_length, test_histories, axes[1, 1], rng)
 
 plt.tight_layout()
 plt.show()

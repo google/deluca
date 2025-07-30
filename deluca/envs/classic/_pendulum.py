@@ -14,6 +14,7 @@
 
 """Pendulum."""
 
+from jax import Array
 from deluca.core import Env
 from deluca.core import field
 from deluca.core import Obj
@@ -36,22 +37,59 @@ class Pendulum(Env):
     max_torque: float = field(1.0, jaxed=False)
     dt: float = field(0.02, jaxed=False)
     H: int = field(300, jaxed=False)
-    goal_state: jnp.ndarray = field(jaxed=False)
+    goal_state: jnp.ndarray | None = field(default=None, jaxed=False)
 
-    def init(self, key):
-        """init.
+    def __init__(
+        self,
+        rng,
+        *,
+        m: float = 1.0,
+        l: float = 1.0,
+        g: float = 9.81,
+        max_torque: float = 1.0,
+        dt: float = 0.02,
+        H: int = 300,
+        goal_state: jnp.ndarray | None = None,
+    ):
+        """Create a Pendulum environment.
 
-        Returns:
-
+        Args:
+            rng: JAX PRNGKey.
+            m: Mass of the pendulum bob.
+            l: Length of the pendulum rod.
+            g: Acceleration due to gravity.
+            max_torque: Maximum (absolute) control torque.
+            dt: Discrete time step.
+            H: Horizon length (unused here but kept for API parity).
+            goal_state: Optional desired state `(sin θ, cos θ, θ̇)`.
         """
-        state = PendulumState(arr=jnp.array([0.0, 1.0, 0.0]))
-        return state, state.arr
 
-    def setup(self):
+        super().__init__(rng)  # Store the rng if the base class needs it.
+
+        # Physical parameters.
+        self.m = m
+        self.l = l
+        self.g = g
+        self.max_torque = max_torque
+        self.dt = dt
+        self.H = H
+
+        # Target state; lazily initialised in `reset` if not provided.
+        self.goal_state = goal_state
+
+        # Keep a private copy of the key so the env can be purely functional
+        # if ever required.
+        self.key = rng
+
+    def reset(self, rng):
         if self.goal_state is None:
             self.goal_state = jnp.array([0.0, -1.0, 0.0])
 
-    def __call__(self, state, action):
+        init_arr = jnp.array([0.0, 1.0, 0.0]).reshape(3, 1)
+
+        return 0, PendulumState(arr=init_arr, h=0), init_arr
+
+    def __call__(self, t, state, action, rng):
         """__call__.
 
         Args:
@@ -69,9 +107,18 @@ class Pendulum(Env):
         )
         newth = jnp.arctan2(sin, cos) + newthdot * self.dt
         newsin, newcos = jnp.sin(newth), jnp.cos(newth)
-        arr = jnp.array([newsin, newcos, newthdot])
-        return PendulumState(arr=arr, h=state.h + 1), arr
+        arr = jnp.array([newsin, newcos, newthdot]).reshape(3, 1)
+
+        return t + 1, PendulumState(arr=arr, h=state.h + 1), arr
+    
+    def loss_fn(self, action: Array, next_state: PendulumState, next_obs: Array) -> Array:
+        return jnp.sum(((next_obs[0] - self.goal_state[0]) + (next_obs[1] - self.goal_state[1])) ** 2) + 5 * jnp.sum(action ** 2) # type: ignore
 
     @property
     def action_size(self) -> int:
         return 1
+
+    @property
+    def observation_size(self) -> int:
+        return 3
+    

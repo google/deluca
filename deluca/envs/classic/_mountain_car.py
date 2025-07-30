@@ -25,7 +25,6 @@ https://perma.cc/6Z2N-PFWC
 # pylint:disable=g-long-lambda
 
 from deluca.core import Env
-from deluca.core import field
 import jax
 import jax.numpy as jnp
 
@@ -33,42 +32,30 @@ import jax.numpy as jnp
 class MountainCar(Env):
     """MountainCar."""
 
-    key: jnp.ndarray = field(jaxed=False)
-    goal_velocity: float = field(0.0, jaxed=False)
-    min_action: float = field(-1.0, jaxed=False)
-    max_action: float = field(1.0, jaxed=False)
-    min_position: float = field(-1.2, jaxed=False)
-    max_position: float = field(0.6, jaxed=False)
-    max_speed: float = field(0.07, jaxed=False)
-    goal_position: float = field(0.5, jaxed=False)
+    goal_velocity: float = 0.0
+    min_action: float = -1.0
+    max_action: float = 1.0
+    min_position: float = -1.2
+    max_position: float = 0.6
+    max_speed: float = 0.07
+    goal_position: float = 0.5
     power = 0.0015
 
-    low_state: jnp.ndarray = field(jaxed=False)
-    high_state: jnp.ndarray = field(jaxed=False)
+    def __init__(self, rng: jax.Array):
+        super().__init__(rng)
 
-    def setup(self):
-        """setup."""
-        self.low_state = jnp.array([self.min_position, -self.max_speed])
-        self.high_state = jnp.array([self.max_position, self.max_speed])
-        if self.key is None:
-            self.key = jax.random.PRNGKey(0)
-
-    def init(self, key):
-        """init.
+    def reset(self, rng: jax.Array):
+        """reset.
 
         Returns:
 
         """
+        self.key, subkey = jax.random.split(rng)
+        state = jnp.array([[jax.random.uniform(subkey, minval=-0.6, maxval=0.4)], [0]])
 
-        # Unfreeze
-        self.unfreeze()
-        self.key, subkey = jax.random.split(key)
-        state = jnp.array([jax.random.uniform(subkey, minval=-0.6, maxval=0.4), 0])
-        self.freeze()
-        
-        return state, state
+        return 0, state, state
 
-    def __call__(self, t, state, action, key):
+    def __call__(self, t, state, action, rng):
         """__call__.
 
         Args:
@@ -78,6 +65,7 @@ class MountainCar(Env):
         Returns:
 
         """
+
         position, velocity = state
 
         force = jnp.minimum(jnp.maximum(action, self.min_action), self.max_action)
@@ -88,17 +76,41 @@ class MountainCar(Env):
         position += velocity
         position = jnp.clip(position, self.min_position, self.max_position)
         reset_velocity = (position == self.min_position) & (velocity < 0)
-        velocity = jax.lax.cond(
+        velocity = jnp.where(
             reset_velocity[0],
-            velocity,
-            lambda x: jnp.zeros((1,)),
-            velocity,
-            lambda x: x,
+            jnp.zeros_like(velocity),
+            velocity
         )
         new_state = jnp.reshape(jnp.array([position, velocity]), (2,))
 
-        return t + 1, new_state, new_state
+        # Add a singleton dimension to the state
+        new_state = jnp.expand_dims(new_state, -1)
+
+        t = jax.lax.cond(position[0][0] >= self.goal_position, lambda: 0, lambda: t + 1)
+        new_state = jax.lax.cond(position[0][0] >= self.goal_position, lambda: jnp.array([[0.], [0.]]), lambda: new_state)
+
+        return t, new_state, new_state
+
+    def loss_fn(self, action: jax.Array, next_obs: jax.Array) -> jax.Array:
+        # Penalize: being further from goal, low velocity, large actions, and negative actions
+        position = next_obs[0, 0]
+        velocity = next_obs[1, 0]
+        action = action[0, 0]
+        #jax.debug.print("Position: {}, Velocity: {}, Action: {}", position, velocity, action)
+        #jax.debug.print("Loss: {}", loss)
+
+        goal_reward = jnp.where(position >= self.goal_position, 1000.0, 0.0)
+        position_reward = position * 10.0
+        velocity_reward = jnp.where(position > -0.5, velocity * 5.0, -jnp.abs(velocity) * 2.0)
+        action_penalty = 0.1 * jnp.sum(action ** 2)
+
+        return action_penalty - goal_reward - position_reward - velocity_reward
+    
 
     @property
     def action_size(self) -> int:
         return 1
+    
+    @property
+    def observation_size(self) -> int:
+        return 2

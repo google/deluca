@@ -46,7 +46,7 @@ class SimpleRandom(Agent):
         self.rng = rng
 
     def __call__(self, _obs: jnp.ndarray, rng):
-        return jax.random.normal(rng, shape=(self.n, 1)) * 0.1
+        return jax.random.normal(rng, shape=(self.n, 1))
 
     def update(self, obs: jnp.ndarray, action: jnp.ndarray) -> None:
         return None

@@ -21,7 +21,7 @@ TODO(dsuo)
 import dataclasses
 import os
 from abc import abstractmethod
-from typing import TypeVar, Generic, List, Tuple
+from typing import Any, TypeVar, Generic, List, Tuple
 
 import pickle
 import flax
@@ -124,7 +124,7 @@ class Env(Obj):
 
     
     @abstractmethod
-    def __call__(self, t: float, state: Array, action: Array, rng: Array) -> Tuple[float, Array, Array]:
+    def __call__(self, t: int, state: Any, action: Array, rng: Array) -> Tuple[int, Any, Array]:
         """
         Args:
             t: time
@@ -139,7 +139,7 @@ class Env(Obj):
         """
 
     @abstractmethod
-    def reset(self, rng: Array) -> Tuple[float, Array, Array]:
+    def reset(self, rng: Array) -> Tuple[float, Any, Array]:
         """Resets the environment to its initial state. 
         
         Args:

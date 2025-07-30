@@ -22,7 +22,7 @@ class SpectralFilter(Filter):
         obs_dim: int,
         action_dim: int,
         num_filters: int = 24,
-        spectral_history_length: int = 30,
+        spectral_history_length: int = 100,
     ):
         super().__init__(
             spectral_history_length,
