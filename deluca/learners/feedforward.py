@@ -5,6 +5,7 @@ from jax import Array
 import flax.nnx as nnx
 import optax
 
+from deluca.learners.memory import MemorySettings
 from deluca.core import Env
 from deluca.learners.core import (
     Learner,
@@ -68,18 +69,18 @@ class FFLearner(Learner):
 
     def __init__(
         self,
-        memory: Memory,
+        memory_settings: MemorySettings,
         settings: FFLearnerSettings,
         rng: Array,
         normalizers: Normalizers | None = None,
     ):
         self.model = _FFModel(
-            memory.history_length,
+            memory_settings.history_length,
             settings.hidden_size,
-            memory.obs_dim_in,
-            memory.obs_dim_out,
-            memory.action_dim_in,
+            memory_settings.obs_dim_in,
+            memory_settings.obs_dim_out,
+            memory_settings.action_dim_in,
             nnx.Rngs(rng),
         )
         
-        super().__init__(memory, settings, rng, normalizers)
+        super().__init__(memory_settings, settings, rng, normalizers)

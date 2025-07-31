@@ -12,7 +12,7 @@ from deluca.learners.core import (
     DefaultSettings as DefaultLearnerSettings,
     Normalizers,
 )
-from deluca.learners.memory import Memory
+from deluca.learners.memory import MemorySettings
 
 
 class _LinearModel(LearnerModel):
@@ -66,17 +66,17 @@ class LinearLearner(Learner):
 
     def __init__(
         self,
-        memory: Memory,
+        memory_settings: MemorySettings,
         settings: LinearLearnerSettings,
         rng: Array,
         normalizers: Normalizers | None = None,
     ):
         self.model = _LinearModel(
-            memory.history_length,
-            memory.obs_dim_in,
-            memory.obs_dim_out,
-            memory.action_dim_in,
+            memory_settings.history_length,
+            memory_settings.obs_dim_in,
+            memory_settings.obs_dim_out,
+            memory_settings.action_dim_in,
             nnx.Rngs(rng),
         )
 
-        super().__init__(memory, settings, rng, normalizers)
+        super().__init__(memory_settings, settings, rng, normalizers)

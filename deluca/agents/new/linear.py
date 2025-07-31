@@ -6,7 +6,7 @@ import flax.nnx as nnx
 import optax
 
 from deluca.agents.new.core import Agent, AgentModel, AgentSettings, DefaultSettings as DefaultAgentSettings
-from deluca.learners.memory import Memory
+from deluca.learners.memory import MemorySettings
 from deluca.normalizers.core import Normalizers
 
 class _LinearModel(AgentModel):
@@ -45,10 +45,10 @@ class LinearAgent(Agent):
     name = "Linear Agent"
     settings: LinearAgentSettings
     
-    def __init__(self, memory: Memory, settings: LinearAgentSettings, rng: Array, normalizers: Normalizers | None = None):
-        super().__init__(memory, settings, rng, normalizers)
+    def __init__(self, memory_settings: MemorySettings, settings: LinearAgentSettings, rng: Array, normalizers: Normalizers | None = None):
+        super().__init__(memory_settings, settings, rng, normalizers)
         
-        self.model = _LinearModel(memory.history_length, memory.obs_dim_in, memory.action_dim_out, nnx.Rngs(rng))
+        self.model = _LinearModel(memory_settings.history_length, memory_settings.obs_dim_in, memory_settings.action_dim_out, nnx.Rngs(rng))
         self.optimizer = nnx.Optimizer(self.model, optax.sgd(learning_rate=settings.learning_rate, momentum=settings.momentum))
 
 

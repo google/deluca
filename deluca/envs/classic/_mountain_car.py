@@ -91,7 +91,7 @@ class MountainCar(Env):
 
         return t, new_state, new_state
 
-    def loss_fn(self, action: jax.Array, next_obs: jax.Array) -> jax.Array:
+    def loss_fn(self, action: jax.Array, next_state: jax.Array, next_obs: jax.Array) -> jax.Array:
         # Penalize: being further from goal, low velocity, large actions, and negative actions
         position = next_obs[0, 0]
         velocity = next_obs[1, 0]

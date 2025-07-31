@@ -111,7 +111,7 @@ class GRC(Agent):
         self.policy_loss = policy_loss
         self.grad = jit(grad(policy_loss, (0)))
 
-    def __call__(self, obs, rng) -> Array:
+    def __call__(self, history, rng):
         """
         Description: Return the action based on current observation and internal parameters.
 
@@ -121,6 +121,8 @@ class GRC(Agent):
         Returns:
            Array: action to take
         """
+
+        obs, _ = history
 
         window = self.last_m_ynats()
         contribs = jnp.einsum("mnp,mp1->mn1", self.M, window)

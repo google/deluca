@@ -5,8 +5,8 @@ import flax.struct
 import jax
 import chex
 
-from deluca.core import Env
-from deluca.learners.memory import Memory
+from deluca.core import Agent as CoreAgent, Env
+from deluca.learners.memory import Memory, MemorySettings
 from deluca.normalizers.core import Normalizers, WithoutNormalization
 from deluca.utils.printing import Task
 from abc import abstractmethod
@@ -15,32 +15,39 @@ from jax import Array
 import flax.nnx as nnx
 
 History = Tuple[Array, Array]
+LossFunction = Callable[[Array, Any, Array], Array | chex.Array]
+
 
 @flax.struct.dataclass
 class AgentSettings:
     learning_rate: float
     momentum: float
 
-    loss_fn: Callable[[Array, Any, Array], Array | chex.Array]
+    loss_fn: LossFunction
     train_kwargs: Dict[str, Any] | None
 
+
 DefaultSettings = AgentSettings(
-    learning_rate=1e-4,
+    learning_rate=1e-3,
     momentum=0.0,
-    loss_fn=(lambda action, next_state, next_obs: action.T @ action + next_obs.T @ next_obs),
-    train_kwargs=None
+    loss_fn=(
+        lambda action, next_state, next_obs: action.T @ action + next_obs.T @ next_obs
+    ),
+    train_kwargs=None,
 )
+
 
 class AgentModel(nnx.Module):
     @abstractmethod
     def __call__(self, obs: Array, action: Array, rng: Array) -> Array:
         """Predict the next action given the history of most recent observations and actions."""
-    
+
     @abstractmethod
     def _train_call(self, obs: Array, action: Array, rng: Array) -> Array:
         """Separate function if needed for training."""
 
-class Agent:
+
+class Agent(CoreAgent):
     name: str
 
     model: AgentModel
@@ -50,58 +57,138 @@ class Agent:
     obs_dim_out: int
     action_dim_out: int
     history_length: int
+    memory_settings: MemorySettings
 
     normalizers: Normalizers
     optimizer: nnx.Optimizer
 
-    def __init__(self, memory: Memory, settings: AgentSettings, rng: Array, normalizers: Normalizers | None = None):
-        self.obs_dim_in = memory.obs_dim_in
-        self.action_dim_in = memory.action_dim_in
-        self.obs_dim_out = memory.obs_dim_out
-        self.action_dim_out = memory.action_dim_out
-        self.history_length = memory.history_length
+    def __init__(
+        self,
+        memory_settings: MemorySettings,
+        settings: AgentSettings,
+        rng: Array,
+        normalizers: Normalizers | None = None,
+    ):
+        self.obs_dim_in = memory_settings.obs_dim_in
+        self.action_dim_in = memory_settings.action_dim_in
+        self.obs_dim_out = memory_settings.obs_dim_out
+        self.action_dim_out = memory_settings.action_dim_out
+        self.history_length = memory_settings.history_length
 
         self.settings = settings
 
         self.normalizers = normalizers or WithoutNormalization()
 
-    @staticmethod
-    def _loss_fn_wrapper(model, env_call, settings, normalizers, env_t, env_state, rng, obs_history, action_history):
-        action = model._train_call(obs_history, action_history, rng)
-        
-        # Postprocess the action
-        denormalized_action = normalizers.denormalize_action(action)
-        action_post = jnp.expand_dims(denormalized_action, -1)
+        # Keep a template so batch training can generate fresh memories with identical filter/settings
+        self.memory_settings = memory_settings
+        # Cache of compiled loss/grad functions keyed by (env_id, N, T)
+        self._compiled_loss_cache: dict[tuple[int, int, int], Any] = {}
 
-        new_t, new_state, new_obs = env_call(env_t, env_state, action_post, rng)
-        loss = settings.loss_fn(action_post, new_state, new_obs)
-        return jnp.mean(loss), ((new_t, new_state, new_obs), action_post)
+    def _get_compiled_loss_fn(self, env: Env, N: int, T: int):
+        """Return a cached `loss_and_grad` function specialised to (env, N, T)."""
+        cache_key = (id(env), N, T)
+        fn = self._compiled_loss_cache.get(cache_key)
+        if fn is not None:
+            return fn
 
-    @staticmethod
-    @functools.partial(nnx.jit, static_argnums=(2, 3, 4)) # env_call, settings, normalizers
-    def _update(model, optimizer, env_call, settings, normalizers, env_t, env_state, rng, obs_history, action_history):
-        (loss, aux), grads = nnx.value_and_grad(Agent._loss_fn_wrapper, has_aux=True)(
-            model, env_call, settings, normalizers, env_t, env_state, rng, obs_history, action_history
-        )
-        optimizer.update(grads)
-        return loss, aux
+        def _NT_loss(model: AgentModel, rngs: Array):
+            return jnp.mean(
+                jax.vmap(
+                    lambda k: _episode_loss(
+                        model,
+                        k,
+                        self.memory_settings,
+                        env,
+                        self.settings.loss_fn,
+                        self._preprocess_history,
+                        self._postprocess_action,
+                        T,
+                    )
+                )(rngs)
+            )
 
-    def step_and_update(self, env: Env, env_t: int, env_state, history: History, rng: Array) -> Tuple[Array, Tuple[int, Any, Array], Array]:
+        fn = nnx.jit(nnx.value_and_grad(_NT_loss))
+        self._compiled_loss_cache[cache_key] = fn
+        return fn
+
+    def train(self, env: Env, N: int, T: int, rng: Array) -> Array:
         """
-        Update the agent's model using the history.
+        Train the agent on the environment. Runs N episodes of length T.
+        Loss is the average of the loss over each step of each episode.
+
+        Args:
+            env: The environment to train on.
+            N: The number of episodes to run.
+            T: The length of each episode.
+            rng: A JAX PRNG key
 
         Returns:
-            loss: The loss of the agent's model.
-            (new_t, new_state, new_obs): The new time step, state, and observation of the environment.
-            action: The action taken by the agent.
+            The average loss over all episodes.
         """
-        obs_history, action_history = self._preprocess_history(history)
-        loss, ((new_t, new_state, new_obs), action) = Agent._update(
-            self.model, self.optimizer, env.__call__, self.settings, self.normalizers,
-            env_t, env_state, rng, obs_history, action_history
-        )
-        return loss, (new_t, new_state, new_obs), action
 
+        loss_and_grad = self._get_compiled_loss_fn(env, N, T)
+
+        rng, split_key = jax.random.split(rng)
+        episode_keys = jax.random.split(split_key, N)
+
+        # Execute one optimisation step
+        loss, grads = loss_and_grad(self.model, episode_keys)
+        self.optimizer.update(grads)
+
+        return loss
+
+    def train_step(self, env: Env, memory: Memory, rng: Array) -> Tuple[Array, Memory]:
+        """
+        Trains the environment on one step of the environment at the given memory.
+
+        Args:
+            env: The environment to train on.
+            memory: The memory to train on. Should be primed and
+                    updated with the current env state.
+            rng: A JAX PRNG key
+
+        Returns:
+            loss: loss from the update
+            new_memory: memory after the step
+        """
+
+        import jax
+        import jax.numpy as jnp
+        import flax.nnx as nnx
+
+        loss_fn = self.settings.loss_fn
+        normalizers = self.normalizers
+
+        @nnx.jit
+        def _step(
+            model: "AgentModel", optimizer: nnx.Optimizer, mem: Memory, key: jax.Array
+        ):
+            """Inner JIT-compiled step returning (loss, new_mem)."""
+            obs_hist, act_hist = mem.get_history()
+            obs_hist_n = normalizers.normalize_obs(obs_hist)
+            act_hist_n = normalizers.normalize_action(act_hist)
+
+            def _loss_fn(mdl: "AgentModel"):
+                raw_action = mdl._train_call(obs_hist_n, act_hist_n, key)
+                action = normalizers.denormalize_action(raw_action)
+                action = jnp.expand_dims(action, -1)
+                t, state, obs = env(mem.t, mem.state, action, key)
+                return loss_fn(jnp.squeeze(action, -1), state, obs)
+
+            loss, grads = nnx.value_and_grad(_loss_fn)(model)
+            optimizer.update(grads)
+
+            # Compute action **again** with the *updated* model so the returned
+            # memory aligns with the latest parameters.
+            new_raw_action = model._train_call(obs_hist_n, act_hist_n, key)
+            new_action = normalizers.denormalize_action(new_raw_action)
+            new_action = jnp.expand_dims(new_action, -1)
+            new_mem = mem.act(env, new_action, key)
+
+            return loss, new_mem
+
+        loss, new_memory = _step(self.model, self.optimizer, memory, rng)
+        return loss, new_memory
 
     def _preprocess_history(self, history: History) -> History:
         """
@@ -109,25 +196,45 @@ class Agent:
         For prediction, we expect a history to be a tuple of (obs_history, action_history)
         """
 
-        assert len(history) == 2, "History must be a tuple of (obs_history, action_history)"
+        assert (
+            len(history) == 2
+        ), "History must be a tuple of (obs_history, action_history)"
 
         obs_history, action_history = history
 
-        assert obs_history.ndim == action_history.ndim and obs_history.ndim in [2, 3], "Histories must be 2D or 3D (batched) arrays"
+        assert obs_history.ndim == action_history.ndim and obs_history.ndim in [
+            2,
+            3,
+        ], "Histories must be 2D or 3D (batched) arrays"
 
         hist_index = 0 if obs_history.ndim == 2 else 1
 
-        assert obs_history.shape[hist_index] == action_history.shape[hist_index] == self.history_length, "obs and actions must have length history_length"
-        assert obs_history.shape[hist_index + 1] == self.obs_dim_in, "obs must have obs_dim_in dimensions"
-        assert action_history.shape[hist_index + 1] == self.action_dim_in, "actions must have action_dim_in dimensions"
-        
+        assert (
+            obs_history.shape[hist_index]
+            == action_history.shape[hist_index]
+            == self.history_length
+        ), "obs and actions must have length history_length"
+        assert (
+            obs_history.shape[hist_index + 1] == self.obs_dim_in
+        ), "obs must have obs_dim_in dimensions"
+        assert (
+            action_history.shape[hist_index + 1] == self.action_dim_in
+        ), "actions must have action_dim_in dimensions"
+
         obs_history = self.normalizers.normalize_obs(obs_history)
         action_history = self.normalizers.normalize_action(action_history)
 
         return obs_history, action_history
-    
-    
-        
+
+    def _postprocess_action(self, action: Array) -> Array:
+        """
+        Postprocess an action for prediction.
+        """
+        action = self.normalizers.denormalize_action(action)
+        action = jnp.expand_dims(action, -1)  # Add a singleton dimension to the action
+
+        return action
+
     def __call__(self, history: History, rng: Array) -> Array:
         """Given the history of most recent observations and actions, return the next action.
         Note: if histories are longer than history_length, the oldest observations and actions are ignored.
@@ -136,8 +243,40 @@ class Agent:
         obs_history, action_history = self._preprocess_history(history)
 
         pred_action = self.model(obs_history, action_history, rng)
-
-        # Add a singleton dimension to the action
-        pred_action = jnp.expand_dims(pred_action, -1)  
+        pred_action = self._postprocess_action(pred_action)
 
         return pred_action
+
+def _episode_loss(
+    model: AgentModel,
+    key: Array,
+    mem_settings: MemorySettings,
+    env: Env,
+    loss_fn: LossFunction,
+    preprocess_fn: Callable[[History], History],
+    postprocess_fn: Callable[[Array], Array],
+    T: int,
+) -> Array:
+    """Rolls out one episode and returns the mean loss."""
+
+    def _step(
+        memory: Memory,
+        step_key: Array,
+    ):
+        """Single environment transition used inside `jax.lax.scan`."""
+
+        obs_hist, act_hist = preprocess_fn(memory.get_history())
+
+        action_raw = model._train_call(obs_hist, act_hist, step_key)
+        action = postprocess_fn(action_raw)
+
+        memory = memory.act(env, action, step_key)
+
+        step_loss = loss_fn(jnp.squeeze(action, -1), memory.state, memory.obs)
+
+        return memory, step_loss
+
+    memory = Memory(mem_settings).reset_env(env, key)
+
+    _, losses = jax.lax.scan(_step, memory, jax.random.split(key, T))
+    return jnp.mean(losses)

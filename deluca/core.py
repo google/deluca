@@ -139,7 +139,7 @@ class Env(Obj):
         """
 
     @abstractmethod
-    def reset(self, rng: Array) -> Tuple[float, Any, Array]:
+    def reset(self, rng: Array) -> Tuple[int, Any, Array]:
         """Resets the environment to its initial state. 
         
         Args:
@@ -166,11 +166,12 @@ class AgentState(Obj):
     time: float = float("inf")
     steps: int = 0
 
+History = Tuple[Array, Array]
 
 class Agent(Obj):
 
     @abstractmethod
-    def __call__(self, obs, rng: Array) -> jax.Array:
+    def __call__(self, history: History, rng: Array) -> jax.Array:
         """Return an updated state"""
 
     def init(self, rng: Array):

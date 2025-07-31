@@ -53,7 +53,8 @@ class BraxEnv(Env):
         obs = _obs_to_array(state.obs)
         obs = jnp.expand_dims(obs, -1) # Add singleton dimension
 
-        t = jax.lax.cond(state.info['episode_done'], lambda _: 0, lambda _: t + 1, operand=None)
+        cond = jnp.logical_or(state.info['episode_done'], state.done)
+        t = jax.lax.cond(cond, lambda _: 0, lambda _: t + 1, operand=None)
 
         return t, state, obs
 

@@ -1,3 +1,4 @@
+from deluca.envs._brax import BraxEnv
 from deluca.agents._grc import GRC
 from deluca.agents._random import SimpleRandom
 from deluca.agents._zero import Zero
@@ -15,7 +16,7 @@ from deluca.learners.linear import (
     DefaultSettings as LinearDefaultSettings,
 )
 from deluca.learners.util import generate_simple_trajectories, generate_trajectories
-from deluca.learners.memory import Memory
+from deluca.learners.memory import Memory, MemorySettings
 from deluca.envs._lds import LDS, SinusDisturbance, ZeroDisturbance
 import jax
 import jax.numpy as jnp
@@ -128,32 +129,37 @@ def plot_losses(learner: Learner, train_losses, test_losses, batches_per_test, a
 d_obs = 5
 d_action = 3
 d_hidden = 20
-disturbance = SinusDisturbance()
+disturbance = ZeroDisturbance()
 disturbance.init(d_hidden)
 
 rng = jax.random.key(5)
 
 # Set up environment and agent
 rng, env_key, agent_key = jax.random.split(rng, 3)
-env = LDS(env_key, d_action, d_hidden, d_obs, disturbance=disturbance)
-agent = GRC(env.A, env.B, env.C, rng=agent_key)
+# env = LDS(env_key, d_action, d_hidden, d_obs, disturbance=disturbance, x0=jax.random.normal(env_key, (d_hidden,1)))
+env = BraxEnv(env_key, "inverted_double_pendulum")
+# agent = GRC(env.A, env.B, env.C, rng=agent_key)
+agent = SimpleRandom(env.action_size, agent_key)
 
 # Give agent a chance to learn
 rng, env_key, agent_key = jax.random.split(rng, 3)
 t, state, obs = env.reset(env_key)
 
 # Train agent
-for i in range(100): 
-    action = agent(obs, agent_key)
-    t, state, obs = env(t, state, action, env_key)
+# for i in range(100): 
+#     action = agent(obs, agent_key)
+#     t, state, obs = env(t, state, action, env_key)
 
 # Generate trajectories
 rng, histories_key = jax.random.split(rng)
 N = 500
-T = 250
+T = 100
+
+print("Generating trajectories...")
 obs, actions, next_obs = generate_trajectories(
     env, agent, N, T, rng=histories_key
 )  # generate_simple_trajectories(N, T, rng=histories_key)
+print("Done generating trajectories.")
 
 # TODO: generate trajectories corrupts the agent since it is stateful and not callable in jitted functions
 # Agents must be updated.
@@ -178,31 +184,28 @@ spectral_filter = SpectralFilter(
 
 # Set up learner
 settings = FFLearnerDefaultSettings
-memory = Memory(30, env.observation_size, env.action_size, filter=spectral_filter)
+memory_settings = MemorySettings.from_env(env, 30)
 
-train_histories = memory.from_trajectories((train_obs, train_actions, train_next_obs))
-test_histories = memory.from_trajectories((test_obs, test_actions, test_next_obs))
+train_histories = Memory.from_trajectories(memory_settings, (train_obs, train_actions, train_next_obs))
+test_histories = Memory.from_trajectories(memory_settings, (test_obs, test_actions, test_next_obs))
 
 rng, learner_key = jax.random.split(rng)
-ff_learner = FFLearner(memory, settings, rng)
+ff_learner = FFLearner(memory_settings, settings, rng)
 ff_train_losses, ff_test_losses = ff_learner.train(train_histories, learner_key)
 
 settings = LinearDefaultSettings
-linear_learner = LinearLearner(memory, settings, rng)
+linear_learner = LinearLearner(memory_settings, settings, rng)
 linear_train_losses, linear_test_losses = linear_learner.train(train_histories, learner_key)
 
 fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
-if memory.filter is not None:
-    fig.suptitle(f"With filter: {memory.filter.__class__.__name__} (d_hidden={d_hidden})")
-else:
-    fig.suptitle("No Filter")
+fig.suptitle(f"{env.__class__.__name__} {env.env.env.env.__class__.__name__ if hasattr(env, 'env') else ""} with {memory_settings.filter.__class__.__name__ if memory_settings.filter else "No Filter"} (d_hidden={d_hidden})") # type: ignore
 
 plot_losses(ff_learner, ff_train_losses, ff_test_losses, settings.batches_per_test, axes[0, 0])
 plot_losses(linear_learner, linear_train_losses, linear_test_losses, settings.batches_per_test, axes[0, 1])
 
-pred_vs_true_plot(ff_learner, memory.history_length, test_histories, axes[1, 0], rng)
-pred_vs_true_plot(linear_learner, memory.history_length, test_histories, axes[1, 1], rng)
+pred_vs_true_plot(ff_learner, memory_settings.history_length, test_histories, axes[1, 0], rng)
+pred_vs_true_plot(linear_learner, memory_settings.history_length, test_histories, axes[1, 1], rng)
 
 plt.tight_layout()
 plt.show()

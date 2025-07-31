@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .printing import Task
+from .printing import Task, progress
 
-__all__ = ["Task"]
+__all__ = ["Task", "progress"]

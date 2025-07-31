@@ -6,7 +6,7 @@ import chex
 
 from deluca.agents._random import SimpleRandom
 from deluca.core import Env
-from deluca.learners.memory import Memory
+from deluca.learners.memory import MemorySettings
 from deluca.normalizers.core import Normalizers, WithoutNormalization
 from deluca.utils.printing import Task
 from abc import abstractmethod
@@ -73,16 +73,16 @@ class Learner:
 
     def __init__(
         self,
-        memory: Memory,
+        memory_settings: MemorySettings,
         settings: LearnerSettings,
         rng: Array,
         normalizers: Normalizers | None = None,
     ):
-        self.obs_dim_in = memory.obs_dim_in
-        self.action_dim_in = memory.action_dim_in
-        self.obs_dim_out = memory.obs_dim_out
-        self.action_dim_out = memory.action_dim_out
-        self.history_length = memory.history_length
+        self.obs_dim_in = memory_settings.obs_dim_in
+        self.action_dim_in = memory_settings.action_dim_in
+        self.obs_dim_out = memory_settings.obs_dim_out
+        self.action_dim_out = memory_settings.action_dim_out
+        self.history_length = memory_settings.history_length
 
         self.settings = settings
 
