@@ -174,17 +174,17 @@ losses = []
 
 # Slowly build up the agent's knowledge, first with one step, then working up to multiple steps.
 curriculum = [
-    # (1, 2, 100), # First train for 100 iterations with 1 step averaged over 2 episodes
-    # (2, 2, 500), # Then train for 500 iterations with 2 steps averaged over 2 episodes
-    # (3, 3, 500), # ...
-    # (4, 3, 500),
-    # (5, 3, 500),
-    # (6, 3, 500),
-    # (7, 3, 300),
-    # (8, 3, 300),
-    # (10, 5, 1000),
-    # (15, 7, 5000),
-    # (30, 7, 5000),
+    (1, 2, 100), # First train for 100 iterations with 1 step averaged over 2 episodes
+    (2, 2, 500), # Then train for 500 iterations with 2 steps averaged over 2 episodes
+    (3, 3, 500), # ...
+    (4, 3, 500),
+    (5, 3, 500),
+    (6, 3, 500),
+    (7, 3, 300),
+    (8, 3, 300),
+    (10, 5, 1000),
+    (15, 7, 5000),
+    (30, 7, 5000),
     (50, 7, 15000)
 ]
 
