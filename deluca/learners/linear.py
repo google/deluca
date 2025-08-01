@@ -12,7 +12,7 @@ from deluca.learners.core import (
     DefaultSettings as DefaultLearnerSettings,
     Normalizers,
 )
-from deluca.learners.memory import MemorySettings
+from deluca.memory import MemorySettings
 
 
 class _LinearModel(LearnerModel):

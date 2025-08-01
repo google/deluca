@@ -4,9 +4,10 @@ from typing import Callable, Dict, Tuple, Any
 import flax.struct
 import jax
 import chex
+import optax
 
-from deluca.core import Agent as CoreAgent, Env
-from deluca.learners.memory import Memory, MemorySettings
+from deluca.core import Env
+from deluca.memory import Memory, MemorySettings
 from deluca.normalizers.core import Normalizers, WithoutNormalization
 from deluca.utils.printing import Task
 from abc import abstractmethod
@@ -20,16 +21,19 @@ LossFunction = Callable[[Array, Any, Array], Array | chex.Array]
 
 @flax.struct.dataclass
 class AgentSettings:
-    learning_rate: float
-    momentum: float
-
     loss_fn: LossFunction
     train_kwargs: Dict[str, Any] | None
 
+    optimizer: optax.GradientTransformation = flax.struct.field(
+        pytree_node=False,
+    )
+
 
 DefaultSettings = AgentSettings(
-    learning_rate=1e-3,
-    momentum=0.0,
+    optimizer=optax.chain(
+        optax.adam(1e-3),
+        optax.clip_by_global_norm(1.0),
+    ),
     loss_fn=(
         lambda action, next_state, next_obs: action.T @ action + next_obs.T @ next_obs
     ),
@@ -47,7 +51,7 @@ class AgentModel(nnx.Module):
         """Separate function if needed for training."""
 
 
-class Agent(CoreAgent):
+class Agent:
     name: str
 
     model: AgentModel
@@ -79,10 +83,13 @@ class Agent(CoreAgent):
 
         self.normalizers = normalizers or WithoutNormalization()
 
-        # Keep a template so batch training can generate fresh memories with identical filter/settings
         self.memory_settings = memory_settings
+
         # Cache of compiled loss/grad functions keyed by (env_id, N, T)
         self._compiled_loss_cache: dict[tuple[int, int, int], Any] = {}
+
+        # Cache of compiled train_step functions keyed by (env_id)
+        self._compiled_train_step_cache: dict[int, Any] = {}
 
     def _get_compiled_loss_fn(self, env: Env, N: int, T: int):
         """Return a cached `loss_and_grad` function specialised to (env, N, T)."""
@@ -91,24 +98,38 @@ class Agent(CoreAgent):
         if fn is not None:
             return fn
 
-        def _NT_loss(model: AgentModel, rngs: Array):
+        def _NT_loss(model: AgentModel, rng: Array):
             return jnp.mean(
                 jax.vmap(
                     lambda k: _episode_loss(
                         model,
-                        k,
                         self.memory_settings,
                         env,
                         self.settings.loss_fn,
                         self._preprocess_history,
                         self._postprocess_action,
                         T,
+                        k,
                     )
-                )(rngs)
+                )(rng)
             )
 
         fn = nnx.jit(nnx.value_and_grad(_NT_loss))
         self._compiled_loss_cache[cache_key] = fn
+        return fn
+    
+    def _get_compiled_train_step(self, env: Env):
+        """Return a cached `train_step` function specialised to (env)."""
+        cache_key = (id(env))
+        fn = self._compiled_train_step_cache.get(cache_key)
+        if fn is not None:
+            return fn
+        
+        def _ts(model: AgentModel, memory: Memory, rng: Array):
+            return _train_step(model, env, memory, self.settings.loss_fn, self._preprocess_history, self._postprocess_action, rng)
+        
+        fn = nnx.jit(nnx.value_and_grad(_ts, has_aux=True))
+        self._compiled_train_step_cache[cache_key] = fn
         return fn
 
     def train(self, env: Env, N: int, T: int, rng: Array) -> Array:
@@ -131,7 +152,6 @@ class Agent(CoreAgent):
         rng, split_key = jax.random.split(rng)
         episode_keys = jax.random.split(split_key, N)
 
-        # Execute one optimisation step
         loss, grads = loss_and_grad(self.model, episode_keys)
         self.optimizer.update(grads)
 
@@ -152,42 +172,9 @@ class Agent(CoreAgent):
             new_memory: memory after the step
         """
 
-        import jax
-        import jax.numpy as jnp
-        import flax.nnx as nnx
+        (loss, new_memory), grads = self._get_compiled_train_step(env)(self.model, memory, rng)
+        self.optimizer.update(grads)
 
-        loss_fn = self.settings.loss_fn
-        normalizers = self.normalizers
-
-        @nnx.jit
-        def _step(
-            model: "AgentModel", optimizer: nnx.Optimizer, mem: Memory, key: jax.Array
-        ):
-            """Inner JIT-compiled step returning (loss, new_mem)."""
-            obs_hist, act_hist = mem.get_history()
-            obs_hist_n = normalizers.normalize_obs(obs_hist)
-            act_hist_n = normalizers.normalize_action(act_hist)
-
-            def _loss_fn(mdl: "AgentModel"):
-                raw_action = mdl._train_call(obs_hist_n, act_hist_n, key)
-                action = normalizers.denormalize_action(raw_action)
-                action = jnp.expand_dims(action, -1)
-                t, state, obs = env(mem.t, mem.state, action, key)
-                return loss_fn(jnp.squeeze(action, -1), state, obs)
-
-            loss, grads = nnx.value_and_grad(_loss_fn)(model)
-            optimizer.update(grads)
-
-            # Compute action **again** with the *updated* model so the returned
-            # memory aligns with the latest parameters.
-            new_raw_action = model._train_call(obs_hist_n, act_hist_n, key)
-            new_action = normalizers.denormalize_action(new_raw_action)
-            new_action = jnp.expand_dims(new_action, -1)
-            new_mem = mem.act(env, new_action, key)
-
-            return loss, new_mem
-
-        loss, new_memory = _step(self.model, self.optimizer, memory, rng)
         return loss, new_memory
 
     def _preprocess_history(self, history: History) -> History:
@@ -247,15 +234,16 @@ class Agent(CoreAgent):
 
         return pred_action
 
+
 def _episode_loss(
     model: AgentModel,
-    key: Array,
     mem_settings: MemorySettings,
     env: Env,
     loss_fn: LossFunction,
-    preprocess_fn: Callable[[History], History],
-    postprocess_fn: Callable[[Array], Array],
+    hist_preprocessor: Callable[[History], History],
+    action_postprocessor: Callable[[Array], Array],
     T: int,
+    rng: Array,
 ) -> Array:
     """Rolls out one episode and returns the mean loss."""
 
@@ -265,10 +253,10 @@ def _episode_loss(
     ):
         """Single environment transition used inside `jax.lax.scan`."""
 
-        obs_hist, act_hist = preprocess_fn(memory.get_history())
+        obs_hist, act_hist = hist_preprocessor(memory.get_history())
 
         action_raw = model._train_call(obs_hist, act_hist, step_key)
-        action = postprocess_fn(action_raw)
+        action = action_postprocessor(action_raw)
 
         memory = memory.act(env, action, step_key)
 
@@ -276,7 +264,28 @@ def _episode_loss(
 
         return memory, step_loss
 
-    memory = Memory(mem_settings).reset_env(env, key)
+    memory = Memory(mem_settings).reset_env(env, rng)
 
-    _, losses = jax.lax.scan(_step, memory, jax.random.split(key, T))
-    return jnp.mean(losses)
+    _, losses = jax.lax.scan(_step, memory, jax.random.split(rng, T))
+    return jnp.sum(losses)
+
+
+def _train_step(
+    model: "AgentModel",
+    env: Env,
+    memory: Memory,
+    loss_fn: LossFunction,
+    hist_preprocessor: Callable[[History], History],
+    action_postprocessor: Callable[[Array], Array],
+    rng: jax.Array,
+):
+    """Inner JIT-compiled step returning (loss, new_mem)."""
+    obs_hist, act_hist = hist_preprocessor(memory.get_history())
+
+    raw_action = model._train_call(obs_hist, act_hist, rng)
+    action = action_postprocessor(raw_action)
+
+    t, state, obs = env(memory.t, memory.state, action, rng)
+    loss = loss_fn(jnp.squeeze(action, -1), state, jnp.squeeze(obs, -1))
+
+    return loss, memory.resolve(action).prime(obs)

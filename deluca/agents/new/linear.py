@@ -6,15 +6,14 @@ import flax.nnx as nnx
 import optax
 
 from deluca.agents.new.core import Agent, AgentModel, AgentSettings, DefaultSettings as DefaultAgentSettings
-from deluca.learners.memory import MemorySettings
+from deluca.memory import MemorySettings
 from deluca.normalizers.core import Normalizers
 
 class _LinearModel(AgentModel):
-    def __init__(self, history_length: int, obs_dim_in: int, action_dim_out: int, rngs):
+    def __init__(self, history_length: int, obs_dim_in: int, action_dim_out: int, rng: Array):
         super().__init__()
         # Small Gaussian initialisation helps escape the flat region around 0
-        key_M, key_b = jax.random.split(rngs())
-        self.M = nnx.Param(0.01 * jax.random.normal(key_M, (history_length, action_dim_out, obs_dim_in)))
+        self.M = nnx.Param(0.01 * jax.random.normal(rng, (history_length, action_dim_out, obs_dim_in)))
         self.b = nnx.Param(jnp.zeros(action_dim_out))
 
     def __call__(self, obs_history: Array, _action_history: Array, _rng: Array) -> Array:
@@ -48,8 +47,8 @@ class LinearAgent(Agent):
     def __init__(self, memory_settings: MemorySettings, settings: LinearAgentSettings, rng: Array, normalizers: Normalizers | None = None):
         super().__init__(memory_settings, settings, rng, normalizers)
         
-        self.model = _LinearModel(memory_settings.history_length, memory_settings.obs_dim_in, memory_settings.action_dim_out, nnx.Rngs(rng))
-        self.optimizer = nnx.Optimizer(self.model, optax.sgd(learning_rate=settings.learning_rate, momentum=settings.momentum))
+        self.model = _LinearModel(memory_settings.history_length, memory_settings.obs_dim_in, memory_settings.action_dim_out, rng)
+        self.optimizer = nnx.Optimizer(self.model, settings.optimizer)
 
 
 

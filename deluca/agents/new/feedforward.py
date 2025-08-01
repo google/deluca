@@ -11,7 +11,7 @@ from deluca.agents.new.core import (
     AgentSettings,
     DefaultSettings as DefaultAgentSettings,
 )
-from deluca.learners.memory import MemorySettings
+from deluca.memory import MemorySettings
 from deluca.normalizers.core import Normalizers
 
 
@@ -57,7 +57,6 @@ class _FFModel(AgentModel):
 @flax.struct.dataclass
 class FFAgentSettings(AgentSettings):
     hidden_size: int
-    grad_clip: float | None = None
 
 
 DefaultSettings = FFAgentSettings(**DefaultAgentSettings.__dict__, hidden_size=64)
@@ -84,11 +83,5 @@ class FFAgent(Agent):
             memory_settings.action_dim_out,
             nnx.Rngs(rng),
         )
-        optimizer = optax.sgd(
-            learning_rate=settings.learning_rate, momentum=settings.momentum
-        )
-        if settings.grad_clip is not None:
-            optimizer = optax.chain(
-                optax.clip_by_global_norm(settings.grad_clip), optimizer
-            )
-        self.optimizer = nnx.Optimizer(self.model, optimizer)
+
+        self.optimizer = nnx.Optimizer(self.model, settings.optimizer)

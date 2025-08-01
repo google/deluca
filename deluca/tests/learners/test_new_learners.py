@@ -1,6 +1,7 @@
+from deluca.agents.new.linear import LinearAgent, DefaultSettings as DefaultLinearAgentSettings
 from deluca.envs._brax import BraxEnv
 from deluca.agents._grc import GRC
-from deluca.agents._random import SimpleRandom
+from deluca.agents.new.random import SimpleRandom
 from deluca.agents._zero import Zero
 from deluca.envs.brax._pendulum2d import Pendulum2D
 from deluca.filters.spectral import SpectralFilter
@@ -15,8 +16,7 @@ from deluca.learners.linear import (
     LinearLearnerSettings,
     DefaultSettings as LinearDefaultSettings,
 )
-from deluca.learners.util import generate_simple_trajectories, generate_trajectories
-from deluca.learners.memory import Memory, MemorySettings
+from deluca.memory import Memory, MemorySettings
 from deluca.envs._lds import LDS, SinusDisturbance, ZeroDisturbance
 import jax
 import jax.numpy as jnp
@@ -26,6 +26,9 @@ import flax.nnx as nnx
 
 import matplotlib
 import matplotlib.pyplot as plt
+
+from deluca.memory.utils import generate_histories
+from deluca.utils.printing import progress
 
 
 def pred_vs_true_plot(learner: Learner, history_length: int, histories, ax, rng):
@@ -73,13 +76,13 @@ def pred_vs_true_plot(learner: Learner, history_length: int, histories, ax, rng)
         "maroon",
         "navy",
     ]
-    alphas = np.linspace(0.2, 0.85, true.shape[0] - hfi).tolist()
+    alphas = np.linspace(0.1, 0.85, true.shape[0] - hfi).tolist()
 
     for i in range(true.shape[-1]):
         ax.scatter(
             true[:hfi, i],
             pred[:hfi, i],
-            alpha=0.7,
+            alpha=0.8,
             label=None,
             s=25,
             color=colors[i],
@@ -128,52 +131,17 @@ def plot_losses(learner: Learner, train_losses, test_losses, batches_per_test, a
 
 d_obs = 5
 d_action = 3
-d_hidden = 20
-disturbance = ZeroDisturbance()
+d_hidden = 10
+disturbance = SinusDisturbance()
 disturbance.init(d_hidden)
 
 rng = jax.random.key(5)
 
 # Set up environment and agent
 rng, env_key, agent_key = jax.random.split(rng, 3)
-# env = LDS(env_key, d_action, d_hidden, d_obs, disturbance=disturbance, x0=jax.random.normal(env_key, (d_hidden,1)))
-env = BraxEnv(env_key, "inverted_double_pendulum")
+env = LDS(env_key, d_action, d_hidden, d_obs, disturbance=disturbance)
+# env = BraxEnv(env_key, "inverted_double_pendulum")
 # agent = GRC(env.A, env.B, env.C, rng=agent_key)
-agent = SimpleRandom(env.action_size, agent_key)
-
-# Give agent a chance to learn
-rng, env_key, agent_key = jax.random.split(rng, 3)
-t, state, obs = env.reset(env_key)
-
-# Train agent
-# for i in range(100): 
-#     action = agent(obs, agent_key)
-#     t, state, obs = env(t, state, action, env_key)
-
-# Generate trajectories
-rng, histories_key = jax.random.split(rng)
-N = 500
-T = 100
-
-print("Generating trajectories...")
-obs, actions, next_obs = generate_trajectories(
-    env, agent, N, T, rng=histories_key
-)  # generate_simple_trajectories(N, T, rng=histories_key)
-print("Done generating trajectories.")
-
-# TODO: generate trajectories corrupts the agent since it is stateful and not callable in jitted functions
-# Agents must be updated.
-
-# Split histories into train and test
-train_amt = N - 50
-
-train_obs = obs[:train_amt]
-train_actions = actions[:train_amt]
-train_next_obs = next_obs[:train_amt]
-
-test_obs = obs[train_amt:]
-test_actions = actions[train_amt:]
-test_next_obs = next_obs[train_amt:]
 
 spectral_filter = SpectralFilter(
     obs_dim=env.observation_size,
@@ -182,12 +150,36 @@ spectral_filter = SpectralFilter(
     spectral_history_length=100,
 )
 
+N = 1000
+TEST_AMT = 50
+T = 100
+
+rng, agent_rng = jax.random.split(rng)
+memory_settings = MemorySettings.from_env(env, 30, spectral_filter)
+agent = LinearAgent(memory_settings, DefaultLinearAgentSettings, rng=agent_rng)
+# agent = SimpleRandom(memory_settings, DefaultLinearAgentSettings, agent_rng)
+
+# Train agent slightly
+# memory = Memory(memory_settings).reset_env(env, rng)
+
+# rng, agent_rng = jax.random.split(rng)
+# i = 0
+# for irng in progress(jax.random.split(agent_rng, 2), "Training agent"):
+#     loss, memory = agent.train_step(env, memory, irng)
+#     i += 1
+#     if i % 10 == 0:
+#         print(f"Loss: {loss}")
+#         print(f"Loss: {loss}")
+        
+
+print("Generating trajectories...")
+rng, h1_rng, h2_rng = jax.random.split(rng, 3)
+train_histories = generate_histories(env, agent, memory_settings, N - TEST_AMT, T, rng=h1_rng)
+test_histories = generate_histories(env, agent, memory_settings, TEST_AMT, T, rng=h2_rng)
+print("Done generating trajectories.")
+
 # Set up learner
 settings = FFLearnerDefaultSettings
-memory_settings = MemorySettings.from_env(env, 30)
-
-train_histories = Memory.from_trajectories(memory_settings, (train_obs, train_actions, train_next_obs))
-test_histories = Memory.from_trajectories(memory_settings, (test_obs, test_actions, test_next_obs))
 
 rng, learner_key = jax.random.split(rng)
 ff_learner = FFLearner(memory_settings, settings, rng)

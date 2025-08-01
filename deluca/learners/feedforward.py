@@ -5,7 +5,7 @@ from jax import Array
 import flax.nnx as nnx
 import optax
 
-from deluca.learners.memory import MemorySettings
+from deluca.memory import MemorySettings
 from deluca.core import Env
 from deluca.learners.core import (
     Learner,
@@ -14,7 +14,7 @@ from deluca.learners.core import (
     DefaultSettings as DefaultLearnerSettings,
     Normalizers,
 )
-from deluca.learners.memory import Memory
+from deluca.memory import Memory
 
 
 class _FFModel(LearnerModel):

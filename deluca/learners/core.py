@@ -6,7 +6,7 @@ import chex
 
 from deluca.agents._random import SimpleRandom
 from deluca.core import Env
-from deluca.learners.memory import MemorySettings
+from deluca.memory import MemorySettings
 from deluca.normalizers.core import Normalizers, WithoutNormalization
 from deluca.utils.printing import Task
 from abc import abstractmethod
