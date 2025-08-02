@@ -7,7 +7,7 @@ import chex
 from deluca.agents._random import SimpleRandom
 from deluca.core import Env
 from deluca.memory import MemorySettings
-from deluca.normalizers.core import Normalizers, WithoutNormalization
+from deluca.normalizers.core import NoNormalization, NormalizerSet
 from deluca.utils.printing import Task
 from abc import abstractmethod
 import jax.numpy as jnp
@@ -65,7 +65,7 @@ class Learner:
     action_dim_out: int
     history_length: int
 
-    normalizers: Normalizers
+    normalizers: NormalizerSet
     optimizer: nnx.Optimizer
     loss_fn: Callable[
         [Array, Array], Array | chex.Array
@@ -76,7 +76,7 @@ class Learner:
         memory_settings: MemorySettings,
         settings: LearnerSettings,
         rng: Array,
-        normalizers: Normalizers | None = None,
+        normalizers: NormalizerSet | None = None,
     ):
         self.obs_dim_in = memory_settings.obs_dim_in
         self.action_dim_in = memory_settings.action_dim_in
@@ -86,7 +86,7 @@ class Learner:
 
         self.settings = settings
 
-        self.normalizers = normalizers or WithoutNormalization()
+        self.normalizers = normalizers or NoNormalization()
         self.optimizer = nnx.Optimizer(
             self.model,
             self.settings.optimizer_fn,
@@ -109,7 +109,9 @@ class Learner:
 
         # For training, we need to compute the normalization of the observations and actions (e.g. mean and std)
         # These values will be stored and used for denormalization during prediction.
-        self.normalizers.compute_normalization(obs, actions)
+        self.normalizers.obs.compute(obs)
+        self.normalizers.action.compute(actions)
+        self.normalizers.output.compute(next_obs)
 
         histories = self._preprocess_histories(histories)
 
@@ -261,9 +263,9 @@ class Learner:
         ), "Next observations must have obs_dim_out dimensions"
 
         # Normalization
-        obs = self.normalizers.normalize_obs(obs)
-        actions = self.normalizers.normalize_action(actions)
-        next_obs = self.normalizers.normalize_obs(next_obs)
+        obs = self.normalizers.obs.normalize(obs)
+        actions = self.normalizers.action.normalize(actions)
+        next_obs = self.normalizers.output.normalize(next_obs)
 
         return obs, actions, next_obs
 
@@ -298,8 +300,8 @@ class Learner:
             action_history.shape[hist_index + 1] == self.action_dim_in
         ), "actions must have action_dim_in dimensions"
 
-        obs_history = self.normalizers.normalize_obs(obs_history)
-        action_history = self.normalizers.normalize_action(action_history)
+        obs_history = self.normalizers.obs.normalize(obs_history)
+        action_history = self.normalizers.action.normalize(action_history)
 
         return obs_history, action_history
 
@@ -308,7 +310,7 @@ class Learner:
         Postprocess the prediction (e.g. denormalize and add back singleton dimension)
         """
 
-        pred_obs = self.normalizers.denormalize_obs(pred_obs)
+        pred_obs = self.normalizers.output.denormalize(pred_obs)
 
         return jnp.expand_dims(pred_obs, -1)
 

@@ -12,7 +12,7 @@ from deluca.agents.new.core import (
     DefaultSettings as DefaultAgentSettings,
 )
 from deluca.memory import MemorySettings
-from deluca.normalizers.core import Normalizers
+from deluca.normalizers.core import NormalizerSet
 
 
 class _FFModel(AgentModel):
@@ -71,7 +71,7 @@ class FFAgent(Agent):
         memory_settings: MemorySettings,
         settings: FFAgentSettings,
         rng: Array,
-        normalizers: Normalizers | None = None,
+        normalizers: NormalizerSet | None = None,
     ):
         super().__init__(memory_settings, settings, rng, normalizers)
 

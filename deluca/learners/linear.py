@@ -10,9 +10,9 @@ from deluca.learners.core import (
     LearnerModel,
     LearnerSettings,
     DefaultSettings as DefaultLearnerSettings,
-    Normalizers,
 )
 from deluca.memory import MemorySettings
+from deluca.normalizers.core import NormalizerSet
 
 
 class _LinearModel(LearnerModel):
@@ -69,7 +69,7 @@ class LinearLearner(Learner):
         memory_settings: MemorySettings,
         settings: LinearLearnerSettings,
         rng: Array,
-        normalizers: Normalizers | None = None,
+        normalizers: NormalizerSet | None = None,
     ):
         self.model = _LinearModel(
             memory_settings.history_length,

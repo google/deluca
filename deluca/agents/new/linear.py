@@ -7,7 +7,7 @@ import optax
 
 from deluca.agents.new.core import Agent, AgentModel, AgentSettings, DefaultSettings as DefaultAgentSettings
 from deluca.memory import MemorySettings
-from deluca.normalizers.core import Normalizers
+from deluca.normalizers.core import NormalizerSet
 
 class _LinearModel(AgentModel):
     def __init__(self, history_length: int, obs_dim_in: int, action_dim_out: int, rng: Array):
@@ -44,7 +44,7 @@ class LinearAgent(Agent):
     name = "Linear Agent"
     settings: LinearAgentSettings
     
-    def __init__(self, memory_settings: MemorySettings, settings: LinearAgentSettings, rng: Array, normalizers: Normalizers | None = None):
+    def __init__(self, memory_settings: MemorySettings, settings: LinearAgentSettings, rng: Array, normalizers: NormalizerSet | None = None):
         super().__init__(memory_settings, settings, rng, normalizers)
         
         self.model = _LinearModel(memory_settings.history_length, memory_settings.obs_dim_in, memory_settings.action_dim_out, rng)

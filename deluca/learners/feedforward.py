@@ -12,9 +12,9 @@ from deluca.learners.core import (
     LearnerModel,
     LearnerSettings,
     DefaultSettings as DefaultLearnerSettings,
-    Normalizers,
 )
 from deluca.memory import Memory
+from deluca.normalizers.core import NormalizerSet
 
 
 class _FFModel(LearnerModel):
@@ -72,7 +72,7 @@ class FFLearner(Learner):
         memory_settings: MemorySettings,
         settings: FFLearnerSettings,
         rng: Array,
-        normalizers: Normalizers | None = None,
+        normalizers: NormalizerSet | None = None,
     ):
         self.model = _FFModel(
             memory_settings.history_length,

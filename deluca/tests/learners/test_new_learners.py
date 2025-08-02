@@ -28,6 +28,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 from deluca.memory.utils import generate_histories
+from deluca.normalizers.core import DefaultNormalizers
 from deluca.utils.printing import progress
 
 
@@ -156,8 +157,8 @@ T = 100
 
 rng, agent_rng = jax.random.split(rng)
 memory_settings = MemorySettings.from_env(env, 30, spectral_filter)
-agent = LinearAgent(memory_settings, DefaultLinearAgentSettings, rng=agent_rng)
-# agent = SimpleRandom(memory_settings, DefaultLinearAgentSettings, agent_rng)
+# agent = LinearAgent(memory_settings, DefaultLinearAgentSettings, rng=agent_rng)
+agent = SimpleRandom(memory_settings, DefaultLinearAgentSettings, agent_rng)
 
 # Train agent slightly
 # memory = Memory(memory_settings).reset_env(env, rng)
@@ -180,13 +181,14 @@ print("Done generating trajectories.")
 
 # Set up learner
 settings = FFLearnerDefaultSettings
+normalizers = DefaultNormalizers()
 
 rng, learner_key = jax.random.split(rng)
-ff_learner = FFLearner(memory_settings, settings, rng)
+ff_learner = FFLearner(memory_settings, settings, rng, normalizers)
 ff_train_losses, ff_test_losses = ff_learner.train(train_histories, learner_key)
 
 settings = LinearDefaultSettings
-linear_learner = LinearLearner(memory_settings, settings, rng)
+linear_learner = LinearLearner(memory_settings, settings, rng, normalizers)
 linear_train_losses, linear_test_losses = linear_learner.train(train_histories, learner_key)
 
 fig, axes = plt.subplots(2, 2, figsize=(16, 12))

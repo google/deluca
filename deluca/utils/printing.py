@@ -14,7 +14,21 @@ try:
     from IPython.display import clear_output  # type: ignore
 
     _ip = get_ipython()
-    _IN_JUPYTER = bool(_ip and _ip.__class__.__name__ == "ZMQInteractiveShell")
+    # Detect whether we're running inside an IPython-powered notebook (Jupyter, Colab, etc.).
+    # 1. If no IPython shell is present -> definitely not a notebook.
+    # 2. If the shell class is *TerminalInteractiveShell* we are in a classic terminal.
+    #    Anything else (ZMQInteractiveShell, InteractiveShell, etc.) is a notebook-like env.
+    # 3. As an additional safeguard, explicitly look for the google.colab module which is
+    #    always imported in Colab notebooks.
+    if _ip is None:
+        _IN_JUPYTER = False
+    else:
+        shell_name = _ip.__class__.__name__
+        _IN_JUPYTER = shell_name != "TerminalInteractiveShell"
+
+    # Explicit Colab check – covers edge-cases where the shell name heuristic fails.
+    if not _IN_JUPYTER and "google.colab" in sys.modules:
+        _IN_JUPYTER = True
 except Exception:  # pragma: no cover – IPython not available at runtime
     _IN_JUPYTER = False
 

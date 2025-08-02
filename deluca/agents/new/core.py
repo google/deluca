@@ -8,7 +8,7 @@ import optax
 
 from deluca.core import Env
 from deluca.memory import Memory, MemorySettings
-from deluca.normalizers.core import Normalizers, WithoutNormalization
+from deluca.normalizers.core import NormalizerSet, NoNormalization
 from deluca.utils.printing import Task
 from abc import abstractmethod
 import jax.numpy as jnp
@@ -17,7 +17,6 @@ import flax.nnx as nnx
 
 History = Tuple[Array, Array]
 LossFunction = Callable[[Array, Any, Array], Array | chex.Array]
-
 
 @flax.struct.dataclass
 class AgentSettings:
@@ -63,7 +62,7 @@ class Agent:
     history_length: int
     memory_settings: MemorySettings
 
-    normalizers: Normalizers
+    normalizers: NormalizerSet
     optimizer: nnx.Optimizer
 
     def __init__(
@@ -71,8 +70,15 @@ class Agent:
         memory_settings: MemorySettings,
         settings: AgentSettings,
         rng: Array,
-        normalizers: Normalizers | None = None,
+        normalizers: NormalizerSet | None = None,
     ):
+        """
+        Args:
+            memory_settings: The memory settings for the agent.
+            settings: The settings for the agent.
+            rng: A JAX PRNG key
+            normalizers: The normalizers for the agent. Note: normalization parameters must be computed manually, unlike learners, since agents are never exposed to a large batch of data with which to compute normalization parameters.
+        """
         self.obs_dim_in = memory_settings.obs_dim_in
         self.action_dim_in = memory_settings.action_dim_in
         self.obs_dim_out = memory_settings.obs_dim_out
@@ -81,7 +87,7 @@ class Agent:
 
         self.settings = settings
 
-        self.normalizers = normalizers or WithoutNormalization()
+        self.normalizers = normalizers or NoNormalization()
 
         self.memory_settings = memory_settings
 
@@ -208,8 +214,8 @@ class Agent:
             action_history.shape[hist_index + 1] == self.action_dim_in
         ), "actions must have action_dim_in dimensions"
 
-        obs_history = self.normalizers.normalize_obs(obs_history)
-        action_history = self.normalizers.normalize_action(action_history)
+        obs_history = self.normalizers.obs.normalize(obs_history)
+        action_history = self.normalizers.action.normalize(action_history)
 
         return obs_history, action_history
 
@@ -217,7 +223,7 @@ class Agent:
         """
         Postprocess an action for prediction.
         """
-        action = self.normalizers.denormalize_action(action)
+        action = self.normalizers.output.denormalize(action)
         action = jnp.expand_dims(action, -1)  # Add a singleton dimension to the action
 
         return action

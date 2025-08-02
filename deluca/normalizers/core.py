@@ -1,82 +1,59 @@
 from abc import abstractmethod
 from jax import Array
 import jax.numpy as jnp
+import flax.struct
 
-
-class Normalizers:
+# TODO: Fix normalization.
+class Normalizer:
     @abstractmethod
-    def normalize_obs(
-        self, obs: Array
-    ) -> Array:
-        """Normalize the input observation Array."""
-
-    @abstractmethod
-    def normalize_action(
-        self, action: Array
-    ) -> Array:
-        """Normalize the input action Array."""
+    def compute(self, a: Array) -> None:
+        """Computes the necessary parameters from the input to normalize and denormalize future inputs."""
 
     @abstractmethod
-    def denormalize_obs(
-        self, obs: Array
-    ) -> Array:
-        """Denormalize the input observation Array."""
+    def normalize(self, a: Array) -> Array:
+        """Normalizes the input."""
 
     @abstractmethod
-    def denormalize_action(
-        self, action: Array
-    ) -> Array:
-        """Denormalize the input action Array."""
+    def denormalize(self, a: Array) -> Array:
+        """Denormalizes the input."""
 
-    @abstractmethod
-    def compute_normalization(self, obses: Array, actions: Array) -> None:
-        """Compute the normalization of the input."""
+@flax.struct.dataclass
+class NormalizerSet:
+    obs: Normalizer
+    action: Normalizer
+    output: Normalizer
 
-
-class WithoutNormalization(Normalizers):
-    def normalize_obs(self, obs: Array) -> Array:
-        return obs
-
-    def normalize_action(self, action: Array) -> Array:
-        return action
-
-    def denormalize_obs(self, obs: Array) -> Array:
-        return obs
-
-    def denormalize_action(self, action: Array) -> Array:
-        return action
-
-    def compute_normalization(self, obses, actions):
+class WithoutNormalization(Normalizer):
+    def compute(self, a: Array) -> None:
         pass
 
+    def normalize(self, a: Array) -> Array:
+        return a
+    
+    def denormalize(self, a: Array) -> Array:
+        return a
+    
+class DefaultNormalizer(Normalizer):
+    def compute(self, a: Array) -> None:
+        flat_a = a.reshape(-1, a.shape[-1])
+        self.mean = jnp.mean(flat_a, axis=0) 
+        self.std = jnp.std(flat_a, axis=0)
+    
+    def normalize(self, a: Array) -> Array:
+        return (a - self.mean) / (self.std + 1e-8)
+    
+    def denormalize(self, a: Array) -> Array:
+        return a * (self.std + 1e-8) + self.mean
 
-class DefaultNormalizers(Normalizers):
-    _eps: float = 1e-8
+NoNormalization = lambda: NormalizerSet(
+    obs=WithoutNormalization(),
+    action=WithoutNormalization(),
+    output=WithoutNormalization(),
+)
 
-    def normalize_obs(
-        self,
-        obs: Array,
-    ) -> Array:
-        return (obs - self.obs_mean) / (self.obs_std + self._eps)
+DefaultNormalizers = lambda: NormalizerSet(
+    obs=DefaultNormalizer(),
+    action=DefaultNormalizer(),
+    output=DefaultNormalizer(),
+)
 
-    def normalize_action(
-        self, action: Array
-    ) -> Array:
-        return (action - self.action_mean) / (self.action_std + self._eps)
-
-    def denormalize_obs(
-        self,
-        obs: Array,
-    ) -> Array:
-        return obs * (self.obs_std + self._eps) + self.obs_mean
-
-    def denormalize_action(
-        self, action: Array
-    ) -> Array:
-        return action * (self.action_std + self._eps) + self.action_mean
-
-    def compute_normalization(self, obses: Array, actions: Array) -> None:
-        self.obs_mean = jnp.mean(obses, axis=0)
-        self.obs_std = jnp.sqrt(jnp.var(obses, axis=0))
-        self.action_mean = jnp.mean(actions, axis=0)
-        self.action_std = jnp.sqrt(jnp.var(actions, axis=0))
