@@ -181,14 +181,13 @@ print("Done generating trajectories.")
 
 # Set up learner
 settings = FFLearnerDefaultSettings
-normalizers = DefaultNormalizers()
 
 rng, learner_key = jax.random.split(rng)
-ff_learner = FFLearner(memory_settings, settings, rng, normalizers)
+ff_learner = FFLearner(memory_settings, settings, rng)
 ff_train_losses, ff_test_losses = ff_learner.train(train_histories, learner_key)
 
 settings = LinearDefaultSettings
-linear_learner = LinearLearner(memory_settings, settings, rng, normalizers)
+linear_learner = LinearLearner(memory_settings, settings, rng)
 linear_train_losses, linear_test_losses = linear_learner.train(train_histories, learner_key)
 
 fig, axes = plt.subplots(2, 2, figsize=(16, 12))
